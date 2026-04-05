@@ -38,11 +38,12 @@ service.interceptors.response.use(
     console.error('❌ 请求失败:', status, url)
 
     if (status === 401) {
-      // 只在 auth 相关接口才强制登出
-      if (url && url.includes('/auth')) {
+      if ((url && url.includes('/auth')) || url.includes('/login')) {
         localStorage.clear()
         router.push('/login')
         ElMessage.error('登录已失效，请重新登录')
+      } else {
+        ElMessage.error('身份验证失败，请重试')
       }
     } else if (status === 404) {
       //ElMessage.error(`接口不存在: ${url}`)

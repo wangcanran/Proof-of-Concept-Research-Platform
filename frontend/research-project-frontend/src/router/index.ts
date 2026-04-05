@@ -67,7 +67,8 @@ const checkPermission = (to: any, permissions: string[]): boolean => {
 const routes: Array<RouteRecordRaw> = [
   {
     path: '/',
-    redirect: '/login',
+    name: 'Home',
+    component: () => import('@/views/HomePage.vue'),
   },
   {
     path: '/login',

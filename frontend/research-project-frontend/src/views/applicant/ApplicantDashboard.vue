@@ -3,7 +3,15 @@
     <!-- 侧边栏 -->
     <aside class="sidebar" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
       <div class="sidebar-header">
-        <h3 v-if="!sidebarCollapsed" class="sidebar-title">科研项目管理系统</h3>
+        <div class="logo-area">
+          <img
+            src="@/views/picture/university-logo.png"
+            alt="人大校徽"
+            class="sidebar-logo"
+            @error="handleLogoError"
+          />
+          <h3 v-if="!sidebarCollapsed" class="sidebar-title">概念验证平台</h3>
+        </div>
         <button class="sidebar-toggle" @click="toggleSidebar">
           {{ sidebarCollapsed ? '→' : '←' }}
         </button>
@@ -89,7 +97,6 @@
           <div class="mobile-menu-btn" @click="toggleMobileMenu">
             <span class="icon">☰</span>
           </div>
-          <h1 class="logo">科研项目管理系统</h1>
           <div class="breadcrumb">
             <span class="current-page">工作台</span>
           </div>
@@ -209,30 +216,26 @@
                     <span class="progress-text">{{ project.progress }}%</span>
                   </div>
                   <div class="project-meta">
-                    <span class="meta-item">📅 {{ project.deadline || '未设置' }}</span>
-                    <span class="meta-item">👤 {{ project.manager || '未分配' }}</span>
+                    <span class="meta-item">📅 {{ project.submitDate || '未提交' }}</span>
+                    <span class="meta-item">👤 {{ project.applicant || '申请人' }}</span>
                   </div>
                   <div class="project-actions">
-                    <button class="action-btn" @click="viewProject(project.raw_id || project.id)">
-                      查看详情
-                    </button>
+                    <button class="action-btn" @click="viewProject(project.id)">查看详情</button>
                     <button
                       class="action-btn secondary"
                       v-if="project.status === 'draft'"
-                      @click="editProject(project.raw_id || project.id)"
+                      @click="editProject(project.id)"
                     >
                       继续编辑
                     </button>
                   </div>
                 </div>
 
-                <!-- 加载状态 -->
                 <div v-if="recentProjects.length === 0 && loading" class="loading-state">
                   <div class="loading-spinner-small"></div>
                   <p>正在加载项目数据...</p>
                 </div>
 
-                <!-- 空状态 -->
                 <div v-if="recentProjects.length === 0 && !loading" class="empty-state">
                   <div class="empty-icon">📁</div>
                   <p>暂无项目</p>
@@ -246,7 +249,6 @@
 
           <!-- 中列：快速操作 + 数据统计 -->
           <div class="dashboard-column">
-            <!-- 快速操作 -->
             <div class="quick-actions-section card-section">
               <h3 class="section-title">
                 <span class="section-icon">⚡</span>
@@ -284,7 +286,6 @@
               </div>
             </div>
 
-            <!-- 数据统计 -->
             <div class="data-statistics-section card-section">
               <div class="section-header">
                 <h3 class="section-title">
@@ -295,22 +296,14 @@
               </div>
 
               <div class="stats-grid">
-                <!-- 项目统计卡片 -->
                 <div class="stat-card enhanced">
                   <div class="stat-header">
                     <div class="stat-icon-container">
                       <div
                         class="stat-icon-bg"
-                        style="background: linear-gradient(135deg, #1890ff, #40a9ff)"
+                        style="background: linear-gradient(135deg, #b31b1b, #8b0000)"
                       >
                         <span class="stat-icon">📄</span>
-                      </div>
-                      <div class="stat-trend-container">
-                        <span class="stat-trend" :class="getTrendClass(stats.submissionTrend)">
-                          {{ stats.submissionTrend > 0 ? '+' : ''
-                          }}{{ stats.submissionTrend || 0 }}%
-                        </span>
-                        <span class="trend-label">月同比</span>
                       </div>
                     </div>
                   </div>
@@ -321,7 +314,6 @@
                   </div>
                 </div>
 
-                <!-- 项目状态分布图表 -->
                 <div class="stat-card enhanced chart-card">
                   <div class="stat-header">
                     <h4 class="chart-title">
@@ -354,7 +346,6 @@
                   </div>
                 </div>
 
-                <!-- 双统计卡片 -->
                 <div class="double-stat-card">
                   <div class="mini-stat-card" style="border-right: 1px solid #f0f0f0">
                     <div class="mini-stat-header">
@@ -365,9 +356,6 @@
                     <div class="mini-stat-body">
                       <div class="mini-stat-value">{{ stats.approvedProjects || 0 }}</div>
                       <div class="mini-stat-label">已立项</div>
-                      <div class="mini-stat-trend" :class="getTrendClass(stats.approvalTrend)">
-                        {{ stats.approvalTrend > 0 ? '+' : '' }}{{ stats.approvalTrend || 0 }}%
-                      </div>
                     </div>
                   </div>
                   <div class="mini-stat-card">
@@ -379,14 +367,10 @@
                     <div class="mini-stat-body">
                       <div class="mini-stat-value">{{ stats.reviewingProjects || 0 }}</div>
                       <div class="mini-stat-label">评审中</div>
-                      <div class="mini-stat-trend" :class="getTrendClass(stats.reviewTrend)">
-                        {{ stats.reviewTrend > 0 ? '+' : '' }}{{ stats.reviewTrend || 0 }}%
-                      </div>
                     </div>
                   </div>
                 </div>
 
-                <!-- 经费统计卡片 -->
                 <div class="stat-card enhanced funding-card">
                   <div class="stat-header">
                     <div class="stat-icon-container">
@@ -395,12 +379,6 @@
                         style="background: linear-gradient(135deg, #52c41a, #73d13d)"
                       >
                         <span class="stat-icon">💰</span>
-                      </div>
-                      <div class="stat-trend-container">
-                        <span class="stat-trend" :class="getTrendClass(stats.fundTrend)">
-                          {{ stats.fundTrend > 0 ? '+' : '' }}{{ stats.fundTrend || 0 }}%
-                        </span>
-                        <span class="trend-label">月同比</span>
                       </div>
                     </div>
                   </div>
@@ -448,16 +426,18 @@
                   v-for="notification in notifications"
                   :key="notification.id"
                   class="notification-item"
-                  :class="{ unread: !notification.read }"
+                  :class="{ unread: !notification.is_read }"
                   @click="openNotification(notification)"
                 >
-                  <div class="notification-icon">{{ notification.icon }}</div>
+                  <div class="notification-icon">{{ getNotificationIcon(notification.type) }}</div>
                   <div class="notification-content">
                     <div class="notification-header">
                       <h4 class="notification-title">{{ notification.title }}</h4>
-                      <span class="notification-time">{{ notification.time }}</span>
+                      <span class="notification-time">{{
+                        formatTime(notification.created_at)
+                      }}</span>
                     </div>
-                    <p class="notification-desc">{{ notification.description }}</p>
+                    <p class="notification-desc">{{ notification.content }}</p>
                     <div class="notification-meta">
                       <span
                         class="notification-type"
@@ -475,7 +455,7 @@
                       </span>
                     </div>
                   </div>
-                  <span class="unread-dot" v-if="!notification.read"></span>
+                  <span class="unread-dot" v-if="!notification.is_read"></span>
                 </div>
 
                 <div class="empty-state" v-if="notifications.length === 0 && !loading">
@@ -486,7 +466,6 @@
               </div>
             </div>
 
-            <!-- 系统状态 -->
             <div class="system-status card-section">
               <div class="status-card">
                 <div class="status-header">
@@ -529,10 +508,7 @@
       </main>
     </div>
 
-    <!-- 移动端菜单遮罩 -->
     <div v-if="showMobileMenu" class="mobile-menu-overlay" @click="toggleMobileMenu"></div>
-
-    <!-- 加载遮罩 -->
     <div v-if="loading" class="loading-overlay">
       <div class="loading-content">
         <div class="loading-spinner"></div>
@@ -544,12 +520,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import request from '@/utils/request'
-import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
+import axios from 'axios'
 
 const router = useRouter()
-const route = useRoute()
 
 // 响应式数据
 const loading = ref(false)
@@ -573,10 +547,6 @@ const stats = ref({
   totalFunds: 0,
   usedFunds: 0,
   remainingFunds: 0,
-  submissionTrend: 0,
-  approvalTrend: 0,
-  reviewTrend: 0,
-  fundTrend: 0,
 })
 
 const recentProjects = ref([])
@@ -593,7 +563,7 @@ const userInitial = computed(() => {
 })
 
 const userRoleName = computed(() => {
-  const roleMap = {
+  const roleMap: Record<string, string> = {
     applicant: '项目申请人',
     reviewer: '评审专家',
     project_manager: '项目经理',
@@ -642,7 +612,7 @@ const recentNotifications = computed(() => {
 
 // 项目状态分布数据
 const projectStatusData = computed(() => {
-  const statusCounts = {
+  const statusCounts: Record<string, number> = {
     孵化中: stats.value.ongoingProjects || 0,
     评审中: stats.value.reviewingProjects || 0,
     已立项: stats.value.approvedProjects || 0,
@@ -652,7 +622,7 @@ const projectStatusData = computed(() => {
 
   const total = Object.values(statusCounts).reduce((sum, count) => sum + count, 0)
 
-  const statusColors = {
+  const statusColors: Record<string, string> = {
     孵化中: '#1890ff',
     评审中: '#fa8c16',
     已立项: '#52c41a',
@@ -664,11 +634,11 @@ const projectStatusData = computed(() => {
     name,
     count,
     percentage: total > 0 ? Math.round((count / total) * 100) : 0,
-    color: statusColors[name] || '#666',
+    color: statusColors[name] || '#B31B1B',
   }))
 })
 
-// 状态文本映射（适配新数据库）
+// 状态文本映射
 const getStatusText = (status: string) => {
   const statusMap: Record<string, string> = {
     draft: '草稿',
@@ -685,7 +655,6 @@ const getStatusText = (status: string) => {
   return statusMap[status] || status
 }
 
-// 状态样式映射
 const getStatusClass = (status: string) => {
   const classMap: Record<string, string> = {
     draft: 'draft',
@@ -702,7 +671,6 @@ const getStatusClass = (status: string) => {
   return classMap[status] || status
 }
 
-// 根据状态计算进度
 const calculateProgress = (status: string): number => {
   const progressMap: Record<string, number> = {
     draft: 20,
@@ -723,12 +691,6 @@ const getProgressClass = (progress: number) => {
   if (progress >= 80) return 'high'
   if (progress >= 50) return 'medium'
   return 'low'
-}
-
-const getTrendClass = (trend: number) => {
-  if (trend > 0) return 'positive'
-  if (trend < 0) return 'negative'
-  return 'neutral'
 }
 
 const getNotificationTypeText = (type: string) => {
@@ -783,16 +745,6 @@ const formatFunds = (funds: number) => {
   return '¥' + num.toFixed(2)
 }
 
-const formatDate = (dateString: string) => {
-  if (!dateString) return '未设置'
-  try {
-    const date = new Date(dateString)
-    return date.toLocaleDateString('zh-CN')
-  } catch (e) {
-    return dateString
-  }
-}
-
 const formatTime = (dateString: string) => {
   if (!dateString) return ''
   try {
@@ -813,7 +765,6 @@ const formatTime = (dateString: string) => {
   }
 }
 
-// 导航方法
 const navigateTo = (action: string) => {
   const routes: Record<string, string> = {
     'create-project': '/projects/create',
@@ -850,16 +801,16 @@ const toggleNotifications = () => {
 
 const openNotification = async (notification: any) => {
   try {
-    if (!notification.read && notification.raw_id) {
-      await request.post(`/api/notifications/${notification.raw_id}/read`)
-      notification.read = true
+    if (!notification.is_read && notification.id) {
+      await axios.put(`http://localhost:3002/api/notifications/${notification.id}/read`)
+      notification.is_read = true
       unreadCount.value = Math.max(0, unreadCount.value - 1)
     }
 
-    if (notification.link) {
-      router.push(notification.link)
-    } else if (notification.relatedType === 'project') {
-      router.push(`/projects/detail/${notification.relatedId}`)
+    if (notification.action_url) {
+      router.push(notification.action_url)
+    } else if (notification.related_type === 'Project') {
+      router.push(`/projects/detail/${notification.related_id}`)
     }
 
     showNotificationsDropdown.value = false
@@ -870,15 +821,15 @@ const openNotification = async (notification: any) => {
 
 const markAllAsRead = async () => {
   try {
-    await request.post('/api/notifications/mark-all-read')
+    await axios.put('http://localhost:3002/api/notifications/mark-all-read', {
+      userId: userId.value,
+    })
     notifications.value.forEach((notification: any) => {
-      notification.read = true
+      notification.is_read = true
     })
     unreadCount.value = 0
-    ElMessage.success('所有通知已标记为已读')
   } catch (error) {
     console.error('标记全部已读失败:', error)
-    ElMessage.error('标记全部已读失败')
   }
 }
 
@@ -889,7 +840,6 @@ const refreshData = () => {
 const toggleTheme = () => {
   isDarkMode.value = !isDarkMode.value
   document.documentElement.setAttribute('data-theme', isDarkMode.value ? 'dark' : 'light')
-  ElMessage.info(isDarkMode.value ? '已切换到深色模式' : '已切换到浅色模式')
 }
 
 const handleLogout = () => {
@@ -900,176 +850,121 @@ const handleLogout = () => {
   }
 }
 
-// 加载用户信息
-// 加载用户信息
-const loadUserInfo = async () => {
-  try {
-    // 优先从 userInfo 获取完整信息
-    const userInfoStr = localStorage.getItem('userInfo')
-    console.log('从localStorage获取的userInfo:', userInfoStr)
+const handleLogoError = (e: Event) => {
+  const img = e.target as HTMLImageElement
+  img.src =
+    'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%23B31B1B"/%3E%3Ctext x="50" y="50" text-anchor="middle" dy=".3em" fill="white" font-size="40"%3E人大%3C/text%3E%3C/svg%3E'
+}
 
-    if (userInfoStr) {
-      const userInfo = JSON.parse(userInfoStr)
-      // 优先使用 name（真实姓名），如果没有则使用 username
-      userName.value = userInfo.name || userInfo.username || '用户'
-      userRole.value = userInfo.role || 'applicant'
-      userId.value = userInfo.id || ''
-      console.log('从userInfo解析的用户名:', userName.value)
-    }
-
-    // 如果没有 userInfo，尝试从 user 获取
-    if (!userName.value) {
-      const userStr = localStorage.getItem('user')
-      if (userStr) {
-        const user = JSON.parse(userStr)
-        userName.value = user.name || user.username || '用户'
-        userRole.value = user.role || 'applicant'
-        userId.value = user.id || ''
-        console.log('从user解析的用户名:', userName.value)
-      }
-    }
-
-    // 如果还没有，尝试单独获取
-    if (!userName.value) {
-      userName.value = localStorage.getItem('userName') || '用户'
-      userRole.value = localStorage.getItem('userRole') || 'applicant'
-      userId.value = localStorage.getItem('userId') || ''
-    }
-
-    // 如果还是空，从 API 获取
-    if (!userName.value || userName.value === '用户') {
-      console.log('从API获取用户信息...')
-      const response = await request.get('/api/auth/profile')
-      console.log('API返回的用户信息:', response)
-
-      if (response.success && response.data) {
-        const userData = response.data.data || response.data
-        userName.value = userData.name || userData.username || '用户'
-        userRole.value = userData.role || 'applicant'
-        userId.value = userData.id || ''
-
-        // 更新 localStorage
-        localStorage.setItem(
-          'userInfo',
-          JSON.stringify({
-            id: userId.value,
-            username: userData.username,
-            name: userName.value,
-            email: userData.email,
-            role: userRole.value,
-          }),
-        )
-      }
-    }
-
-    // 确保用户名不为空
-    if (!userName.value) {
-      userName.value = '用户'
-    }
-
-    console.log('最终用户名:', userName.value)
-  } catch (error) {
-    console.error('加载用户信息失败:', error)
+const loadUserInfo = () => {
+  const userInfoStr = localStorage.getItem('userInfo')
+  if (userInfoStr) {
+    const userInfo = JSON.parse(userInfoStr)
+    userName.value = userInfo.name || userInfo.username || '用户'
+    userRole.value = userInfo.role || 'applicant'
+    userId.value = userInfo.id || ''
+  } else {
     userName.value = localStorage.getItem('userName') || '用户'
     userRole.value = localStorage.getItem('userRole') || 'applicant'
     userId.value = localStorage.getItem('userId') || ''
-    console.log('使用默认用户名:', userName.value)
   }
 }
 
-// 加载项目数据
-const loadProjectData = async () => {
-  try {
-    const response = await request.get('/api/dashboard/applicant')
-    if (response.success && response.data) {
-      const data = response.data
-
-      // 更新统计
-      if (data.stats) {
-        stats.value = {
-          ...stats.value,
-          ...data.stats,
-        }
-      }
-
-      // 更新项目列表
-      if (data.my_projects && data.my_projects.length > 0) {
-        recentProjects.value = data.my_projects.map((project: any) => ({
-          id: project.id,
-          raw_id: project.raw_id,
-          code: `PROJ-${project.raw_id?.substring(0, 8) || project.id}`,
-          title: project.title,
-          status: project.status,
-          progress: project.progress || calculateProgress(project.status),
-          deadline: project.deadline,
-          manager: project.manager,
-        }))
-      } else {
-        recentProjects.value = []
-      }
-
-      // 更新通知
-      if (data.notifications && data.notifications.length > 0) {
-        notifications.value = data.notifications
-        unreadCount.value = data.unread_count || 0
-      }
-
-      lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN')
-      databaseConnected.value = true
-    }
-  } catch (error) {
-    console.error('加载项目数据失败:', error)
-    databaseConnected.value = false
-  }
-}
-
-// 加载仪表板数据
 const loadDashboardData = async () => {
   loading.value = true
   try {
-    // 测试后端连接
-    try {
-      const testResponse = await request.get('/api/db/test')
-      backendConnected.value = testResponse.success
-    } catch {
-      backendConnected.value = false
+    const token = localStorage.getItem('token')
+    const config = {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     }
 
-    await loadProjectData()
+    // 获取用户的项目列表
+    const projectsRes = await axios.get(
+      `http://localhost:3002/api/projects?applicant_id=${userId.value}`,
+      config,
+    )
+    if (projectsRes.data.success) {
+      const projects = projectsRes.data.data || []
+
+      // 统计项目状态
+      const submitted = projects.filter(
+        (p: any) =>
+          p.status === 'submitted' || p.status === 'under_review' || p.status === 'batch_review',
+      ).length
+      const approved = projects.filter(
+        (p: any) => p.status === 'approved' || p.status === 'incubating',
+      ).length
+      const reviewing = projects.filter(
+        (p: any) => p.status === 'under_review' || p.status === 'batch_review',
+      ).length
+      const ongoing = projects.filter((p: any) => p.status === 'incubating').length
+
+      stats.value = {
+        ...stats.value,
+        totalProjects: projects.length,
+        submittedProjects: submitted,
+        approvedProjects: approved,
+        reviewingProjects: reviewing,
+        ongoingProjects: ongoing,
+        pendingReviews: reviewing,
+      }
+
+      // 格式化项目列表
+      recentProjects.value = projects.slice(0, 5).map((project: any) => ({
+        id: project.id,
+        code: project.project_code || `PRJ-${project.id.substring(0, 8)}`,
+        title: project.title,
+        status: project.status,
+        progress: calculateProgress(project.status),
+        submitDate: project.submit_date
+          ? new Date(project.submit_date).toLocaleDateString('zh-CN')
+          : '未提交',
+        applicant: project.applicant_name || '申请人',
+      }))
+    }
+
+    // 获取通知列表
+    const notifRes = await axios.get(
+      `http://localhost:3002/api/notifications?user_id=${userId.value}`,
+      config,
+    )
+    if (notifRes.data.success) {
+      notifications.value = notifRes.data.data || []
+      unreadCount.value = notifications.value.filter((n: any) => !n.is_read).length
+    }
+
+    // 获取经费统计
+    const fundsRes = await axios.get(
+      `http://localhost:3002/api/expenditure/statistics?applicant_id=${userId.value}`,
+      config,
+    )
+    if (fundsRes.data.success) {
+      stats.value.totalFunds = fundsRes.data.total_budget || 0
+      stats.value.usedFunds = fundsRes.data.total_used || 0
+      stats.value.remainingFunds = stats.value.totalFunds - stats.value.usedFunds || 0
+    }
+
+    backendConnected.value = true
+    databaseConnected.value = true
+    lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN')
   } catch (error) {
     console.error('加载仪表板数据失败:', error)
-    if (error.response?.status === 401) {
-      ElMessage.error('登录状态已过期，请重新登录')
-      localStorage.clear()
-      router.push('/login')
-    } else {
-      ElMessage.error('加载数据失败')
-    }
+    backendConnected.value = false
+    databaseConnected.value = false
   } finally {
     loading.value = false
   }
 }
 
-// 组件生命周期
 onMounted(() => {
-  loadUserInfo().then(() => {
-    if (userRole.value.toLowerCase() !== 'applicant') {
-      ElMessage.warning(`检测到您是${userRoleName.value}，将跳转到对应工作台`)
-      const rolePaths: Record<string, string> = {
-        reviewer: '/reviewer/dashboard',
-        project_manager: '/assistant/dashboard',
-        admin: '/admin/dashboard',
-      }
-      const targetPath = rolePaths[userRole.value.toLowerCase()] || '/login'
-      setTimeout(() => router.push(targetPath), 2000)
-    } else {
-      loadDashboardData()
-    }
-  })
+  loadUserInfo()
+  if (userId.value) {
+    loadDashboardData()
+  }
 
   const refreshInterval = setInterval(() => {
-    if (document.visibilityState === 'visible') {
-      refreshData()
+    if (document.visibilityState === 'visible' && userId.value) {
+      loadDashboardData()
     }
   }, 300000)
 
@@ -1078,7 +973,6 @@ onMounted(() => {
   })
 })
 
-// 点击外部关闭通知下拉
 document.addEventListener('click', (e) => {
   if (
     showNotificationsDropdown.value &&
@@ -1090,19 +984,15 @@ document.addEventListener('click', (e) => {
 </script>
 
 <style scoped>
-/* 样式保持不变，与之前相同 */
 .dashboard-container {
   min-height: 100vh;
   background: #f5f7fa;
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   display: flex;
 }
 
 .sidebar {
-  width: 250px;
-  background: white;
-  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+  width: 260px;
+  background: #b31b1b;
   display: flex;
   flex-direction: column;
   transition: all 0.3s ease;
@@ -1114,27 +1004,39 @@ document.addEventListener('click', (e) => {
 }
 
 .sidebar-collapsed {
-  width: 60px;
+  width: 70px;
 }
 
 .sidebar-header {
   padding: 20px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.logo-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sidebar-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
 }
 
 .sidebar-title {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: #2c3e50;
+  color: white;
 }
 
 .sidebar-toggle {
-  background: #f5f7fa;
-  border: 1px solid #e8e8e8;
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
   border-radius: 4px;
   width: 32px;
   height: 32px;
@@ -1143,28 +1045,27 @@ document.addEventListener('click', (e) => {
   justify-content: center;
   cursor: pointer;
   font-size: 14px;
-  color: #666;
+  color: white;
   transition: all 0.3s;
 }
 
 .sidebar-toggle:hover {
-  background: #e8e8e8;
-  color: #333;
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .sidebar-nav {
   flex: 1;
-  padding: 16px 0;
+  padding: 20px 0;
   overflow-y: auto;
 }
 
 .nav-section {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .nav-section-title {
   font-size: 12px;
-  color: #7f8c8d;
+  color: rgba(255, 255, 255, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin: 0 0 8px 20px;
@@ -1175,21 +1076,21 @@ document.addEventListener('click', (e) => {
   display: flex;
   align-items: center;
   padding: 12px 20px;
-  color: #2c3e50;
+  color: rgba(255, 255, 255, 0.85);
   text-decoration: none;
   transition: all 0.3s;
   position: relative;
 }
 
 .nav-link:hover {
-  background: #f5f7fa;
-  color: #1890ff;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
 }
 
 .nav-link.active {
-  background: #e6f7ff;
-  color: #1890ff;
-  border-right: 3px solid #1890ff;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border-left: 3px solid white;
 }
 
 .nav-icon {
@@ -1216,7 +1117,7 @@ document.addEventListener('click', (e) => {
 }
 
 .sidebar-footer {
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
   padding: 16px 20px;
 }
 
@@ -1228,7 +1129,7 @@ document.addEventListener('click', (e) => {
 .user-avatar-mini {
   width: 36px;
   height: 36px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: rgba(255, 255, 255, 0.2);
   color: white;
   border-radius: 50%;
   display: flex;
@@ -1246,32 +1147,32 @@ document.addEventListener('click', (e) => {
 .user-name-mini {
   font-size: 14px;
   font-weight: 500;
-  color: #2c3e50;
+  color: white;
 }
 
 .user-role-mini {
   font-size: 12px;
-  color: #7f8c8d;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .main-wrapper {
   flex: 1;
-  margin-left: 250px;
+  margin-left: 260px;
   transition: margin-left 0.3s ease;
 }
 
 .main-wrapper.sidebar-collapsed {
-  margin-left: 60px;
+  margin-left: 70px;
 }
 
 .dashboard-header {
   background: white;
   padding: 0 32px;
-  height: 70px;
+  height: 60px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   position: sticky;
   top: 0;
   z-index: 900;
@@ -1295,29 +1196,14 @@ document.addEventListener('click', (e) => {
   justify-content: center;
 }
 
-.logo {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
 .breadcrumb {
   font-size: 14px;
   color: #666;
 }
 
 .current-page {
-  color: #1890ff;
+  color: #b31b1b;
   font-weight: 500;
-}
-
-.user-menu {
-  display: flex;
-  align-items: center;
-  gap: 16px;
 }
 
 .header-actions {
@@ -1342,7 +1228,6 @@ document.addEventListener('click', (e) => {
 
 .icon-btn:hover {
   background: #e8e8e8;
-  transform: translateY(-2px);
 }
 
 .icon {
@@ -1370,7 +1255,7 @@ document.addEventListener('click', (e) => {
   position: absolute;
   top: 100%;
   right: 0;
-  width: 320px;
+  width: 340px;
   background: white;
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
@@ -1402,7 +1287,7 @@ document.addEventListener('click', (e) => {
 }
 
 .notifications-dropdown-list {
-  max-height: 300px;
+  max-height: 320px;
   overflow-y: auto;
 }
 
@@ -1492,7 +1377,7 @@ document.addEventListener('click', (e) => {
 
 .main-content {
   padding: 24px;
-  max-width: 1800px;
+  max-width: 1600px;
   margin: 0 auto;
 }
 
@@ -1503,27 +1388,23 @@ document.addEventListener('click', (e) => {
 .welcome-card {
   background: white;
   border-radius: 12px;
-  padding: 32px;
+  padding: 28px 32px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-}
-
-.welcome-content {
-  flex: 1;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
 }
 
 .welcome-title {
-  font-size: 28px;
+  font-size: 24px;
   color: #2c3e50;
   margin: 0 0 8px 0;
 }
 
 .welcome-subtitle {
   color: #7f8c8d;
-  font-size: 16px;
-  margin: 0 0 24px 0;
+  font-size: 14px;
+  margin: 0 0 20px 0;
 }
 
 .quick-stats {
@@ -1535,21 +1416,21 @@ document.addEventListener('click', (e) => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 12px 20px;
+  padding: 10px 16px;
   background: #f8f9fa;
-  border-radius: 10px;
-  min-width: 90px;
+  border-radius: 8px;
+  min-width: 80px;
 }
 
 .stat-value {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
-  color: #1890ff;
+  color: #b31b1b;
   margin-bottom: 4px;
 }
 
 .stat-label {
-  font-size: 13px;
+  font-size: 12px;
   color: #666;
 }
 
@@ -1558,7 +1439,7 @@ document.addEventListener('click', (e) => {
 }
 
 .illustration-icon {
-  font-size: 72px;
+  font-size: 64px;
   opacity: 0.8;
 }
 
@@ -1577,23 +1458,27 @@ document.addEventListener('click', (e) => {
 .card-section {
   background: white;
   border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
   overflow: hidden;
 }
 
-.projects-overview {
-  padding: 24px;
+.projects-overview,
+.quick-actions-section,
+.data-statistics-section,
+.notifications-section,
+.system-status {
+  padding: 20px;
 }
 
 .section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .section-title {
-  font-size: 18px;
+  font-size: 16px;
   color: #2c3e50;
   margin: 0;
   font-weight: 600;
@@ -1603,69 +1488,64 @@ document.addEventListener('click', (e) => {
 }
 
 .section-icon {
-  font-size: 20px;
+  font-size: 18px;
 }
 
-.view-all-btn {
-  padding: 6px 12px;
-  background: #1890ff;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.3s;
-}
-
-.view-all-btn:hover {
-  background: #40a9ff;
-}
-
+.view-all-btn,
 .mark-all-btn {
-  padding: 6px 12px;
-  background: #f5f5f5;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
-  font-size: 13px;
-  color: #666;
+  padding: 4px 12px;
+  background: none;
+  border: none;
+  font-size: 12px;
   cursor: pointer;
   transition: all 0.3s;
 }
 
+.view-all-btn {
+  color: #b31b1b;
+}
+
+.view-all-btn:hover {
+  text-decoration: underline;
+}
+
+.mark-all-btn {
+  color: #666;
+}
+
 .mark-all-btn:hover {
-  background: #e8e8e8;
+  color: #b31b1b;
 }
 
 .projects-grid {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .project-card {
   background: #fafafa;
   border-radius: 8px;
-  padding: 16px;
+  padding: 14px;
   border: 1px solid #f0f0f0;
   transition: all 0.3s;
 }
 
 .project-card:hover {
-  border-color: #d9d9d9;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  transform: translateY(-2px);
+  border-color: #b31b1b;
+  box-shadow: 0 2px 8px rgba(179, 27, 27, 0.1);
 }
 
 .project-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .project-status {
   font-size: 11px;
-  padding: 3px 8px;
+  padding: 2px 8px;
   border-radius: 12px;
   font-weight: 500;
 }
@@ -1674,48 +1554,42 @@ document.addEventListener('click', (e) => {
   background: #f5f5f5;
   color: #8c8c8c;
 }
-
 .project-status.submitted {
   background: #e6f7ff;
   color: #1890ff;
 }
-
 .project-status.reviewing {
   background: #fff7e6;
   color: #fa8c16;
 }
-
 .project-status.approved {
   background: #f6ffed;
   color: #52c41a;
 }
-
 .project-status.ongoing {
-  background: #1890ff;
-  color: white;
+  background: #e6f7ff;
+  color: #1890ff;
 }
-
 .project-status.completed {
-  background: #52c41a;
-  color: white;
+  background: #f6ffed;
+  color: #52c41a;
 }
-
 .project-status.rejected {
-  background: #ff4d4f;
-  color: white;
+  background: #fff2f0;
+  color: #ff4d4f;
 }
 
 .project-code {
-  font-size: 11px;
-  color: #666;
+  font-size: 10px;
+  color: #999;
   font-family: monospace;
 }
 
 .project-title {
-  font-size: 16px;
+  font-size: 14px;
   color: #2c3e50;
-  margin: 0 0 12px 0;
-  line-height: 1.4;
+  margin: 0 0 10px 0;
+  font-weight: 500;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1726,13 +1600,13 @@ document.addEventListener('click', (e) => {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .progress-bar {
   flex: 1;
   height: 4px;
-  background: #f5f5f5;
+  background: #f0f0f0;
   border-radius: 2px;
   overflow: hidden;
 }
@@ -1746,34 +1620,25 @@ document.addEventListener('click', (e) => {
 .progress-fill.high {
   background: #52c41a;
 }
-
 .progress-fill.medium {
   background: #fa8c16;
 }
-
 .progress-fill.low {
   background: #ff4d4f;
 }
 
 .progress-text {
-  font-size: 12px;
+  font-size: 11px;
   color: #666;
-  font-weight: 500;
   min-width: 30px;
 }
 
 .project-meta {
   display: flex;
   gap: 12px;
-  margin-bottom: 16px;
-  font-size: 12px;
-  color: #7f8c8d;
-}
-
-.meta-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 11px;
+  color: #999;
 }
 
 .project-actions {
@@ -1784,17 +1649,17 @@ document.addEventListener('click', (e) => {
 .action-btn {
   flex: 1;
   padding: 6px 12px;
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   transition: background 0.3s;
 }
 
 .action-btn:hover {
-  background: #40a9ff;
+  background: #8b0000;
 }
 
 .action-btn.secondary {
@@ -1804,10 +1669,6 @@ document.addEventListener('click', (e) => {
 
 .action-btn.secondary:hover {
   background: #e8e8e8;
-}
-
-.quick-actions-section {
-  padding: 24px;
 }
 
 .actions-grid {
@@ -1820,7 +1681,7 @@ document.addEventListener('click', (e) => {
   background: white;
   border: 1px solid #f0f0f0;
   border-radius: 8px;
-  padding: 16px;
+  padding: 14px;
   text-align: left;
   cursor: pointer;
   transition: all 0.3s;
@@ -1830,16 +1691,16 @@ document.addEventListener('click', (e) => {
 }
 
 .action-card:hover {
-  border-color: #1890ff;
+  border-color: #b31b1b;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.1);
+  box-shadow: 0 4px 12px rgba(179, 27, 27, 0.1);
 }
 
 .action-icon {
-  font-size: 24px;
-  width: 48px;
-  height: 48px;
-  background: #f5f7fa;
+  font-size: 22px;
+  width: 44px;
+  height: 44px;
+  background: #fafafa;
   border-radius: 8px;
   display: flex;
   align-items: center;
@@ -1848,21 +1709,16 @@ document.addEventListener('click', (e) => {
 }
 
 .action-content h4 {
-  margin: 0 0 4px 0;
+  margin: 0 0 2px 0;
   color: #2c3e50;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .action-content p {
   margin: 0;
-  color: #7f8c8d;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.data-statistics-section {
-  padding: 24px;
+  color: #999;
+  font-size: 11px;
 }
 
 .stats-grid {
@@ -1874,121 +1730,72 @@ document.addEventListener('click', (e) => {
 .stat-card.enhanced {
   background: white;
   border: 1px solid #f0f0f0;
-  border-radius: 12px;
-  padding: 20px;
-  transition: all 0.3s;
-}
-
-.stat-card.enhanced:hover {
-  border-color: #1890ff;
-  box-shadow: 0 4px 20px rgba(24, 144, 255, 0.1);
-}
-
-.stat-header {
-  margin-bottom: 16px;
-}
-
-.stat-icon-container {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  border-radius: 10px;
+  padding: 16px;
 }
 
 .stat-icon-bg {
-  width: 50px;
-  height: 50px;
-  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .stat-icon {
-  font-size: 24px;
+  font-size: 22px;
   color: white;
 }
 
-.stat-trend {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.stat-trend.positive {
-  color: #52c41a;
-}
-
-.stat-trend.negative {
-  color: #ff4d4f;
-}
-
-.stat-trend.neutral {
-  color: #7f8c8d;
-}
-
-.trend-label {
-  font-size: 11px;
-  color: #7f8c8d;
-  margin-top: 2px;
-}
-
-.stat-body {
-  margin-top: 12px;
-}
-
 .stat-value {
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 700;
   color: #2c3e50;
-  margin-bottom: 4px;
-}
-
-.funding-value {
-  font-size: 24px;
-  color: #52c41a;
 }
 
 .stat-label {
   font-size: 13px;
-  color: #7f8c8d;
-  margin-bottom: 8px;
+  color: #999;
+  margin-top: 4px;
 }
 
 .stat-description {
   font-size: 11px;
-  color: #8c8c8c;
+  color: #bbb;
+  margin-top: 4px;
 }
 
-.chart-card {
-  padding: 20px;
+.funding-value {
+  color: #52c41a;
 }
 
 .chart-title {
-  font-size: 16px;
+  font-size: 14px;
   color: #2c3e50;
-  margin: 0 0 16px 0;
+  margin: 0 0 12px 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .chart-bars {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .chart-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .bar-label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 80px;
+  gap: 6px;
+  min-width: 70px;
 }
 
 .status-dot {
@@ -2010,14 +1817,14 @@ document.addEventListener('click', (e) => {
 }
 
 .bar {
-  height: 8px;
-  border-radius: 4px;
+  height: 6px;
+  border-radius: 3px;
   transition: width 0.3s ease;
 }
 
 .bar-value {
-  font-size: 12px;
-  color: #7f8c8d;
+  font-size: 11px;
+  color: #999;
   min-width: 24px;
   text-align: right;
 }
@@ -2027,73 +1834,41 @@ document.addEventListener('click', (e) => {
   grid-template-columns: repeat(2, 1fr);
   background: white;
   border: 1px solid #f0f0f0;
-  border-radius: 12px;
+  border-radius: 10px;
   overflow: hidden;
 }
 
 .mini-stat-card {
-  padding: 20px;
+  padding: 16px;
   text-align: center;
 }
 
-.mini-stat-header {
-  margin-bottom: 12px;
-}
-
 .mini-stat-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto;
-  font-size: 18px;
+  margin: 0 auto 10px;
+  font-size: 16px;
 }
 
 .mini-stat-value {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   color: #2c3e50;
-  margin-bottom: 4px;
 }
 
 .mini-stat-label {
-  font-size: 12px;
-  color: #7f8c8d;
-  margin-bottom: 8px;
-}
-
-.mini-stat-trend {
-  font-size: 12px;
-  font-weight: 500;
-  padding: 2px 6px;
-  border-radius: 10px;
-  display: inline-block;
-}
-
-.mini-stat-trend.positive {
-  background: #f6ffed;
-  color: #52c41a;
-}
-
-.mini-stat-trend.negative {
-  background: #fff2f0;
-  color: #ff4d4f;
-}
-
-.mini-stat-trend.neutral {
-  background: #f5f5f5;
-  color: #8c8c8c;
-}
-
-.funding-card .stat-body {
-  margin-top: 20px;
+  font-size: 11px;
+  color: #999;
+  margin-top: 4px;
 }
 
 .funding-breakdown {
-  margin-top: 16px;
-  padding-top: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px dashed #f0f0f0;
 }
 
@@ -2101,12 +1876,12 @@ document.addEventListener('click', (e) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   font-size: 12px;
 }
 
 .breakdown-label {
-  color: #7f8c8d;
+  color: #999;
 }
 
 .breakdown-value {
@@ -2114,20 +1889,16 @@ document.addEventListener('click', (e) => {
   color: #2c3e50;
 }
 
-.notifications-section {
-  padding: 24px;
-}
-
 .notifications-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .notification-item {
   display: flex;
   align-items: flex-start;
-  padding: 16px;
+  padding: 12px;
   background: #fafafa;
   border-radius: 8px;
   border: 1px solid #f0f0f0;
@@ -2137,21 +1908,19 @@ document.addEventListener('click', (e) => {
 }
 
 .notification-item:hover {
-  border-color: #d9d9d9;
+  border-color: #b31b1b;
   background: white;
 }
 
 .notification-item.unread {
-  background: #f6ffed;
-  border-color: #d9f7be;
+  background: #fef6f6;
+  border-color: #ffcdcd;
 }
 
 .notification-icon {
-  font-size: 20px;
-  margin-right: 12px;
-  margin-top: 2px;
+  font-size: 18px;
+  margin-right: 10px;
   min-width: 24px;
-  flex-shrink: 0;
 }
 
 .notification-content {
@@ -2170,23 +1939,20 @@ document.addEventListener('click', (e) => {
   font-weight: 500;
   color: #2c3e50;
   margin: 0;
-  font-size: 14px;
-  flex: 1;
-  margin-right: 8px;
+  font-size: 13px;
 }
 
 .notification-time {
-  font-size: 11px;
-  color: #7f8c8d;
+  font-size: 10px;
+  color: #bbb;
   white-space: nowrap;
-  flex-shrink: 0;
+  margin-left: 8px;
 }
 
 .notification-desc {
   color: #666;
-  font-size: 13px;
-  margin: 0 0 8px 0;
-  line-height: 1.4;
+  font-size: 12px;
+  margin: 0 0 6px 0;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -2196,15 +1962,14 @@ document.addEventListener('click', (e) => {
 .notification-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  font-size: 11px;
-  color: #7f8c8d;
+  gap: 6px;
+  font-size: 10px;
 }
 
 .notification-type {
   padding: 2px 6px;
   border-radius: 10px;
-  background: #f5f5f5;
+  background: #f0f0f0;
   color: #666;
 }
 
@@ -2212,81 +1977,55 @@ document.addEventListener('click', (e) => {
   background: #e6f7ff;
   color: #1890ff;
 }
-
 .notification-type.funding {
   background: #fff2f0;
   color: #ff4d4f;
 }
-
-.notification-type.achievement {
-  background: #f6ffed;
-  color: #52c41a;
-}
-
 .notification-type.system {
   background: #fff7e6;
   color: #fa8c16;
 }
-
 .notification-type.review {
   background: #f0f5ff;
   color: #2f54eb;
 }
 
-.notification-type.task {
-  background: #f6ffed;
-  color: #52c41a;
-}
-
-.notification-priority {
-  color: #ff4d4f;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
 .unread-dot {
   width: 8px;
   height: 8px;
-  background: #52c41a;
+  background: #b31b1b;
   border-radius: 50%;
   margin-left: 8px;
   flex-shrink: 0;
-  margin-top: 8px;
-}
-
-.system-status {
-  padding: 24px;
+  margin-top: 6px;
 }
 
 .status-card {
   background: #fafafa;
   border-radius: 8px;
-  padding: 20px;
-  border: 1px solid #f0f0f0;
+  padding: 16px;
 }
 
 .status-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .status-header h4 {
   margin: 0;
   color: #2c3e50;
-  font-size: 16px;
+  font-size: 14px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .status-badge {
-  padding: 4px 8px;
+  padding: 2px 8px;
   border-radius: 12px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
 }
 
@@ -2303,8 +2042,8 @@ document.addEventListener('click', (e) => {
 .status-info {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 10px;
+  margin-bottom: 16px;
 }
 
 .status-item {
@@ -2314,100 +2053,94 @@ document.addEventListener('click', (e) => {
 }
 
 .status-label {
-  color: #666;
-  font-size: 13px;
+  color: #999;
+  font-size: 12px;
 }
 
 .status-value {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
 }
 
 .status-value.success {
   color: #52c41a;
 }
-
 .status-value.error {
   color: #ff4d4f;
 }
 
 .status-refresh-btn {
-  padding: 8px 16px;
-  background: #1890ff;
+  padding: 6px 12px;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: background 0.3s;
+  width: 100%;
+  justify-content: center;
 }
 
 .status-refresh-btn:hover {
-  background: #40a9ff;
+  background: #8b0000;
 }
 
 .empty-state {
   text-align: center;
-  padding: 40px 20px;
-  color: #7f8c8d;
+  padding: 32px 20px;
+  color: #999;
   background: #fafafa;
   border-radius: 8px;
-  border: 1px dashed #f0f0f0;
 }
 
 .empty-icon {
-  font-size: 36px;
-  margin-bottom: 12px;
+  font-size: 32px;
+  margin-bottom: 10px;
   opacity: 0.5;
 }
 
 .empty-state p {
-  margin: 0 0 8px 0;
-  font-size: 14px;
+  margin: 0 0 4px 0;
+  font-size: 13px;
 }
 
 .empty-subtext {
-  font-size: 12px;
-  color: #8c8c8c;
-  margin-top: 4px;
+  font-size: 11px;
+  color: #bbb;
 }
 
 .create-btn {
-  padding: 8px 16px;
-  background: #1890ff;
+  padding: 6px 16px;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
-  margin-top: 12px;
-  transition: background 0.3s;
+  margin-top: 10px;
 }
 
 .create-btn:hover {
-  background: #40a9ff;
+  background: #8b0000;
 }
 
 .loading-state {
   text-align: center;
-  padding: 40px 20px;
-  color: #7f8c8d;
-  background: #fafafa;
-  border-radius: 8px;
-  border: 1px dashed #f0f0f0;
+  padding: 32px 20px;
+  color: #999;
 }
 
 .loading-spinner-small {
   width: 32px;
   height: 32px;
-  border: 3px solid #f3f3f3;
-  border-top: 3px solid #1890ff;
+  border: 3px solid #f0f0f0;
+  border-top: 3px solid #b31b1b;
   border-radius: 50%;
   animation: spin 1s linear infinite;
-  margin: 0 auto 16px;
+  margin: 0 auto 12px;
 }
 
 @keyframes spin {
@@ -2430,17 +2163,16 @@ document.addEventListener('click', (e) => {
   align-items: center;
   justify-content: center;
   z-index: 2000;
-  backdrop-filter: blur(4px);
 }
 
 .loading-spinner {
-  width: 60px;
-  height: 60px;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #1890ff;
+  width: 50px;
+  height: 50px;
+  border: 4px solid #f0f0f0;
+  border-top: 4px solid #b31b1b;
   border-radius: 50%;
   animation: spin 1s linear infinite;
-  margin: 0 auto 20px;
+  margin: 0 auto 16px;
 }
 
 .mobile-menu-overlay {
@@ -2467,43 +2199,38 @@ document.addEventListener('click', (e) => {
   .sidebar {
     transform: translateX(-100%);
   }
+  .sidebar.show {
+    transform: translateX(0);
+  }
   .main-wrapper {
     margin-left: 0 !important;
   }
   .mobile-menu-btn {
     display: flex;
   }
-  .mobile-menu-overlay {
-    display: block;
-  }
-  .dashboard-layout {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 768px) {
+  .dashboard-layout {
+    grid-template-columns: 1fr;
+  }
   .main-content {
     padding: 16px;
-  }
-  .dashboard-header {
-    padding: 0 16px;
-    height: 60px;
   }
   .welcome-card {
     flex-direction: column;
     text-align: center;
-    padding: 24px;
+    padding: 20px;
   }
   .welcome-illustration {
-    margin: 24px 0 0 0;
+    margin: 20px 0 0 0;
   }
   .quick-stats {
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
   }
   .stat-badge {
     min-width: 0;
-    width: 100%;
   }
 }
 </style>

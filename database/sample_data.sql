@@ -261,3 +261,213 @@ INSERT INTO `ExpenditureRecord` (`id`, `project_id`, `budget_id`, `expense_no`, 
 ('exp-rec-004', 'prj-002', 'bud-010', 'EXP-2026-004', '材料费', '试剂耗材采购', 150000.00, '采购细胞培养试剂、抗体等实验耗材', '根据实验进度分批采购', '赛默飞世尔科技', 'company', '555555555555555', '招商银行', 'submitted', 'usr-app2', NULL, NULL, NULL, NULL),
 
 ('exp-rec-005', 'prj-002', 'bud-011', 'EXP-2026-005', '测试费', '动物实验费用', 200000.00, '支付合作单位动物实验服务费（小鼠模型构建及药效评价）', '按合同约定支付中期款', '某某生物技术有限公司', 'company', '444444444444444', '建设银行', 'draft', 'usr-app2', NULL, NULL, NULL, NULL);
+
+
+use research_system;
+-- 孙殿森（校外用户）
+INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `phone`, `status`, `created_at`) VALUES
+('usr-sundiansen', 'sundiansen', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '孙殿森', 'diansensun@gmail.com', 'applicant', 'CodeNexus.AI', 'CEO', '13693675505', 'active', NOW());
+
+-- 王元淳（人大博士生）
+INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `phone`, `status`, `created_at`) VALUES
+('usr-wangyuanchun', 'wangyuanchun', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '王元淳', 'wangyuanchun@ruc.edu.cn', 'applicant', '中国人民大学', '博士生', '15303293784', 'active', NOW());
+
+-- 杨畅（独立团队）
+INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `phone`, `status`, `created_at`) VALUES
+('usr-yangchang', 'yangchang', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '杨畅', 'yc0131@qq.com', 'applicant', '中国人民大学未来人类联合研究院Sonusync X桥音工作室', '团队负责人', '13599913167', 'active', NOW());
+
+-- 程絮森（人大教授）
+INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `phone`, `status`, `created_at`) VALUES
+('usr-chengxusen', 'chengxusen', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '程絮森', 'xusen.cheng@ruc.edu.cn', 'applicant', '中国人民大学首都发展与战略研究院', '副院长/副总工程师', '18611385243', 'active', NOW());
+
+-- 添加核心成员作为普通用户（可选）
+INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `status`, `created_at`) VALUES
+('usr-zhangjing', 'zhangjing', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '张静', 'zhangjing@ruc.edu.cn', 'applicant', '中国人民大学', '教授', 'active', NOW()),
+('usr-leisiyu', 'leisiyu', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '雷思羽', 'leisiyu@ruc.edu.cn', 'applicant', '中国人民大学', '本科生', 'active', NOW()),
+('usr-qinzhenhan', 'qinzhenhan', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '秦禛涵', 'qinzhenhan@ruc.edu.cn', 'applicant', '中国人民大学', '本科生', 'active', NOW()),
+('usr-huangtianle', 'huangtianle', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '黄天乐', 'tianle.huang@qq.com', 'applicant', '中国人民大学', '博士研究生', 'active', NOW());
+
+-- 补充研究领域
+INSERT INTO `ResearchDomain` (`id`, `name`, `code`, `sort_order`, `enabled`) VALUES
+('dom-009', '数字孪生与元宇宙', 'DIGITAL_TWIN_METAVERSE', 9, TRUE),
+('dom-010', '音乐科技', 'MUSIC_TECH', 10, TRUE),
+('dom-011', '体育科技', 'SPORTS_TECH', 11, TRUE)
+ON DUPLICATE KEY UPDATE id = id;
+-- =============================================
+-- 插入项目数据
+-- =============================================
+
+-- 项目1：CodeNexus.AI 超大型代码仓资产管理系统
+INSERT INTO `Project` (
+    `id`, `applicant_id`, `project_code`, `title`, 
+    `tech_maturity`, `achievement_transform`, `poc_stage_requirement`,
+    `implementation_plan`, `abstract`, `detailed_introduction_part1`,
+    `detailed_introduction_part2`, `detailed_introduction_part3`,
+    `status`, `submit_date`, `created_at`
+) VALUES (
+    'prj-code-001', 
+    'usr-sundiansen',
+    'PRJ-CODE-2025-001',
+    'CodeNexus.AI 超大型代码仓资产管理系统',
+    'pilot',
+    'tech_license,joint_dev',
+    'feasibility_verify',
+    '第一阶段：代码知识图谱构建（1-6月）；第二阶段：交互式代码探索系统开发（7-12月）；第三阶段：健康度评估体系建立（13-18月）',
+    'CodeNexus.AI是一个针对超大型代码仓库的智能资产管理系统，通过代码知识图谱构建、交互式代码探索和代码资产健康度评估，解决AI编程中的"正确性雪崩"问题，使AI具备对百万行级代码库的全局准确理解。',
+    '成果简介：\n\n研发背景：AI初始代码生成准确率可以达到80-90%，但随着复杂度增加，错误累积效应显著。AI在修复bug时引入新的bug，形成"越改越错"的恶性循环。统计数据表示，AI生成代码的二次修改率高达40%，在复杂项目中AI代码测试通过率仅60%。\n\n核心问题：正确性雪崩存在于AI编程活动的所有环节，包括需求分析、设计、代码理解、编码、测试、debug、重构、审查、文档撰写、版本管理等。\n\n技术创新性：\n1. 代码知识图谱构建：用于防止系统知识流失\n2. 交互式代码探索：加速系统理解和维护\n3. 代码资产健康度评估：为决策提供数据支持\n\n推广应用价值：\n- 商业价值：显著提升研发效率与质量，降低开发成本\n- 战略价值：保障核心系统稳定与安全，支持信创/国产化战略\n\n前期应用情况：\n- 2025.07：入围第十二届深圳宝安创新创业大赛决赛\n- 2025.09-10：与华为技术有限公司联合验证，在鸿蒙内核百万级C代码库完成代码资产重构\n- 2025.10：入围第一届中国人民大学AI智能体创新应用大赛决赛\n- 2025.10-11：与青岛泛钛客科技有限公司在金融科技领域展开百万级Java代码资产重构',
+    '知识产权：暂无专利，计划未来1年拟新增专利5项，主要用于代码资产构建以及后续的工具产品方向。',
+    '已有应用/试点情况：成果已在多个标杆场景验证，包括与华为技术有限公司联合验证鸿蒙内核代码资产重构，与青岛泛钛客科技有限公司合作金融科技领域代码资产重构。',
+    'submitted',
+    '2025-11-01',
+    NOW()
+);
+
+-- 项目2：MyCoach智练
+INSERT INTO `Project` (
+    `id`, `applicant_id`, `project_code`, `title`,
+    `tech_maturity`, `achievement_transform`, `poc_stage_requirement`,
+    `implementation_plan`, `abstract`, `detailed_introduction_part1`,
+    `detailed_introduction_part2`, `detailed_introduction_part3`,
+    `status`, `submit_date`, `created_at`
+) VALUES (
+    'prj-coach-001',
+    'usr-wangyuanchun',
+    'PRJ-COACH-2025-001',
+    'MyCoach智练 - AI个性化训练引擎',
+    'pilot',
+    'equity_investment',
+    'commercial_verify',
+    '第一阶段：产品打磨期（2024.11-2025.02），完成全平台数据对接；第二阶段：市场验证期（2025.03-2025.08），启动收费订阅；第三阶段：规模化增长期（2025.09-2026.06），拓展安卓版；第四阶段：生态拓展期（2026.07-2026.12），探索海外市场',
+    'MyCoach智练是一款基于大模型智能体系统的个性化训练引擎APP，通过多源异构运动数据融合与治理，为用户提供练前计划生成、练中智能答疑、练后教练点评的全链路闭环服务。',
+    '成果简介：\n\n行业痛点：\n1. 专业教练资源稀缺且成本高昂：国内专业有氧教练供给严重不足，教练服务价格高达¥10,000/人/季度\n2. 多设备数据孤岛导致训练断层：运动者普遍使用Garmin、Apple、Coros等多品牌可穿戴设备，数据分散在各品牌App中\n\n核心技术：\n1. 基于大模型智能体系统的个性化训练引擎\n2. 多源异构运动数据融合与治理架构\n3. 时间-运动数据-课表关联的专用模型训练方法\n4. 闭环反馈优化算法\n\n技术成熟度：已完成原型系统开发，iOS应用MyCoach智练v1.0已发布至Apple TestFlight平台\n\n市场前景：中国有氧运动市场正处于爆发增长期，2023年全国举办认证马拉松赛事超500场，参赛人次突破500万。预计未来3年AI运动训练服务市场规模将达80-100亿元。',
+    '知识产权：计划申请软件著作权6项（iOS客户端、Android客户端、数据治理平台、智能问答引擎、训练计划生成系统、用户画像分析系统），发明专利申请3项。',
+    '已有应用/试点情况：已发版至Apple官方APP测试平台TestFlight，实现Garmin中国区账号同步，Apple Healthkit与Garmin国际区同步功能正在内测。',
+    'under_review',
+    '2025-10-15',
+    NOW()
+);
+
+-- 项目3：乾·乐 - 音乐理解与演奏辅助多功能智能体
+INSERT INTO `Project` (
+    `id`, `applicant_id`, `project_code`, `title`,
+    `tech_maturity`, `achievement_transform`, `poc_stage_requirement`,
+    `implementation_plan`, `abstract`, `detailed_introduction_part1`,
+    `detailed_introduction_part2`, `detailed_introduction_part3`,
+    `status`, `submit_date`, `created_at`
+) VALUES (
+    'prj-music-001',
+    'usr-yangchang',
+    'PRJ-MUSIC-2025-001',
+    '乾·乐 - 基于多模态大模型的音乐理解与演奏辅助多功能智能体',
+    'rd',
+    'equity_investment',
+    'creative_verify,feasibility_verify',
+    '第1-2月：市场调研及技术研发；第2-5月：产品开发与内部验证；第5-6月：产品试点与商业模式验证',
+    '乾·乐是一款基于多模态大模型的音乐理解与演奏辅助智能体，支持五线谱、简谱、减字谱等多谱种双向转换，提供智能作曲推荐与演奏指导。',
+    '成果简介：\n\n研发背景：从中国人民大学赋予的工作室长期愿景来说，希望打造一款推动发展跨文化乃至世界交响格局的音乐智能体。大众需求从音乐审美普及逐渐转变为参与音乐演奏。\n\n痛点问题：\n1. 市面上音乐软件中没有同时支持西洋乐、民乐的AI实时协作体系\n2. 模型识别乐谱准确率较低\n3. 民乐特殊记谱法的数字转换需求被国际市场长期忽视\n\n技术解决方案：\n- 多模态谱面解析引擎：支持PDF、MIDI、MusicXML及图像格式，基于CNN+Transformer架构的OMR技术\n- 音乐理解与分析系统：基于MusicXML的统一音乐表示框架\n- 智能作曲推荐与演奏：支持情绪、风格、场景驱动的音乐创作推荐\n\n前期应用情况：2025年10月10日于中国人民大学"平声·和鸣"中西音乐对话实验音乐会中首次全面落地应用。',
+    '知识产权：暂无，需专业指导。计划申请相关专利和软件著作权。',
+    '已有应用/试点情况：在《渔舟唱晚》现代改编、《山溪月》创作、《檐滴水》创排、《梁祝》改编等作品中成功应用验证。',
+    'draft',
+    '2025-10-20',
+    NOW()
+);
+
+-- 项目4：元宇宙智慧校园
+INSERT INTO `Project` (
+    `id`, `applicant_id`, `manager_id`, `project_code`, `title`,
+    `tech_maturity`, `achievement_transform`, `poc_stage_requirement`,
+    `implementation_plan`, `abstract`, `detailed_introduction_part1`,
+    `detailed_introduction_part2`, `detailed_introduction_part3`,
+    `status`, `submit_date`, `created_at`
+) VALUES (
+    'prj-metaverse-001',
+    'usr-chengxusen',
+    NULL,
+    'PRJ-META-2025-001',
+    '中国人民大学元宇宙智慧校园',
+    'pilot',
+    'joint_dev',
+    'feasibility_verify',
+    '第1-3月：完成首批知识产权布局；第4-6月：达成首家标杆客户签约；第7-12月：完成产品平台化升级',
+    '元宇宙智慧校园项目综合运用UE5引擎与Blender进行高精度场景建模，融合大语言模型技术开发AI助教，打造沉浸式虚拟校园环境，实现多校区联动教学。',
+    '成果简介：\n\n研发背景：响应国家教育数字化战略，把握元宇宙产业发展机遇，开发具有人大特色的元宇宙校园场景。\n\n核心问题：\n1. 现有线上教学平台功能单一，缺乏沉浸式交互体验\n2. 高校多校区办学普遍存在的"信息孤岛"与资源分配不均问题\n\n技术创新性：\n- 综合运用UE5引擎与Blender进行高精度场景建模\n- 融合大语言模型技术开发AI助教\n- 网络可见性控制、分层关卡加载及实例化关卡技术\n\n前期应用情况：\n- 已在人大新生研讨课中作为教学平台投入使用\n- 于通州校区智慧教室完成系统本地化部署\n- 参展国家级大型展会中国科幻大会\n- 获第十届"创客中国"元宇宙中小企业创新创业大赛创业组优胜奖',
+    '知识产权：已获得软件著作权Metadebc数字协作空间软件V1.0（登记号：2023SR1260277），计划申请1项发明专利和2项软件著作权。',
+    '已有应用/试点情况：2025年3月-5月已在人大新生研讨课中投入使用，大大提高学生小组研讨效率，广受好评。',
+    'approved',
+    '2025-09-01',
+    NOW()
+);
+-- 项目1关联领域
+INSERT INTO `ProjectResearchDomain` (`project_id`, `research_domain_id`) VALUES
+('prj-code-001', 'dom-001'),  -- 人工智能与机器学习
+('prj-code-001', 'dom-007');  -- 信息技术与软件
+
+-- 项目2关联领域
+INSERT INTO `ProjectResearchDomain` (`project_id`, `research_domain_id`) VALUES
+('prj-coach-001', 'dom-001'),  -- 人工智能与机器学习
+('prj-coach-001', 'dom-011');  -- 体育科技
+
+-- 项目3关联领域
+INSERT INTO `ProjectResearchDomain` (`project_id`, `research_domain_id`) VALUES
+('prj-music-001', 'dom-001'),  -- 人工智能与机器学习
+('prj-music-001', 'dom-010');  -- 音乐科技
+
+-- 项目4关联领域
+INSERT INTO `ProjectResearchDomain` (`project_id`, `research_domain_id`) VALUES
+('prj-metaverse-001', 'dom-009');  -- 数字孪生与元宇宙
+-- 项目1成员
+INSERT INTO `ProjectMember` (`id`, `project_id`, `name`, `user_id`, `role`, `title`, `organization`, `email`, `sort_order`) VALUES
+('mem-code-001', 'prj-code-001', '孙殿森', 'usr-sundiansen', 'principal', 'CEO', 'CodeNexus.AI', 'diansensun@gmail.com', 1);
+
+-- 项目2成员
+INSERT INTO `ProjectMember` (`id`, `project_id`, `name`, `user_id`, `role`, `title`, `organization`, `email`, `sort_order`) VALUES
+('mem-coach-001', 'prj-coach-001', '王元淳', 'usr-wangyuanchun', 'principal', '博士生', '中国人民大学', 'wangyuanchun@ruc.edu.cn', 1),
+('mem-coach-002', 'prj-coach-001', '张静', 'usr-zhangjing', 'other', '教授', '中国人民大学', 'zhangjing@ruc.edu.cn', 2);
+
+-- 项目3成员
+INSERT INTO `ProjectMember` (`id`, `project_id`, `name`, `user_id`, `role`, `title`, `organization`, `email`, `sort_order`) VALUES
+('mem-music-001', 'prj-music-001', '杨畅', 'usr-yangchang', 'principal', '团队负责人', 'Sonusync X桥音工作室', 'yc0131@qq.com', 1);
+
+-- 项目4成员
+INSERT INTO `ProjectMember` (`id`, `project_id`, `name`, `user_id`, `role`, `title`, `organization`, `email`, `sort_order`) VALUES
+('mem-meta-001', 'prj-metaverse-001', '程絮森', 'usr-chengxusen', 'principal', '副院长/副总工程师', '中国人民大学', 'xusen.cheng@ruc.edu.cn', 1),
+('mem-meta-002', 'prj-metaverse-001', '雷思羽', 'usr-leisiyu', 'other', '本科生', '中国人民大学', 'leisiyu@ruc.edu.cn', 2),
+('mem-meta-003', 'prj-metaverse-001', '秦禛涵', 'usr-qinzhenhan', 'other', '本科生', '中国人民大学', 'qinzhenhan@ruc.edu.cn', 3),
+('mem-meta-004', 'prj-metaverse-001', '黄天乐', 'usr-huangtianle', 'contact', '博士研究生', '中国人民大学', 'tianle.huang@qq.com', 4);
+-- 项目4预算（元宇宙智慧校园）
+INSERT INTO `ProjectBudget` (`id`, `project_id`, `category`, `item_name`, `description`, `amount`, `sort_order`) VALUES
+('bud-meta-001', 'prj-metaverse-001', '其他', '知识产权费用', '申请1项发明专利和2项软件著作权', 20000.00, 1),
+('bud-meta-002', 'prj-metaverse-001', '差旅费', '调研费用', '问卷设计、样本收集、数据分析工具及差旅费用', 50000.00, 2),
+('bud-meta-003', 'prj-metaverse-001', '其他', '系统开发费用', '开发平台测试版本、搭建演示环境及购置开发工具', 30000.00, 3);
+
+-- =============================================
+-- 插入项目附件记录
+-- =============================================
+
+-- 项目1：CodeNexus.AI 的图片附件
+INSERT INTO `ProjectAttachment` (`id`, `project_id`, `file_name`, `file_path`, `file_size`, `mime_type`, `type`, `description`, `sort_order`) VALUES
+(UUID(), 'prj-code-001', 'CodeNexus技术架构图.png', '/uploads/projects/prj-code-001/技术架构图.png', 512000, 'image/png', 'image', 'CodeNexus技术架构图', 1),
+(UUID(), 'prj-code-001', '衍生产品spec说明文档.png', '/uploads/projects/prj-code-001/说明文档.png', 456789, 'image/png', 'image', '根据github开源项目生成的衍生产品spec说明文档', 2),
+(UUID(), 'prj-code-001', '应用场景示意图.png', '/uploads/projects/prj-code-001/应用场景示意图.png', 389012, 'image/png', 'image', '应用场景示意图', 3),
+(UUID(), 'prj-code-001', '项目产品目标示意图.png', '/uploads/projects/prj-code-001/项目产品目标示意图.png', 234567, 'image/png', 'image', '项目产品目标示意图', 4);
+
+-- 项目2：MyCoach智练 的图片附件
+INSERT INTO `ProjectAttachment` (`id`, `project_id`, `file_name`, `file_path`, `file_size`, `mime_type`, `type`, `description`, `sort_order`) VALUES
+(UUID(), 'prj-coach-001', '练后分析.png', '/uploads/projects/prj-coach-001/数据分析.png', 345678, 'image/png', 'image', '练后分析界面截图', 1),
+(UUID(), 'prj-coach-001', '综合统计.png', '/uploads/projects/prj-coach-001/综合统计.png', 456789, 'image/png', 'image', '综合统计界面', 2),
+(UUID(), 'prj-coach-001', '练前计划.png', '/uploads/projects/prj-coach-001/练前计划.png', 234567, 'image/png', 'image', '练前计划生成界面', 3),
+(UUID(), 'prj-coach-001', '智能问答.png', '/uploads/projects/prj-coach-001/智能问答.png', 345678, 'image/png', 'image', '智能问答界面', 4),
+(UUID(), 'prj-coach-001', '数据治理.png', '/uploads/projects/prj-coach-001/数据治理.png', 456789, 'image/png', 'image', '数据治理架构', 5),
+(UUID(), 'prj-coach-001', '测试平台.png', '/uploads/projects/prj-coach-001/测试平台.png', 345678, 'image/png', 'image', ' 测试平台', 6);
+-- 项目3：乾·乐 的图片附件
+INSERT INTO `ProjectAttachment` (`id`, `project_id`, `file_name`, `file_path`, `file_size`, `mime_type`, `type`, `description`, `sort_order`) VALUES
+(UUID(), 'prj-music-001', '音乐会海报.png', '/uploads/projects/prj-music-001/宣传海报.png', 789012, 'image/png', 'image', '平声·和鸣实验音乐会海报', 1),
+(UUID(), 'prj-music-001', '线谱转简谱验证样例.png', '/uploads/projects/prj-music-001/简谱转换.png', 567890, 'image/png', 'image', '线谱转简谱功能研发阶段验证样例', 2),
+(UUID(), 'prj-music-001', '五线谱PDF分析样例.png', '/uploads/projects/prj-music-001/五线谱分析案例.png', 678901, 'image/png', 'image', '使用CV对五线谱PDF进行分析的样例', 3),
+(UUID(), 'prj-music-001', '梁祝改编实验版.png', '/uploads/projects/prj-music-001/人工智能大会.png', 456789, 'image/png', 'image', '11.15人工智能大会成功演绎《梁祝》改编实验版', 4);
+
+-- 项目4：元宇宙智慧校园 的图片附件
+INSERT INTO `ProjectAttachment` (`id`, `project_id`, `file_name`, `file_path`, `file_size`, `mime_type`, `type`, `description`, `sort_order`) VALUES
+(UUID(), 'prj-metaverse-001', '智慧教室场景.png', '/uploads/projects/prj-metaverse-001/元宇宙教室.png', 890123, 'image/png', 'image', '系统中的多功能智慧教室场景，支持在线互动研讨与沉浸式线上教学', 1),
+(UUID(), 'prj-metaverse-001', '课堂应用截图.png', '/uploads/projects/prj-metaverse-001/教学平台.png', 678901, 'image/png', 'image', '系统已在人大新生研讨课中作为教学平台投入使用', 2),
+(UUID(), 'prj-metaverse-001', '获奖证书.png', '/uploads/projects/prj-metaverse-001/奖状.png', 345678, 'image/png', 'image', '获第十届"创客中国"元宇宙中小企业创新创业大赛创业组优胜奖', 3);

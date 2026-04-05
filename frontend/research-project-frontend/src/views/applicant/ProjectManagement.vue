@@ -23,12 +23,12 @@
     <!-- 数据库状态提示 -->
     <div v-if="showDebugInfo" class="db-status-bar">
       <div class="db-status-content">
-        <span class="db-status-label">📊 API状态：</span>
+        <span class="db-status-label">📊 系统状态：</span>
         <span class="db-status-value" :class="{ connected: dbConnected }">
-          {{ dbConnected ? '✅ 已连接' : '❌ 未连接' }}
+          {{ dbConnected ? '✅ 正常' : '❌ 异常' }}
         </span>
         <span class="db-user-info" v-if="currentUser">
-          当前用户：{{ currentUser.name }} ({{ currentUser.role }})
+          当前用户：{{ currentUser.name }} ({{ userRoleName }})
         </span>
         <button @click="toggleDebugInfo" class="db-toggle-btn">
           {{ showDebugInfo ? '隐藏' : '显示' }}调试
@@ -97,7 +97,7 @@
         >
           <div class="project-header">
             <div class="project-title">{{ project.title }}</div>
-            <div class="project-status" :class="project.status">
+            <div class="project-status" :class="getStatusClass(project.status)">
               {{ getStatusText(project.status) }}
             </div>
           </div>
@@ -108,8 +108,8 @@
               <span class="meta-value">{{ project.project_code || '待生成' }}</span>
             </div>
             <div class="meta-item">
-              <span class="meta-label">项目类型：</span>
-              <span class="meta-value">{{ project.category || '未分类' }}</span>
+              <span class="meta-label">所属领域：</span>
+              <span class="meta-value">{{ project.research_domains || '未指定' }}</span>
             </div>
             <div class="meta-item">
               <span class="meta-label">研究期限：</span>
@@ -118,16 +118,16 @@
               >
             </div>
             <div class="meta-item">
-              <span class="meta-label">经费预算：</span>
-              <span class="meta-value">¥ {{ formatAmount(project.budget_total || 0) }}</span>
+              <span class="meta-label">批准预算：</span>
+              <span class="meta-value">¥ {{ formatAmount(project.approved_budget || 0) }}</span>
             </div>
             <div class="meta-item">
-              <span class="meta-label">研究周期：</span>
-              <span class="meta-value">{{ project.duration_months || 0 }} 个月</span>
+              <span class="meta-label">技术成熟度：</span>
+              <span class="meta-value">{{ getTechMaturityText(project.tech_maturity) }}</span>
             </div>
             <div class="meta-item">
-              <span class="meta-label">创建时间：</span>
-              <span class="meta-value">{{ formatDateTime(project.created_at) }}</span>
+              <span class="meta-label">提交日期：</span>
+              <span class="meta-value">{{ formatDate(project.submit_date) || '未提交' }}</span>
             </div>
           </div>
 
@@ -153,13 +153,29 @@
               </button>
             </template>
 
-            <template
-              v-else-if="project.status === 'submitted' || project.status === 'under_review'"
-            >
+            <template v-else-if="project.status === 'submitted'">
               <button class="action-btn secondary" @click.stop="viewDetails(project.id)">
                 查看详情
               </button>
               <button class="action-btn" @click.stop="trackProgress(project.id)">跟踪进度</button>
+            </template>
+
+            <template
+              v-else-if="project.status === 'under_review' || project.status === 'batch_review'"
+            >
+              <button class="action-btn secondary" @click.stop="viewDetails(project.id)">
+                查看详情
+              </button>
+              <button class="action-btn" @click.stop="trackProgress(project.id)">评审进度</button>
+            </template>
+
+            <template v-else-if="project.status === 'revision'">
+              <button class="action-btn primary" @click.stop="editProject(project.id)">
+                修改重提
+              </button>
+              <button class="action-btn secondary" @click.stop="viewDetails(project.id)">
+                查看意见
+              </button>
             </template>
 
             <template v-else>
@@ -175,10 +191,17 @@
               </button>
               <button
                 class="action-btn"
-                v-if="project.status === 'approved' || project.status === 'in_progress'"
+                v-if="project.status === 'approved' || project.status === 'incubating'"
                 @click.stop="trackProgress(project.id)"
               >
                 项目进展
+              </button>
+              <button
+                class="action-btn"
+                v-if="project.status === 'incubating'"
+                @click.stop="viewIncubation(project.id)"
+              >
+                孵化记录
               </button>
             </template>
           </div>
@@ -194,7 +217,7 @@
             </span>
             <span class="footer-item">
               <span class="footer-icon">📊</span>
-              研究领域：{{ project.research_field || '未指定' }}
+              {{ getStatusText(project.status) }}
             </span>
           </div>
         </div>
@@ -226,7 +249,7 @@
           >
             取消
           </button>
-          <button class="modal-btn danger" @click="confirmDelete" :loading="deleting">
+          <button class="modal-btn danger" @click="confirmDelete" :disabled="deleting">
             {{ deleting ? '删除中...' : '确认删除' }}
           </button>
         </div>
@@ -238,7 +261,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import axios from 'axios'
 
 const router = useRouter()
@@ -276,7 +299,7 @@ api.interceptors.response.use(
 
     if (error.response?.status === 401) {
       localStorage.removeItem('token')
-      localStorage.removeItem('user')
+      localStorage.removeItem('userInfo')
       ElMessage.error('登录已过期，请重新登录')
       router.push('/login')
     }
@@ -305,29 +328,23 @@ interface User {
 
 const currentUser = ref<User | null>(null)
 
-// 项目数据接口
+// 项目数据接口（适配新数据库）
 interface Project {
   id: string
-  project_code?: string
+  project_code: string
   title: string
-  category: string
-  research_field: string
-  abstract: string
-  keywords: string
-  background: string
-  objectives: string
-  methodology: string
-  expected_outcomes: string
-  budget_total: number
-  duration_months: number
-  start_date?: string
-  end_date?: string
   status: string
+  tech_maturity: string
+  approved_budget: number
+  submit_date: string
+  start_date: string
+  end_date: string
+  approval_date: string
   created_at: string
-  updated_at?: string
+  updated_at: string
   applicant_id: string
-  current_stage?: number
-  remarks?: string
+  applicant_name?: string
+  research_domains?: string
 }
 
 // 筛选和分页
@@ -342,17 +359,18 @@ const showDeleteConfirm = ref(false)
 const deleteProjectId = ref('')
 const deleteProjectTitle = ref('')
 
-// 状态选项卡
+// 状态选项卡（适配新数据库）
 const statusTabs = [
   { value: 'all', label: '全部项目' },
   { value: 'draft', label: '草稿箱' },
   { value: 'submitted', label: '已提交' },
-  { value: 'under_review', label: '评审中' },
-  { value: 'approved', label: '已立项' },
-  { value: 'in_progress', label: '进行中' },
+  { value: 'under_review', label: '专家评审中' },
+  { value: 'revision', label: '需修改' },
+  { value: 'batch_review', label: '集中评审' },
+  { value: 'approved', label: '已批准' },
+  { value: 'incubating', label: '孵化中' },
   { value: 'completed', label: '已完成' },
-  { value: 'rejected', label: '已驳回' },
-  { value: 'stage_review', label: '阶段评审' },
+  { value: 'rejected', label: '未通过' },
   { value: 'terminated', label: '已终止' },
 ]
 
@@ -360,6 +378,16 @@ const statusTabs = [
 const activeTabName = computed(() => {
   const tab = statusTabs.find((t) => t.value === activeTab.value)
   return tab ? tab.label : ''
+})
+
+const userRoleName = computed(() => {
+  const roleMap: Record<string, string> = {
+    applicant: '项目申请人',
+    reviewer: '评审专家',
+    project_manager: '项目经理',
+    admin: '系统管理员',
+  }
+  return roleMap[currentUser.value?.role || ''] || '申请人'
 })
 
 const allProjects = ref<Project[]>([])
@@ -378,10 +406,7 @@ const filteredProjects = computed(() => {
     projects = projects.filter(
       (p) =>
         (p.title && p.title.toLowerCase().includes(keyword)) ||
-        (p.project_code && p.project_code.toLowerCase().includes(keyword)) ||
-        (p.keywords && p.keywords.toLowerCase().includes(keyword)) ||
-        (p.abstract && p.abstract.toLowerCase().includes(keyword)) ||
-        (p.research_field && p.research_field.toLowerCase().includes(keyword)),
+        (p.project_code && p.project_code.toLowerCase().includes(keyword)),
     )
   }
 
@@ -414,22 +439,53 @@ const getTabCount = (tab: string) => {
   return allProjects.value.filter((p) => p.status === tab).length
 }
 
+// 状态文本映射
 const getStatusText = (status: string) => {
   const statusMap: Record<string, string> = {
     draft: '草稿',
     submitted: '已提交',
-    under_review: '评审中',
-    approved: '已立项',
-    in_progress: '进行中',
+    under_review: '专家评审中',
+    revision: '需修改',
+    batch_review: '集中评审中',
+    approved: '已批准',
+    incubating: '孵化中',
+    rejected: '未通过',
     completed: '已完成',
-    rejected: '已驳回',
-    stage_review: '阶段评审',
     terminated: '已终止',
   }
   return statusMap[status] || status
 }
 
+// 状态样式类
+const getStatusClass = (status: string) => {
+  const classMap: Record<string, string> = {
+    draft: 'draft',
+    submitted: 'submitted',
+    under_review: 'reviewing',
+    revision: 'revision',
+    batch_review: 'reviewing',
+    approved: 'approved',
+    incubating: 'incubating',
+    completed: 'completed',
+    rejected: 'rejected',
+    terminated: 'terminated',
+  }
+  return classMap[status] || status
+}
+
+// 技术成熟度文本
+const getTechMaturityText = (maturity: string) => {
+  const map: Record<string, string> = {
+    rd: '研发阶段',
+    pilot: '小试阶段',
+    intermediate_trial: '中试阶段',
+    small_batch_prod: '小批量生产',
+  }
+  return map[maturity] || maturity || '未指定'
+}
+
 const formatAmount = (amount: number) => {
+  if (!amount) return '0.00'
   return new Intl.NumberFormat('zh-CN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -446,33 +502,18 @@ const formatDate = (dateString?: string) => {
   }
 }
 
-const formatDateTime = (dateString?: string) => {
-  if (!dateString) return ''
-  try {
-    const date = new Date(dateString)
-    return date.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return dateString
-  }
-}
-
 const getProgressWidth = (status: string) => {
   const progressMap: Record<string, number> = {
-    draft: 25,
-    submitted: 50,
-    under_review: 75,
-    approved: 90,
-    in_progress: 60,
+    draft: 10,
+    submitted: 30,
+    under_review: 50,
+    revision: 40,
+    batch_review: 55,
+    approved: 70,
+    incubating: 85,
     completed: 100,
-    rejected: 25,
-    stage_review: 80,
-    terminated: 100,
+    rejected: 0,
+    terminated: 0,
   }
   return progressMap[status] || 0
 }
@@ -482,11 +523,12 @@ const getProgressClass = (status: string) => {
     draft: 'draft',
     submitted: 'submitted',
     under_review: 'reviewing',
+    revision: 'revision',
+    batch_review: 'reviewing',
     approved: 'approved',
-    in_progress: 'in_progress',
+    incubating: 'incubating',
     completed: 'completed',
     rejected: 'rejected',
-    stage_review: 'stage_review',
   }
   return classMap[status] || ''
 }
@@ -494,14 +536,15 @@ const getProgressClass = (status: string) => {
 const getProgressText = (status: string) => {
   const textMap: Record<string, string> = {
     draft: '待提交',
-    submitted: '等待学院审核',
+    submitted: '等待审核',
     under_review: '专家评审中',
-    approved: '已立项，准备启动',
-    in_progress: '项目执行中',
+    revision: '需修改后重提',
+    batch_review: '集中评审中',
+    approved: '已批准，准备启动',
+    incubating: '孵化进行中',
     completed: '项目已完成',
-    rejected: '已驳回，请修改',
-    stage_review: '阶段评审中',
-    terminated: '项目已终止',
+    rejected: '未通过',
+    terminated: '已终止',
   }
   return textMap[status] || ''
 }
@@ -509,9 +552,22 @@ const getProgressText = (status: string) => {
 // 加载用户信息
 const loadCurrentUser = async () => {
   try {
-    const userStr = localStorage.getItem('user')
-    if (userStr) {
-      currentUser.value = JSON.parse(userStr)
+    const userInfoStr = localStorage.getItem('userInfo')
+    if (userInfoStr) {
+      currentUser.value = JSON.parse(userInfoStr)
+    } else {
+      const userId = localStorage.getItem('userId')
+      const userName = localStorage.getItem('userName')
+      const userRole = localStorage.getItem('userRole')
+      if (userId) {
+        currentUser.value = {
+          id: userId,
+          username: userName || '',
+          name: userName || '用户',
+          email: '',
+          role: userRole || 'applicant',
+        }
+      }
     }
   } catch (error) {
     console.error('加载用户信息失败:', error)
@@ -524,23 +580,19 @@ const loadProjects = async () => {
   errorMessage.value = ''
 
   try {
-    console.log('🔄 从数据库加载项目列表...')
+    const userId = currentUser.value?.id || localStorage.getItem('userId')
+    console.log('🔄 加载项目列表，用户ID:', userId)
 
     // 调用后端API获取项目列表
-    const response = await api.get('/projects')
+    const response = await api.get(`/projects?applicant_id=${userId}`)
     console.log('项目列表响应:', response)
 
     if (response.success && response.data) {
       allProjects.value = response.data
-      totalProjects.value = response.total || response.data.length
+      totalProjects.value = response.data.length
       dbConnected.value = true
 
       console.log(`✅ 成功加载 ${allProjects.value.length} 个项目`)
-
-      // 如果没有数据，可以显示提示
-      if (allProjects.value.length === 0) {
-        ElMessage.info('您还没有创建任何项目')
-      }
     } else {
       errorMessage.value = response.error || '加载项目列表失败'
       ElMessage.error('加载项目列表失败')
@@ -572,6 +624,10 @@ const trackProgress = (projectId: string) => {
   router.push(`/projects/progress/${projectId}`)
 }
 
+const viewIncubation = (projectId: string) => {
+  router.push(`/projects/incubation/${projectId}`)
+}
+
 const resubmitProject = (projectId: string) => {
   router.push(`/projects/edit/${projectId}`)
 }
@@ -590,14 +646,11 @@ const confirmDelete = async () => {
   try {
     console.log('🗑️ 删除项目:', deleteProjectId.value)
 
-    // 调用后端API删除项目
     const response = await api.delete(`/projects/${deleteProjectId.value}`)
 
     if (response.success) {
-      // 从列表中移除
       allProjects.value = allProjects.value.filter((p) => p.id !== deleteProjectId.value)
       totalProjects.value = allProjects.value.length
-
       ElMessage.success('项目删除成功')
       showDeleteConfirm.value = false
     } else {
@@ -617,7 +670,6 @@ const handleSearch = () => {
   currentPage.value = 1
 }
 
-// 调试信息
 const toggleDebugInfo = () => {
   showDebugInfo.value = !showDebugInfo.value
 }
@@ -625,15 +677,8 @@ const toggleDebugInfo = () => {
 // 初始化
 onMounted(async () => {
   console.log('🚀 ProjectManagement 组件初始化')
-
-  // 加载用户信息
   await loadCurrentUser()
-
-  // 加载项目
   await loadProjects()
-
-  console.log('当前用户:', currentUser.value)
-  console.log('项目数量:', allProjects.value.length)
 })
 </script>
 
@@ -650,10 +695,10 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 24px;
-  padding: 20px;
+  padding: 20px 24px;
   background: white;
   border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .header-left h1 {
@@ -668,7 +713,7 @@ onMounted(async () => {
 }
 
 .loading-indicator {
-  color: #1890ff;
+  color: #b31b1b;
   margin-left: 10px;
   font-size: 12px;
 }
@@ -683,7 +728,7 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   padding: 10px 20px;
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
   text-decoration: none;
   border-radius: 8px;
@@ -692,9 +737,9 @@ onMounted(async () => {
 }
 
 .create-btn:hover {
-  background: #40a9ff;
+  background: #8b0000;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
+  box-shadow: 0 4px 12px rgba(179, 27, 27, 0.3);
 }
 
 .create-btn span {
@@ -731,9 +776,6 @@ onMounted(async () => {
   border-radius: 8px;
   padding: 12px 20px;
   margin-bottom: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
 }
 
 .db-status-content {
@@ -772,7 +814,7 @@ onMounted(async () => {
 
 .db-toggle-btn {
   padding: 4px 12px;
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 4px;
@@ -825,10 +867,10 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 24px;
-  padding: 20px;
+  padding: 16px 20px;
   background: white;
   border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .filter-tabs {
@@ -856,7 +898,7 @@ onMounted(async () => {
 }
 
 .filter-tab.active {
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
 }
 
@@ -866,10 +908,14 @@ onMounted(async () => {
 }
 
 .tab-count {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.1);
   padding: 2px 8px;
   border-radius: 10px;
   font-size: 12px;
+}
+
+.filter-tab.active .tab-count {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .search-box {
@@ -888,8 +934,8 @@ onMounted(async () => {
 
 .search-box input:focus {
   outline: none;
-  border-color: #1890ff;
-  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+  border-color: #b31b1b;
+  box-shadow: 0 0 0 2px rgba(179, 27, 27, 0.2);
 }
 
 .search-box input:disabled {
@@ -911,11 +957,6 @@ onMounted(async () => {
   background: #e8e8e8;
 }
 
-.search-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 /* 加载状态 */
 .loading-container {
   display: flex;
@@ -925,14 +966,14 @@ onMounted(async () => {
   padding: 80px 20px;
   background: white;
   border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .loading-spinner {
   width: 50px;
   height: 50px;
   border: 3px solid #f3f3f3;
-  border-top: 3px solid #1890ff;
+  border-top: 3px solid #b31b1b;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 20px;
@@ -948,7 +989,7 @@ onMounted(async () => {
 }
 
 .loading-text {
-  color: #1890ff;
+  color: #b31b1b;
   font-weight: bold;
 }
 
@@ -962,7 +1003,7 @@ onMounted(async () => {
   padding: 60px 20px;
   background: white;
   border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .empty-icon {
@@ -984,7 +1025,7 @@ onMounted(async () => {
 .empty-action {
   display: inline-block;
   padding: 10px 24px;
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
   text-decoration: none;
   border-radius: 6px;
@@ -992,13 +1033,13 @@ onMounted(async () => {
 }
 
 .empty-action:hover {
-  background: #40a9ff;
+  background: #8b0000;
 }
 
 /* 项目卡片网格 */
 .projects-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
   gap: 24px;
 }
 
@@ -1012,7 +1053,7 @@ onMounted(async () => {
   background: white;
   border-radius: 12px;
   padding: 24px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   transition: all 0.3s;
   cursor: pointer;
   border: 1px solid transparent;
@@ -1020,8 +1061,8 @@ onMounted(async () => {
 
 .project-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-  border-color: #1890ff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  border-color: #b31b1b;
 }
 
 .project-header {
@@ -1056,42 +1097,34 @@ onMounted(async () => {
   background: #fff7e6;
   color: #fa8c16;
 }
-
 .project-status.submitted {
   background: #e6f7ff;
   color: #1890ff;
 }
-
-.project-status.under_review {
+.project-status.reviewing {
+  background: #f0f5ff;
+  color: #2f54eb;
+}
+.project-status.revision {
   background: #fff0f6;
   color: #eb2f96;
 }
-
 .project-status.approved {
   background: #f6ffed;
   color: #52c41a;
 }
-
-.project-status.in_progress {
-  background: #f0f5ff;
-  color: #2f54eb;
+.project-status.incubating {
+  background: #e6fffb;
+  color: #13c2c2;
 }
-
 .project-status.completed {
   background: #f6ffed;
   color: #52c41a;
 }
-
 .project-status.rejected {
   background: #fff2f0;
   color: #ff4d4f;
 }
-
-.project-status.stage_review {
-  background: #fff7e6;
-  color: #fa8c16;
-}
-
 .project-status.terminated {
   background: #f5f5f5;
   color: #8c8c8c;
@@ -1106,7 +1139,7 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   margin-bottom: 8px;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .meta-item:last-child {
@@ -1114,8 +1147,8 @@ onMounted(async () => {
 }
 
 .meta-label {
-  color: #666;
-  min-width: 80px;
+  color: #999;
+  min-width: 85px;
 }
 
 .meta-value {
@@ -1132,14 +1165,14 @@ onMounted(async () => {
 }
 
 .progress-label {
-  font-size: 14px;
+  font-size: 13px;
   color: #666;
   margin-bottom: 8px;
 }
 
 .progress-bar {
   height: 8px;
-  background: #f5f5f5;
+  background: #f0f0f0;
   border-radius: 4px;
   overflow: hidden;
   margin-bottom: 8px;
@@ -1154,33 +1187,26 @@ onMounted(async () => {
 .progress-fill.draft {
   background: #fa8c16;
 }
-
 .progress-fill.submitted {
   background: #1890ff;
 }
-
 .progress-fill.reviewing {
+  background: #2f54eb;
+}
+.progress-fill.revision {
   background: #eb2f96;
 }
-
 .progress-fill.approved {
   background: #52c41a;
 }
-
-.progress-fill.in_progress {
-  background: #2f54eb;
+.progress-fill.incubating {
+  background: #13c2c2;
 }
-
 .progress-fill.completed {
   background: #52c41a;
 }
-
 .progress-fill.rejected {
   background: #ff4d4f;
-}
-
-.progress-fill.stage_review {
-  background: #fa8c16;
 }
 
 .progress-text {
@@ -1202,7 +1228,7 @@ onMounted(async () => {
   border: 1px solid #d9d9d9;
   background: white;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.3s;
 }
@@ -1212,13 +1238,13 @@ onMounted(async () => {
 }
 
 .action-btn.primary {
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
-  border-color: #1890ff;
+  border-color: #b31b1b;
 }
 
 .action-btn.primary:hover {
-  background: #40a9ff;
+  background: #8b0000;
 }
 
 .action-btn.secondary {
@@ -1271,7 +1297,7 @@ onMounted(async () => {
   padding: 20px;
   background: white;
   border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .page-btn {
@@ -1286,8 +1312,8 @@ onMounted(async () => {
 
 .page-btn:hover:not(:disabled) {
   background: #f5f5f5;
-  border-color: #1890ff;
-  color: #1890ff;
+  border-color: #b31b1b;
+  color: #b31b1b;
 }
 
 .page-btn:disabled {
@@ -1376,11 +1402,6 @@ onMounted(async () => {
   background: #ff7875;
 }
 
-.modal-btn.danger:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 /* 响应式调整 */
 @media (max-width: 992px) {
   .status-filter {
@@ -1391,6 +1412,13 @@ onMounted(async () => {
 
   .filter-tabs {
     justify-content: center;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 8px;
+  }
+
+  .filter-tab {
+    flex-shrink: 0;
   }
 
   .search-box {
@@ -1415,15 +1443,6 @@ onMounted(async () => {
 
   .header-actions {
     flex-direction: column;
-  }
-
-  .filter-tabs {
-    overflow-x: auto;
-    padding-bottom: 8px;
-  }
-
-  .filter-tab {
-    flex-shrink: 0;
   }
 
   .project-card {
