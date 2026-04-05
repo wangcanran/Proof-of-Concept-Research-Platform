@@ -3,14 +3,14 @@ const http = require('http');
 const url = require('url');
 const mysql = require('mysql2/promise');
 const { randomUUID } = require('crypto');
-const { formidable } = require('formidable');
+
 // MySQL配置
 const DB_CONFIG = {
-  host: '172.25.160.1',
+  host: 'localhost',
   port: 3306,
   user: 'root',
   password: 'f2971404639',
-  database: 'research_system_new',
+  database: 'research_system',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
@@ -136,43 +136,7 @@ async function verifyToken(token) {
     return null;
   }
 }
-// 在文件开头添加以下辅助函数
 
-// 解析请求体
-async function getBody(req) {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', chunk => {
-      body += chunk.toString();
-    });
-    req.on('end', () => {
-      try {
-        resolve(JSON.parse(body));
-      } catch (error) {
-        resolve({});
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-// 生成UUID
-function generateUUID() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
-
-// 计算工作量评分（如果还没有这个函数）
-function calculateWorkloadScore(recentReviews) {
-  if (recentReviews === 0) return 100; // 无近期评审，工作量最小
-  if (recentReviews <= 2) return 80;   // 少量评审
-  if (recentReviews <= 5) return 60;   // 中等评审量
-  if (recentReviews <= 10) return 40;  // 较多评审
-  return 20;                            // 评审量很大
-}
 // 辅助函数：检查权限
 function checkPermission(userRole, requiredRoles) {
   if (!userRole) return false;
@@ -245,7 +209,7 @@ const server = http.createServer(async (req, res) => {
         success: true,
         message: '研究项目管理系统API',
         version: '1.0.0',
-        database: 'research_system_new',
+        database: 'research_system',
         endpoints: {
           public: [
             { path: '/api/auth/login', method: 'POST', description: '用户登录' },
@@ -386,34 +350,20 @@ const server = http.createServer(async (req, res) => {
       try {
         console.log('📊 获取申请人仪表板数据，用户ID:', user.id);
         
-        // 1. 获取项目统计 - 适配新数据库的 Project 表状态
+        // 1. 获取项目统计
         const [projectStats] = await pool.query(`
           SELECT 
             COUNT(*) as total_projects,
-            SUM(CASE WHEN status IN ('draft', 'submitted', 'under_review', 'revision', 'batch_review') THEN 1 ELSE 0 END) as pending_reviews,
-            SUM(CASE WHEN status = 'incubating' THEN 1 ELSE 0 END) as ongoing_projects,
-            SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted_projects,
-            SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_projects,
-            SUM(CASE WHEN status IN ('under_review', 'revision', 'batch_review') THEN 1 ELSE 0 END) as reviewing_projects,
-            COALESCE(SUM(budget_total), 0) as total_funds
+            SUM(CASE WHEN status IN ('draft', 'submitted', 'under_review') THEN 1 ELSE 0 END) as pending_reviews,
+            SUM(CASE WHEN status IN ('approved', 'in_progress') THEN 1 ELSE 0 END) as ongoing_projects
           FROM \`Project\`
           WHERE applicant_id = ?
         `, [user.id]);
         
-        const statsData = projectStats[0] || {
-          total_projects: 0,
-          pending_reviews: 0,
-          ongoing_projects: 0,
-          submitted_projects: 0,
-          approved_projects: 0,
-          reviewing_projects: 0,
-          total_funds: 0
-        };
-        
-        // 2. 获取待办事项 - 从新数据库表获取
+        // 2. 获取待办事项（从多个来源）
         const pendingTasks = [];
         
-        // 2.1 待处理的项目（草稿和需要修改的）
+        // 2.1 待处理的项目
         const [projectTasks] = await pool.query(`
           SELECT 
             id,
@@ -422,12 +372,27 @@ const server = http.createServer(async (req, res) => {
             DATE_FORMAT(created_at, '%Y-%m-%d') as deadline
           FROM \`Project\`
           WHERE applicant_id = ? 
-            AND status IN ('draft', 'revision')
+            AND status IN ('draft', 'under_review')
           ORDER BY created_at DESC
           LIMIT 5
         `, [user.id]);
         
-        // 2.2 待处理的成果审核（ProjectAchievement 表）
+        // 2.2 待处理的支出申请
+        const [expenditureTasks] = await pool.query(`
+          SELECT 
+            er.id,
+            CONCAT('审批支出申请: ', er.item_name) as title,
+            'expenditure_review' as type,
+            DATE_FORMAT(er.created_at, '%Y-%m-%d') as deadline
+          FROM \`ExpenditureRecord\` er
+          INNER JOIN \`Project\` p ON er.project_id = p.id
+          WHERE p.applicant_id = ?
+            AND er.status = 'submitted'
+          ORDER BY er.created_at DESC
+          LIMIT 5
+        `, [user.id]);
+        
+        // 2.3 待处理的成果审核
         const [achievementTasks] = await pool.query(`
           SELECT 
             pa.id,
@@ -437,7 +402,7 @@ const server = http.createServer(async (req, res) => {
           FROM \`ProjectAchievement\` pa
           INNER JOIN \`Project\` p ON pa.project_id = p.id
           WHERE p.applicant_id = ?
-            AND pa.status = 'submitted'
+            AND pa.status = 'under_review'
           ORDER BY pa.created_at DESC
           LIMIT 5
         `, [user.id]);
@@ -445,10 +410,11 @@ const server = http.createServer(async (req, res) => {
         // 合并所有待办事项
         pendingTasks.push(
           ...projectTasks.map(task => ({ ...task, id: `proj_${task.id}`, priority: 'medium' })),
+          ...expenditureTasks.map(task => ({ ...task, id: `exp_${task.id}`, priority: 'high' })),
           ...achievementTasks.map(task => ({ ...task, id: `ach_${task.id}`, priority: 'medium' }))
         );
         
-        // 3. 获取最新通知 - 适配 Notification 表
+        // 3. 获取最新通知（使用你的Notification表结构）
         const [notifications] = await pool.query(`
           SELECT 
             id,
@@ -470,51 +436,43 @@ const server = http.createServer(async (req, res) => {
             p.id,
             p.title,
             p.status,
+            p.current_stage,
+            CASE 
+              WHEN p.current_stage = 1 THEN 33
+              WHEN p.current_stage = 2 THEN 66
+              WHEN p.current_stage = 3 THEN 100
+              ELSE 0
+            END as progress,
             p.end_date as deadline,
             u.name as manager_name
           FROM \`Project\` p
-          LEFT JOIN \`User\` u ON p.manager_id = u.id
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
           WHERE p.applicant_id = ?
-            AND p.status NOT IN ('draft', 'rejected', 'terminated')
+            AND p.status NOT IN ('draft', 'rejected')
           ORDER BY p.created_at DESC
           LIMIT 5
         `, [user.id]);
         
-        // 计算项目进度
-        const projectsWithProgress = myProjects.map(project => ({
-          ...project,
-          progress: calculateProjectProgress(project.status)
-        }));
-        
-        // 5. 获取趋势数据（基于时间对比）
-        // 获取本月的项目提交数
-        const [currentMonthStats] = await pool.query(`
-          SELECT COUNT(*) as count
+        // 5. 获取项目统计卡片数据
+        const [statsCards] = await pool.query(`
+          SELECT 
+            COUNT(CASE WHEN status IN ('submitted', 'under_review') THEN 1 END) as submitted_projects,
+            COUNT(CASE WHEN status = 'approved' THEN 1 END) as approved_projects,
+            COUNT(CASE WHEN status = 'under_review' THEN 1 END) as reviewing_projects,
+            COALESCE(SUM(budget_total), 0) as total_funds
           FROM \`Project\`
-          WHERE applicant_id = ? 
-            AND DATE_FORMAT(created_at, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m')
+          WHERE applicant_id = ?
         `, [user.id]);
         
-        // 获取上个月的项目提交数
-        const [lastMonthStats] = await pool.query(`
-          SELECT COUNT(*) as count
-          FROM \`Project\`
-          WHERE applicant_id = ? 
-            AND DATE_FORMAT(created_at, '%Y-%m') = DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m')
-        `, [user.id]);
+        // 6. 获取趋势数据（简化版，实际应该比较前后周期）
+        const trends = {
+          submission_trend: 12.5,
+          approval_trend: 8.3,
+          review_trend: -2.1,
+          fund_trend: 15.7
+        };
         
-        const submissionTrend = lastMonthStats[0]?.count > 0 
-          ? ((currentMonthStats[0]?.count - lastMonthStats[0]?.count) / lastMonthStats[0]?.count * 100).toFixed(1)
-          : 0;
-        
-        // 获取经费使用趋势（简化版）
-        const [fundStats] = await pool.query(`
-          SELECT COALESCE(SUM(approved_budget), 0) as total_approved
-          FROM \`Project\`
-          WHERE applicant_id = ? AND status = 'approved'
-        `, [user.id]);
-        
-        // 6. 获取未读通知数量
+        // 7. 获取未读通知数量
         const [unreadCountResult] = await pool.query(`
           SELECT COUNT(*) as count
           FROM \`Notification\`
@@ -523,33 +481,19 @@ const server = http.createServer(async (req, res) => {
         
         const unreadCount = unreadCountResult[0]?.count || 0;
         
-        // 7. 获取用户信息
-        const [userInfo] = await pool.query(`
-          SELECT name, username, email, department, title
-          FROM \`User\`
-          WHERE id = ?
-        `, [user.id]);
-        
-        const currentUser = userInfo[0] || { name: user.username };
-        
         // 构建响应数据
         const responseData = {
           success: true,
           data: {
             stats: {
-              total_projects: statsData.total_projects || 0,
-              pending_reviews: statsData.pending_reviews || 0,
-              ongoing_projects: statsData.ongoing_projects || 0,
-              submitted_projects: statsData.submitted_projects || 0,
-              approved_projects: statsData.approved_projects || 0,
-              reviewing_projects: statsData.reviewing_projects || 0,
-              total_funds: statsData.total_funds || 0,
-              used_funds: Math.round((statsData.total_funds || 0) * 0.65), // 模拟已使用经费
-              remaining_funds: Math.round((statsData.total_funds || 0) * 0.35),
-              submission_trend: parseFloat(submissionTrend),
-              approval_trend: 5.2,
-              review_trend: -1.5,
-              fund_trend: 8.3
+              total_projects: projectStats[0]?.total_projects || 0,
+              pending_reviews: projectStats[0]?.pending_reviews || 0,
+              ongoing_projects: projectStats[0]?.ongoing_projects || 0,
+              submitted_projects: statsCards[0]?.submitted_projects || 0,
+              approved_projects: statsCards[0]?.approved_projects || 0,
+              reviewing_projects: statsCards[0]?.reviewing_projects || 0,
+              total_funds: statsCards[0]?.total_funds || 0,
+              ...trends
             },
             pending_tasks: pendingTasks.map((task, index) => ({
               id: index + 1,
@@ -567,28 +511,19 @@ const server = http.createServer(async (req, res) => {
               icon: getNotificationIcon(notif.type),
               time: formatRelativeTime(notif.created_time),
               read: notif.is_read === 1,
-              priority: notif.priority,
-              type: notif.type,
               raw_id: notif.id,
               raw_type: notif.type
             })),
-            my_projects: projectsWithProgress.map((project, index) => ({
+            my_projects: myProjects.map((project, index) => ({
               id: index + 1,
               title: project.title,
               status: project.status,
-              progress: project.progress,
-              deadline: project.deadline ? formatDate(project.deadline) : '未设置',
-              manager: project.manager_name || '待分配',
+              progress: project.progress || 0,
+              deadline: project.deadline || '未设置',
+              manager: project.manager_name || user.name,
               raw_id: project.id
             })),
-            unread_count: unreadCount,
-            user_info: {
-              name: currentUser.name,
-              username: currentUser.username,
-              email: currentUser.email,
-              department: currentUser.department,
-              title: currentUser.title
-            }
+            unread_count: unreadCount
           }
         };
         
@@ -607,70 +542,143 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 辅助函数：计算项目进度
-    function calculateProjectProgress(status) {
-      const progressMap = {
-        'draft': 20,
-        'submitted': 40,
-        'under_review': 50,
-        'revision': 45,
-        'batch_review': 55,
-        'approved': 70,
-        'incubating': 80,
-        'completed': 100,
-        'rejected': 0,
-        'terminated': 0
-      };
-      return progressMap[status] || 0;
-    }
-
-    // 辅助函数：格式化日期
-    function formatDate(date) {
-      if (!date) return '';
-      const d = new Date(date);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    }
-
-    // 辅助函数：获取任务类型标签
-    function getTaskTypeLabel(type) {
-      const typeMap = {
-        'project': '项目任务',
-        'achievement_review': '成果审核',
-        'expenditure_review': '经费审批',
-        'review_task': '评审任务'
-      };
-      return typeMap[type] || '待办任务';
-    }
-
-    // 辅助函数：获取通知图标
-    function getNotificationIcon(type) {
-      const iconMap = {
-        'project': '📋',
-        'review': '⭐',
-        'funding': '💰',
-        'incubation': '🏭',
-        'system': '🔧',
-        'reminder': '⏰',
-        'invitation': '✉️'
-      };
-      return iconMap[type] || '📢';
-    }
-
-    // 辅助函数：格式化相对时间
-    function formatRelativeTime(timestamp) {
-      if (!timestamp) return '';
-      const date = new Date(timestamp);
-      const now = new Date();
-      const diff = now - date;
-      const diffMinutes = Math.floor(diff / 60000);
-      const diffHours = Math.floor(diff / 3600000);
-      const diffDays = Math.floor(diff / 86400000);
+    // 评审专家仪表板数据
+    if (pathname === '/api/dashboard/reviewer' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
       
-      if (diffMinutes < 1) return '刚刚';
-      if (diffMinutes < 60) return `${diffMinutes}分钟前`;
-      if (diffHours < 24) return `${diffHours}小时前`;
-      if (diffDays < 7) return `${diffDays}天前`;
-      return date.toLocaleDateString('zh-CN');
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      // 检查是否是评审专家
+      const isReviewer = user.role === 'reviewer' || user.role === 'admin';
+      if (!isReviewer) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限访问评审专家仪表板'
+        });
+        return;
+      }
+      
+      try {
+        console.log('📊 获取评审专家仪表板数据，用户ID:', user.id);
+        
+        // 1. 获取待评审项目数量（分配给该评审专家的）
+        const [reviewStats] = await pool.query(`
+          SELECT COUNT(*) as pending_reviews
+          FROM \`ProjectReview\` pr
+          INNER JOIN \`Project\` p ON pr.project_id = p.id
+          WHERE pr.reviewer_id = ? 
+            AND pr.status = 'draft'
+            AND p.status = 'under_review'
+        `, [user.id]);
+        
+        // 2. 获取待办事项
+        const pendingTasks = [];
+        
+        // 待评审项目
+        const [reviewTasks] = await pool.query(`
+          SELECT 
+            pr.id as review_id,
+            p.id as project_id,
+            p.title,
+            'project_review' as type,
+            DATE_FORMAT(p.submit_date, '%Y-%m-%d') as deadline,
+            u.name as applicant_name
+          FROM \`ProjectReview\` pr
+          INNER JOIN \`Project\` p ON pr.project_id = p.id
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE pr.reviewer_id = ? 
+            AND pr.status = 'draft'
+            AND p.status = 'under_review'
+          ORDER BY p.submit_date ASC
+          LIMIT 5
+        `, [user.id]);
+        
+        pendingTasks.push(...reviewTasks.map(task => ({ 
+          ...task, 
+          id: `rev_${task.review_id}`,
+          project_id: task.project_id,
+          priority: 'high',
+          title: `评审项目: ${task.title}`
+        })));
+        
+        // 3. 获取最新通知
+        const [notifications] = await pool.query(`
+          SELECT 
+            id,
+            type,
+            title,
+            content as description,
+            priority,
+            DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') as created_time,
+            is_read
+          FROM \`Notification\`
+          WHERE user_id = ?
+          ORDER BY created_at DESC
+          LIMIT 10
+        `, [user.id]);
+        
+        // 4. 获取未读通知数量
+        const [unreadCountResult] = await pool.query(`
+          SELECT COUNT(*) as count
+          FROM \`Notification\`
+          WHERE user_id = ? AND is_read = FALSE
+        `, [user.id]);
+        
+        const unreadCount = unreadCountResult[0]?.count || 0;
+        
+        // 构建响应数据
+        const responseData = {
+          success: true,
+          data: {
+            stats: {
+              total_projects: 0, // 评审专家看不到总数
+              pending_reviews: reviewStats[0]?.pending_reviews || 0,
+              ongoing_projects: 0
+            },
+            pending_tasks: pendingTasks.map((task, index) => ({
+              id: index + 1,
+              title: task.title,
+              type: '项目评审',
+              deadline: task.deadline,
+              priority: task.priority,
+              raw_id: task.id,
+              raw_type: task.type,
+              project_id: task.project_id
+            })),
+            notifications: notifications.map((notif, index) => ({
+              id: index + 1,
+              title: notif.title,
+              description: notif.description,
+              icon: getNotificationIcon(notif.type),
+              time: formatRelativeTime(notif.created_time),
+              read: notif.is_read === 1,
+              raw_id: notif.id,
+              raw_type: notif.type
+            })),
+            unread_count: unreadCount
+          }
+        };
+        
+        console.log('✅ 评审专家仪表板数据获取成功');
+        
+        sendResponse(res, 200, responseData);
+        
+      } catch (error) {
+        console.error('获取评审专家仪表板数据失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取仪表板数据失败',
+          message: error.message
+        });
+      }
+      return;
     }
 
     // 管理员仪表板数据
@@ -3524,369 +3532,325 @@ if (pathname === '/api/admin/roles/logs' && req.method === 'GET') {
 
     // 科研助理仪表板数据
     // ==================== 科研助理仪表板API ====================
-if (pathname === '/api/dashboard/assistant/detailed' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user) {
-    sendResponse(res, 401, {
-      success: false,
-      error: '认证失败'
-    });
-    return;
-  }
-  
-  // 检查是否是科研助理或管理员
-  const isAssistant = user.role === 'assistant' || user.role === 'admin';
-  if (!isAssistant) {
-    sendResponse(res, 403, {
-      success: false,
-      error: '没有权限访问科研助理仪表板'
-    });
-    return;
-  }
-  
-  try {
-    console.log('📊 获取科研助理仪表板数据，用户ID:', user.id);
-    
-    // 1. 数据概览卡片数据（适配新数据库状态）
-    const overview = {
-      pendingApplications: 0,
-      activeUsers: 0,
-      activeProjects: 0,
-      unreadMessages: 0,
-      applicationChange: 0,
-      userChange: 0,
-      completedProjects: 0,
-      pendingReplies: 0,
-      pending_expenditures: 0,
-      pending_achievements: 0
-    };
-    
-    // 获取待处理申请数量（submitted, under_review, revision状态）
-    const [pendingApps] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`Project\` 
-      WHERE status IN ('submitted', 'under_review', 'revision', 'batch_review')
-    `);
-    overview.pendingApplications = pendingApps[0]?.count || 0;
-    
-    // 获取活跃用户数量（最近7天有登录的用户）
-    const [activeUsers] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`User\` 
-      WHERE status = 'active' 
-        AND (last_login >= DATE_SUB(NOW(), INTERVAL 7 DAY) OR last_login IS NULL)
-    `);
-    overview.activeUsers = activeUsers[0]?.count || 0;
-    
-    // 获取本周新增用户数量
-    const [newUsers] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`User\` 
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-    `);
-    overview.userChange = newUsers[0]?.count || 0;
-    
-    // 获取进行中项目数量（孵化中）
-    const [activeProjects] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`Project\` 
-      WHERE status = 'incubating'
-    `);
-    overview.activeProjects = activeProjects[0]?.count || 0;
-    
-    // 获取已完成项目数量
-    const [completedProjects] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`Project\` 
-      WHERE status = 'completed'
-    `);
-    overview.completedProjects = completedProjects[0]?.count || 0;
-    
-    // 获取未读消息数量
-    const [unreadMessages] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`Notification\` 
-      WHERE user_id = ? AND is_read = FALSE
-    `, [user.id]);
-    overview.unreadMessages = unreadMessages[0]?.count || 0;
-    
-    // 获取未处理支出申请
-    const [pendingExpenditures] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`ExpenditureRecord\` 
-      WHERE status = 'submitted'
-    `);
-    overview.pending_expenditures = pendingExpenditures[0]?.count || 0;
-    
-    // 获取未审核成果
-    const [pendingAchievements] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`ProjectAchievement\` 
-      WHERE status = 'submitted'
-    `);
-    overview.pending_achievements = pendingAchievements[0]?.count || 0;
-    
-    // 2. 获取待处理申请列表
-    const [applications] = await pool.query(`
-      SELECT 
-        p.id,
-        p.project_code,
-        p.title,
-        p.status,
-        p.created_at,
-        u.name as applicant_name,
-        u.email as applicant_email
-      FROM \`Project\` p
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      WHERE p.status IN ('submitted', 'under_review', 'revision', 'batch_review')
-      ORDER BY 
-        CASE p.status 
-          WHEN 'under_review' THEN 1
-          WHEN 'submitted' THEN 2
-          WHEN 'revision' THEN 3
-          WHEN 'batch_review' THEN 4
-          ELSE 5
-        END,
-        p.created_at ASC
-      LIMIT 10
-    `);
-    
-    // 格式化申请数据
-    const pendingApplications = applications.map(app => ({
-      id: app.id,
-      project_code: app.project_code,
-      title: app.title,
-      applicant_name: app.applicant_name || '未知申请人',
-      applicant_email: app.applicant_email,
-      status: app.status,
-      created_at: app.created_at ? new Date(app.created_at).toISOString() : null
-    }));
-    
-    // 3. 获取项目统计（适配新数据库所有状态）
-    const [projectStatsResult] = await pool.query(`
-      SELECT 
-        SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft,
-        SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted,
-        SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as under_review,
-        SUM(CASE WHEN status = 'revision' THEN 1 ELSE 0 END) as revision,
-        SUM(CASE WHEN status = 'batch_review' THEN 1 ELSE 0 END) as batch_review,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN status = 'incubating' THEN 1 ELSE 0 END) as incubating,
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(CASE WHEN status = 'terminated' THEN 1 ELSE 0 END) as terminated
-      FROM \`Project\`
-    `);
-    
-    const stats = projectStatsResult[0] || {};
-    const totalProjects = Object.values(stats).reduce((sum, val) => sum + (parseInt(val) || 0), 0);
-    
-    // 项目状态列表（只显示有数据的）
-    const statusList = [
-      { status: 'submitted', label: '已提交', color: '#e6f7ff', textColor: '#1890ff' },
-      { status: 'under_review', label: '评审中', color: '#fff7e6', textColor: '#fa8c16' },
-      { status: 'revision', label: '修改中', color: '#ffe7ba', textColor: '#d46b00' },
-      { status: 'batch_review', label: '集中评审', color: '#ffd591', textColor: '#ad4e00' },
-      { status: 'approved', label: '已批准', color: '#f6ffed', textColor: '#52c41a' },
-      { status: 'incubating', label: '孵化中', color: '#1890ff', textColor: 'white' },
-      { status: 'completed', label: '已完成', color: '#f6ffed', textColor: '#52c41a' },
-      { status: 'rejected', label: '已驳回', color: '#fff2f0', textColor: '#ff4d4f' },
-      { status: 'terminated', label: '已终止', color: '#f5f5f5', textColor: '#8c8c8c' },
-      { status: 'draft', label: '草稿', color: '#f5f5f5', textColor: '#8c8c8c' }
-    ];
-    
-    const projectStats = statusList
-      .filter(s => stats[s.status] && stats[s.status] > 0)
-      .map(s => ({
-        status: s.status,
-        label: s.label,
-        count: stats[s.status] || 0,
-        percentage: totalProjects > 0 ? Math.round((stats[s.status] / totalProjects) * 100) : 0,
-        color: s.color,
-        textColor: s.textColor
-      }));
-    
-    // 4. 获取最近活动
-    const [activities] = await pool.query(`
-      SELECT 
-        id,
-        action,
-        table_name,
-        record_id,
-        old_values,
-        new_values,
-        user_id,
-        created_at,
-        (SELECT name FROM \`User\` WHERE id = user_id) as user_name
-      FROM \`AuditLog\`
-      ORDER BY created_at DESC
-      LIMIT 15
-    `);
-    
-    // 格式化活动数据
-    const getActivityDescription = (log) => {
-      const actionMap = {
-        'create': '创建了',
-        'update': '更新了',
-        'delete': '删除了',
-        'review': '审核了',
-        'approve': '批准了',
-        'reject': '驳回了'
-      };
-      const actionText = actionMap[log.action] || log.action;
-      const tableName = log.table_name === 'Project' ? '项目' :
-                        log.table_name === 'User' ? '用户' :
-                        log.table_name === 'ProjectAchievement' ? '成果' :
-                        log.table_name === 'ExpenditureRecord' ? '支出申请' : log.table_name;
-      return `${log.user_name || '系统'} ${actionText}${tableName}`;
-    };
-    
-    const getActivityIcon = (action) => {
-      const iconMap = {
-        'create': '➕', 'update': '✏️', 'delete': '🗑️', 
-        'review': '📝', 'approve': '✅', 'reject': '❌'
-      };
-      return iconMap[action] || '📋';
-    };
-    
-    const getActivityColor = (action) => {
-      const colorMap = {
-        'create': '#e6f7ff', 'update': '#fff7e6', 'delete': '#fff2f0',
-        'review': '#f6ffed', 'approve': '#d9f7be', 'reject': '#ffccc7'
-      };
-      return colorMap[action] || '#f5f5f5';
-    };
-    
-    const recentActivities = activities.map((activity, index) => ({
-      id: index + 1,
-      icon: getActivityIcon(activity.action),
-      color: getActivityColor(activity.action),
-      description: getActivityDescription(activity),
-      time: getTimeAgo(activity.created_at)
-    }));
-    
-    // 如果没有活动记录，添加默认活动
-    if (recentActivities.length === 0) {
-      recentActivities.push(
-        { id: 1, icon: '📝', color: '#e6f7ff', description: '欢迎使用科研项目管理系统', time: '刚刚' },
-        { id: 2, icon: '👤', color: '#f6ffed', description: '系统已就绪，可以开始工作', time: '刚刚' }
-      );
-    }
-    
-    // 5. 获取系统通知
-    const [notifications] = await pool.query(`
-      SELECT 
-        id,
-        type,
-        title,
-        content,
-        priority,
-        is_read,
-        action_url,
-        created_at
-      FROM \`Notification\`
-      WHERE user_id = ? OR user_id IS NULL
-      ORDER BY 
-        CASE priority 
-          WHEN 'urgent' THEN 1
-          WHEN 'high' THEN 2
-          WHEN 'medium' THEN 3
-          WHEN 'low' THEN 4
-          ELSE 5
-        END,
-        created_at DESC
-      LIMIT 10
-    `, [user.id]);
-    
-    // 格式化通知数据
-    const getNotificationIcon = (type, priority) => {
-      if (priority === 'urgent') return '🚨';
-      if (priority === 'high') return '⚠️';
-      const iconMap = {
-        'project': '📋', 'review': '⭐', 'funding': '💰',
-        'incubation': '🏭', 'system': '🔧', 'reminder': '⏰',
-        'invitation': '✉️'
-      };
-      return iconMap[type] || '📢';
-    };
-    
-    const systemNotifications = notifications.map(notif => ({
-      id: notif.id,
-      icon: getNotificationIcon(notif.type, notif.priority),
-      title: notif.title,
-      message: notif.content,
-      time: getTimeAgo(notif.created_at),
-      read: notif.is_read === 1,
-      priority: notif.priority,
-      action_url: notif.action_url
-    }));
-    
-    // 如果没有通知，添加默认通知
-    if (systemNotifications.length === 0) {
-      systemNotifications.push(
-        { 
-          id: 1, icon: '📢', title: '欢迎使用系统', 
-          message: '欢迎使用科研项目管理系统', time: '刚刚', read: false 
-        }
-      );
-    }
-    
-    // 构建响应数据
-    const responseData = {
-      success: true,
-      data: {
-        user_info: {
-          id: user.id,
-          username: user.username || user.name,
-          name: user.name,
-          role: user.role,
-          email: user.email || ''
-        },
-        overview: overview,
-        pending_applications: pendingApplications,
-        project_stats: projectStats,
-        recent_activities: recentActivities,
-        notifications: systemNotifications
+
+    // 科研助理专用仪表板
+    if (pathname === '/api/dashboard/assistant/detailed' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
       }
-    };
-    
-    console.log('✅ 科研助理仪表板数据获取成功');
-    
-    sendResponse(res, 200, responseData);
-    
-  } catch (error) {
-    console.error('获取科研助理仪表板数据失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '获取仪表板数据失败',
-      message: error.message,
-      stack: error.stack
-    });
-  }
-  return;
-}
-// 辅助函数：获取时间描述（如"2小时前"）
-function getTimeAgo(date) {
-  if (!date) return '未知时间';
-  
-  const now = new Date();
-  const past = new Date(date);
-  const diffMs = now - past;
-  const diffSeconds = Math.floor(diffMs / 1000);
-  const diffMinutes = Math.floor(diffSeconds / 60);
-  const diffHours = Math.floor(diffMinutes / 60);
-  const diffDays = Math.floor(diffHours / 24);
-  
-  if (diffSeconds < 60) return '刚刚';
-  if (diffMinutes < 60) return `${diffMinutes}分钟前`;
-  if (diffHours < 24) return `${diffHours}小时前`;
-  if (diffDays < 7) return `${diffDays}天前`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}周前`;
-  if (diffDays < 365) return `${Math.floor(diffDays / 30)}个月前`;
-  return `${Math.floor(diffDays / 365)}年前`;
-}
+      
+      // 检查是否是科研助理
+      const isAssistant = user.role === 'assistant' || user.role === 'admin';
+      if (!isAssistant) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限访问科研助理仪表板'
+        });
+        return;
+      }
+      
+      try {
+        console.log('📊 获取科研助理详细仪表板数据，用户ID:', user.id);
+        
+        // 1. 数据概览卡片数据
+        const overview = {
+          pendingApplications: 0,
+          activeUsers: 0,
+          activeProjects: 0,
+          unreadMessages: 0,
+          applicationChange: 0,
+          userChange: 0,
+          completedProjects: 0,
+          pendingReplies: 0
+        };
+        
+        // 获取待处理申请数量
+        const [pendingApps] = await pool.query(`
+          SELECT COUNT(*) as count 
+          FROM \`Project\` 
+          WHERE status = 'under_review'
+        `);
+        overview.pendingApplications = pendingApps[0]?.count || 0;
+        
+        // 获取活跃用户数量（最近7天有活动的用户）
+        const [activeUsers] = await pool.query(`
+          SELECT COUNT(*) as count 
+          FROM \`User\` 
+          WHERE status = 'active' 
+          AND (last_login >= DATE_SUB(NOW(), INTERVAL 7 DAY) OR last_login IS NULL)
+        `);
+        overview.activeUsers = activeUsers[0]?.count || 0;
+        
+        // 获取本周新增用户数量
+        const [newUsers] = await pool.query(`
+          SELECT COUNT(*) as count 
+          FROM \`User\` 
+          WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        `);
+        overview.userChange = newUsers[0]?.count || 0;
+        
+        // 获取进行中项目数量
+        const [activeProjects] = await pool.query(`
+          SELECT COUNT(*) as count 
+          FROM \`Project\` 
+          WHERE status IN ('in_progress', 'stage_review')
+        `);
+        overview.activeProjects = activeProjects[0]?.count || 0;
+        
+        // 获取已完成项目数量
+        const [completedProjects] = await pool.query(`
+          SELECT COUNT(*) as count 
+          FROM \`Project\` 
+          WHERE status = 'completed'
+        `);
+        overview.completedProjects = completedProjects[0]?.count || 0;
+        
+        // 获取未读消息数量（使用Notification表）
+        const [unreadMessages] = await pool.query(`
+          SELECT COUNT(*) as count 
+          FROM \`Notification\` 
+          WHERE user_id = ? AND is_read = FALSE
+        `, [user.id]);
+        overview.unreadMessages = unreadMessages[0]?.count || 0;
+        
+        // 2. 获取待处理申请列表
+        const [applications] = await pool.query(`
+          SELECT 
+            p.id,
+            p.title,
+            p.status,
+            p.created_at,
+            u.name as applicant_name
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE p.status IN ('under_review', 'submitted')
+          ORDER BY p.created_at DESC
+          LIMIT 10
+        `);
+        
+        // 格式化申请数据
+        const pendingApplications = applications.map(app => ({
+          id: app.id,
+          title: app.title,
+          applicant_name: app.applicant_name,
+          status: app.status,
+          created_at: app.created_at ? app.created_at.toISOString() : null
+        }));
+        
+        // 3. 获取项目统计
+        const [projectStatsResult] = await pool.query(`
+          SELECT 
+            SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft,
+            SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted,
+            SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as under_review,
+            SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+            SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
+          FROM \`Project\`
+        `);
+        
+        const stats = projectStatsResult[0] || {};
+        const totalProjects = Object.values(stats).reduce((sum, val) => sum + (parseInt(val) || 0), 0);
+        
+        // 计算百分比
+        const projectStats = [
+          { 
+            status: 'pending', 
+            label: '待审核', 
+            count: stats.under_review || 0, 
+            percentage: totalProjects > 0 ? Math.round((stats.under_review / totalProjects) * 100) : 0, 
+            color: '#ffa940' 
+          },
+          { 
+            status: 'in_progress', 
+            label: '进行中', 
+            count: stats.in_progress || 0, 
+            percentage: totalProjects > 0 ? Math.round((stats.in_progress / totalProjects) * 100) : 0, 
+            color: '#1890ff' 
+          },
+          { 
+            status: 'completed', 
+            label: '已完成', 
+            count: stats.completed || 0, 
+            percentage: totalProjects > 0 ? Math.round((stats.completed / totalProjects) * 100) : 0, 
+            color: '#52c41a' 
+          },
+          { 
+            status: 'rejected', 
+            label: '已拒绝', 
+            count: stats.rejected || 0, 
+            percentage: totalProjects > 0 ? Math.round((stats.rejected / totalProjects) * 100) : 0, 
+            color: '#ff4d4f' 
+          }
+        ];
+        
+        // 4. 获取最近活动
+        const [activities] = await pool.query(`
+          SELECT 
+            id,
+            type,
+            description,
+            created_at
+          FROM \`AuditLog\`
+          ORDER BY created_at DESC
+          LIMIT 10
+        `);
+        
+        // 格式化活动数据
+        const recentActivities = activities.map((activity, index) => {
+          // 根据活动类型设置图标和颜色
+          let icon = '📝', color = '#e6f7ff';
+          
+          if (activity.type?.includes('review')) {
+            icon = '⭐';
+            color = '#fff7e6';
+          } else if (activity.type?.includes('project')) {
+            icon = '📋';
+            color = '#f6ffed';
+          } else if (activity.type?.includes('user')) {
+            icon = '👤';
+            color = '#f0f7ff';
+          }
+          
+          return {
+            id: index + 1,
+            icon,
+            color,
+            description: activity.description || '系统活动',
+            time: getTimeAgo(activity.created_at)
+          };
+        });
+        
+        // 5. 获取系统通知（使用Notification表）
+        const [notifications] = await pool.query(`
+          SELECT 
+            id,
+            type,
+            title,
+            content as message,
+            is_read,
+            created_at
+          FROM \`Notification\`
+          WHERE user_id = ? OR user_id IS NULL
+          ORDER BY created_at DESC
+          LIMIT 5
+        `, [user.id]);
+        
+        // 格式化通知数据
+        const systemNotifications = notifications.map(notif => {
+          let icon = '📢';
+          if (notif.type === 'warning') icon = '⚠️';
+          if (notif.type === 'success') icon = '✅';
+          if (notif.type === 'info') icon = 'ℹ️';
+          
+          return {
+            id: notif.id,
+            icon,
+            title: notif.title,
+            message: notif.message,
+            time: getTimeAgo(notif.created_at),
+            read: notif.is_read === 1
+          };
+        });
+        
+        // 6. 获取未处理支出申请
+        const [pendingExpenditures] = await pool.query(`
+          SELECT COUNT(*) as count 
+          FROM \`ExpenditureRecord\` 
+          WHERE status = 'submitted'
+        `);
+        
+        // 7. 获取未审核成果
+        const [pendingAchievements] = await pool.query(`
+          SELECT COUNT(*) as count 
+          FROM \`ProjectAchievement\` 
+          WHERE status = 'under_review'
+        `);
+        
+        // 构建响应数据
+        const responseData = {
+          success: true,
+          data: {
+            user_info: {
+              id: user.id,
+              username: user.username || user.name,
+              role: user.role,
+              email: user.email || ''
+            },
+            overview: {
+              ...overview,
+              pending_expenditures: pendingExpenditures[0]?.count || 0,
+              pending_achievements: pendingAchievements[0]?.count || 0
+            },
+            pending_applications: pendingApplications,
+            project_stats: projectStats,
+            recent_activities: recentActivities.length > 0 ? recentActivities : [
+              {
+                id: 1,
+                icon: '📝',
+                color: '#e6f7ff',
+                description: '您审核了"机器学习研究项目"的申请',
+                time: '2小时前'
+              },
+              {
+                id: 2,
+                icon: '👤',
+                color: '#f6ffed',
+                description: '新用户"张三"注册了账号',
+                time: '5小时前'
+              },
+              {
+                id: 3,
+                icon: '✅',
+                color: '#fff7e6',
+                description: '项目"数据分析平台"已完成',
+                time: '1天前'
+              }
+            ],
+            notifications: systemNotifications.length > 0 ? systemNotifications : [
+              {
+                id: 1,
+                icon: '📢',
+                title: '系统维护通知',
+                message: '本周末系统将进行维护，请提前保存工作',
+                time: '今天 09:00',
+                read: false
+              },
+              {
+                id: 2,
+                icon: '🎉',
+                title: '新功能上线',
+                message: '项目协作功能已上线，欢迎体验',
+                time: '昨天 14:30',
+                read: true
+              }
+            ]
+          }
+        };
+        
+        console.log('✅ 科研助理仪表板数据获取成功');
+        
+        sendResponse(res, 200, responseData);
+        
+      } catch (error) {
+        console.error('获取科研助理仪表板数据失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取仪表板数据失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
 // 获取科研助理仪表板概览数据
 if (pathname === '/api/assistant/dashboard/overview' && req.method === 'GET') {
   const token = req.headers.authorization;
@@ -4265,109 +4229,7 @@ if (pathname === '/api/assistant/users/recent' && req.method === 'GET') {
   }
   return;
 }
-// ==================== 获取用户列表API ====================
 
-if (pathname === '/api/users' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user) {
-    sendResponse(res, 401, {
-      success: false,
-      error: '认证失败'
-    });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    const role = query.role;
-    const status = query.status;
-    const keyword = query.keyword || '';
-    const limit = parseInt(query.limit) || 100;
-    const page = parseInt(query.page) || 1;
-    const offset = (page - 1) * limit;
-    
-    let sql = 'SELECT id, username, name, email, role, department, title, phone, status, created_at FROM `User` WHERE 1=1';
-    const params = [];
-    
-    if (role) {
-      sql += ' AND role = ?';
-      params.push(role);
-    }
-    
-    if (status) {
-      sql += ' AND status = ?';
-      params.push(status);
-    }
-    
-    if (keyword) {
-      sql += ' AND (name LIKE ? OR username LIKE ? OR email LIKE ?)';
-      params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
-    }
-    
-    // 获取总数
-    const [totalResult] = await pool.query(sql.replace('SELECT id, username, name, email, role, department, title, phone, status, created_at', 'SELECT COUNT(*) as total'), params);
-    const total = totalResult[0]?.total || 0;
-    
-    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-    
-    const [users] = await pool.query(sql, params);
-    
-    // 获取专家的研究领域
-    const reviewerIds = users.filter(u => u.role === 'reviewer').map(u => u.id);
-    let expertDomains = {};
-    
-    if (reviewerIds.length > 0) {
-      const [domains] = await pool.query(`
-        SELECT 
-          ed.expert_id,
-          rd.name as research_field
-        FROM \`ExpertDomain\` ed
-        LEFT JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
-        WHERE ed.expert_id IN (?)
-      `, [reviewerIds]);
-      
-      domains.forEach(d => {
-        if (!expertDomains[d.expert_id]) expertDomains[d.expert_id] = [];
-        expertDomains[d.expert_id].push(d.research_field);
-      });
-    }
-    
-    const formattedUsers = users.map(u => ({
-      id: u.id,
-      username: u.username,
-      name: u.name,
-      email: u.email,
-      role: u.role,
-      department: u.department,
-      title: u.title,
-      phone: u.phone,
-      status: u.status,
-      research_field: expertDomains[u.id] ? expertDomains[u.id].join(', ') : null,
-      created_at: u.created_at
-    }));
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: formattedUsers,
-      total: total,
-      page: page,
-      limit: limit,
-      pages: Math.ceil(total / limit)
-    });
-    
-  } catch (error) {
-    console.error('获取用户列表失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '获取用户列表失败',
-      message: error.message
-    });
-  }
-  return;
-}
 // 获取待处理任务统计
 if (pathname === '/api/assistant/tasks/pending' && req.method === 'GET') {
   const token = req.headers.authorization;
@@ -4394,25 +4256,7 @@ if (pathname === '/api/assistant/tasks/pending' && req.method === 'GET') {
       FROM \`FundingApplication\` 
       WHERE status IN ('submitted', 'under_review')
     `);
-      // 获取需要分配专家的项目数量
-  const [reviewerAssignmentResult] = await pool.query(`
-    SELECT COUNT(*) as count 
-    FROM \`Project\` 
-    WHERE status IN ('submitted')
-  `);
-
-  const tasks = {
-    projects: projectsResult[0]?.count || 0,
-    funding: fundingResult[0]?.count || 0,
-    expenditures: expendituresResult[0]?.count || 0,
-    achievements: achievementsResult[0]?.count || 0,
-    reviewerAssignment: reviewerAssignmentResult[0]?.count || 0, // 新增
-    total: (projectsResult[0]?.count || 0) + 
-           (fundingResult[0]?.count || 0) + 
-           (expendituresResult[0]?.count || 0) + 
-           (achievementsResult[0]?.count || 0) +
-           (reviewerAssignmentResult[0]?.count || 0) // 更新总数
-  };
+    
     // 待审核支出数量
     const [expendituresResult] = await pool.query(`
       SELECT COUNT(*) as count 
@@ -4434,6 +4278,16 @@ if (pathname === '/api/assistant/tasks/pending' && req.method === 'GET') {
       WHERE status IN ('pending', 'processing')
     `);
     
+    const tasks = {
+      projects: projectsResult[0]?.count || 0,
+      funding: fundingResult[0]?.count || 0,
+      expenditures: expendituresResult[0]?.count || 0,
+      achievements: achievementsResult[0]?.count || 0,
+      total: (projectsResult[0]?.count || 0) + 
+             (fundingResult[0]?.count || 0) + 
+             (expendituresResult[0]?.count || 0) + 
+             (achievementsResult[0]?.count || 0)
+    };
     
     sendResponse(res, 200, {
       success: true,
@@ -12527,639 +12381,6 @@ function getRoleText(role) {
       }
       return;
     }
-
-    // ==================== 评审专家分配相关API（适配新数据库） ====================
-
-    // 辅助函数：生成UUID
-    function generateUUID() {
-      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        const r = Math.random() * 16 | 0;
-        const v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-      });
-    }
-
-    // 辅助函数：获取请求体
-    async function getBody(req) {
-      return new Promise((resolve, reject) => {
-        let body = '';
-        req.on('data', chunk => { body += chunk.toString(); });
-        req.on('end', () => {
-          try { resolve(body ? JSON.parse(body) : {}); } catch (error) { resolve({}); }
-        });
-        req.on('error', reject);
-      });
-    }
-
-    // 辅助函数：创建通知
-    async function createNotification(userId, title, content, type, relatedId = null) {
-      try {
-        const notificationId = generateUUID();
-        await pool.query(`
-          INSERT INTO \`Notification\` (
-            id, user_id, type, title, content, 
-            related_id, related_type, priority,
-            is_read, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'medium', FALSE, NOW())
-        `, [notificationId, userId, type, title, content, relatedId, type]);
-        return notificationId;
-      } catch (error) {
-        console.error('创建通知失败:', error);
-        return null;
-      }
-    }
-
-    // 辅助函数：计算专家工作量评分
-    function calculateWorkloadScore(recentReviews) {
-      if (recentReviews === 0) return 100;
-      if (recentReviews <= 2) return 80;
-      if (recentReviews <= 5) return 60;
-      if (recentReviews <= 8) return 40;
-      return 20;
-    }
-
-    // ==================== API 端点 ====================
-
-    // 1. 获取需要分配评审专家的项目列表
-    if (pathname === '/api/assistant/projects/need-reviewer' && req.method === 'GET') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
-        sendResponse(res, 403, { success: false, error: '没有权限' });
-        return;
-      }
-      
-      try {
-        const query = url.parse(req.url, true).query;
-        const page = parseInt(query.page) || 1;
-        const pageSize = parseInt(query.pageSize) || 20;
-        const offset = (page - 1) * pageSize;
-        
-        console.log('获取需要分配评审专家的项目列表，助理ID:', user.id);
-        
-        // 构建查询条件：状态为已提交或评审中（适配新数据库状态）
-        let whereClauses = ["p.status IN ('submitted', 'under_review', 'revision', 'batch_review')"];
-        let queryParams = [];
-        
-        // 筛选条件
-        if (query.projectCode) {
-          whereClauses.push('p.project_code LIKE ?');
-          queryParams.push(`%${query.projectCode}%`);
-        }
-        
-        if (query.projectTitle) {
-          whereClauses.push('p.title LIKE ?');
-          queryParams.push(`%${query.projectTitle}%`);
-        }
-        
-        if (query.applicantName) {
-          whereClauses.push('u.name LIKE ?');
-          queryParams.push(`%${query.applicantName}%`);
-        }
-        
-        if (query.researchField) {
-          whereClauses.push('rd.name LIKE ?');
-          queryParams.push(`%${query.researchField}%`);
-        }
-        
-        const whereClause = whereClauses.join(' AND ');
-        
-        // 获取总数量
-        const [totalResult] = await pool.query(`
-          SELECT COUNT(*) as total
-          FROM \`Project\` p
-          LEFT JOIN \`User\` u ON p.applicant_id = u.id
-          LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
-          WHERE ${whereClause}
-        `, queryParams);
-        
-        const total = totalResult[0]?.total || 0;
-        
-        // 获取项目列表
-        const [projects] = await pool.query(`
-          SELECT 
-            p.id,
-            p.project_code,
-            p.title,
-            rd.name as research_field,
-            p.status,
-            p.submit_date,
-            p.created_at,
-            u.name as applicant_name,
-            u.department as applicant_department,
-            u.title as applicant_title,
-            (
-              SELECT COUNT(*)
-              FROM \`ProjectReview\` pr
-              WHERE pr.project_id = p.id
-            ) as reviewer_count,
-            (
-              SELECT GROUP_CONCAT(
-                DISTINCT CONCAT(ru.name, '|', ru.id, '|', pr.status, '|', IFNULL(pr.submitted_at, ''))
-                SEPARATOR ';'
-              )
-              FROM \`ProjectReview\` pr
-              LEFT JOIN \`User\` ru ON pr.expert_id = ru.id
-              WHERE pr.project_id = p.id
-            ) as assigned_reviewers
-          FROM \`Project\` p
-          LEFT JOIN \`User\` u ON p.applicant_id = u.id
-          LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
-          WHERE ${whereClause}
-          ORDER BY 
-            CASE p.status 
-              WHEN 'submitted' THEN 1
-              WHEN 'under_review' THEN 2
-              WHEN 'revision' THEN 3
-              WHEN 'batch_review' THEN 4
-              ELSE 5
-            END,
-            p.submit_date DESC
-          LIMIT ? OFFSET ?
-        `, [...queryParams, pageSize, offset]);
-        
-        // 格式化数据
-        const formattedProjects = projects.map(project => {
-          const reviewers = [];
-          if (project.assigned_reviewers) {
-            project.assigned_reviewers.split(';').forEach(reviewerStr => {
-              if (reviewerStr) {
-                const [name, id, status, submittedAt] = reviewerStr.split('|');
-                reviewers.push({
-                  id,
-                  name,
-                  status,
-                  submitted_at: submittedAt || null
-                });
-              }
-            });
-          }
-          
-          return {
-            id: project.id,
-            project_code: project.project_code,
-            title: project.title,
-            research_field: project.research_field || '未指定',
-            status: project.status,
-            submit_date: project.submit_date ? new Date(project.submit_date).toISOString().split('T')[0] : null,
-            created_at: project.created_at ? project.created_at.toISOString() : null,
-            applicant_name: project.applicant_name || '未知',
-            applicant_department: project.applicant_department || '',
-            applicant_title: project.applicant_title || '',
-            reviewers,
-            reviewer_count: project.reviewer_count || 0
-          };
-        });
-        
-        // 获取统计信息
-        const [statsResult] = await pool.query(`
-          SELECT 
-            COUNT(*) as total,
-            SUM(CASE WHEN p.status = 'submitted' THEN 1 ELSE 0 END) as submitted,
-            SUM(CASE WHEN p.status = 'under_review' THEN 1 ELSE 0 END) as under_review
-          FROM \`Project\` p
-          WHERE p.status IN ('submitted', 'under_review', 'revision', 'batch_review')
-        `);
-        
-        const stats = {
-          total: statsResult[0]?.total || 0,
-          submitted: statsResult[0]?.submitted || 0,
-          under_review: statsResult[0]?.under_review || 0
-        };
-        
-        sendResponse(res, 200, {
-          success: true,
-          data: {
-            projects: formattedProjects,
-            pagination: { current: page, pageSize, total },
-            stats
-          }
-        });
-        
-      } catch (error) {
-        console.error('获取项目列表失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取项目列表失败' });
-      }
-      return;
-    }
-
-    // 2. 获取可用的评审专家列表
-    if (pathname === '/api/assistant/reviewers/available' && req.method === 'GET') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
-        sendResponse(res, 403, { success: false, error: '没有权限' });
-        return;
-      }
-      
-      try {
-        const query = url.parse(req.url, true).query;
-        const projectId = query.projectId;
-        const keyword = query.keyword || '';
-        
-        console.log('获取可用评审专家列表，助理ID:', user.id, '项目ID:', projectId);
-        
-        // 获取当前项目已分配的评审专家ID
-        let assignedReviewerIds = [];
-        if (projectId) {
-          const [assigned] = await pool.query(`
-            SELECT expert_id 
-            FROM \`ProjectReview\` 
-            WHERE project_id = ?
-          `, [projectId]);
-          assignedReviewerIds = assigned.map(item => item.expert_id);
-        }
-        
-        // 查询评审专家
-        const [reviewers] = await pool.query(`
-          SELECT 
-            u.id,
-            u.name,
-            u.email,
-            u.department,
-            u.title,
-            u.phone,
-            u.status,
-            u.created_at,
-            ep.organization,
-            ep.expertise_description,
-            ep.is_external,
-            (
-              SELECT COUNT(*) 
-              FROM \`ProjectReview\` pr 
-              WHERE pr.expert_id = u.id 
-                AND pr.status = 'submitted'
-            ) as completed_reviews,
-            (
-              SELECT COUNT(*) 
-              FROM \`ProjectReview\` pr 
-              WHERE pr.expert_id = u.id 
-                AND pr.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-            ) as recent_reviews
-          FROM \`User\` u
-          LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.user_id
-          WHERE u.role = 'reviewer'
-            AND u.status = 'active'
-            AND (u.name LIKE ? OR u.department LIKE ? OR u.title LIKE ?)
-          ORDER BY 
-            (u.name LIKE ?) DESC,
-            completed_reviews ASC,
-            u.name ASC
-        `, [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`]);
-        
-        // 获取专家的研究领域
-        const reviewerIds = reviewers.map(r => r.id);
-        let expertDomains = {};
-        if (reviewerIds.length > 0) {
-          const [domains] = await pool.query(`
-            SELECT 
-              ed.expert_id,
-              rd.name as research_field
-            FROM \`ExpertDomain\` ed
-            LEFT JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
-            WHERE ed.expert_id IN (?)
-          `, [reviewerIds]);
-          
-          domains.forEach(d => {
-            if (!expertDomains[d.expert_id]) expertDomains[d.expert_id] = [];
-            expertDomains[d.expert_id].push(d.research_field);
-          });
-        }
-        
-        // 格式化专家数据
-        const formattedReviewers = reviewers.map(reviewer => ({
-          id: reviewer.id,
-          name: reviewer.name,
-          email: reviewer.email,
-          department: reviewer.department,
-          title: reviewer.title,
-          phone: reviewer.phone,
-          research_field: expertDomains[reviewer.id] ? expertDomains[reviewer.id].join(', ') : '未指定',
-          organization: reviewer.organization,
-          expertise_description: reviewer.expertise_description,
-          is_external: reviewer.is_external === 1,
-          status: reviewer.status,
-          completed_reviews: reviewer.completed_reviews || 0,
-          recent_reviews: reviewer.recent_reviews || 0,
-          created_at: reviewer.created_at ? reviewer.created_at.toISOString() : null,
-          is_assigned: assignedReviewerIds.includes(reviewer.id),
-          workload_score: calculateWorkloadScore(reviewer.recent_reviews || 0)
-        }));
-        
-        sendResponse(res, 200, {
-          success: true,
-          data: {
-            reviewers: formattedReviewers,
-            total: formattedReviewers.length
-          }
-        });
-        
-      } catch (error) {
-        console.error('获取评审专家列表失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取评审专家列表失败' });
-      }
-      return;
-    }
-
-    // 3. 为项目分配评审专家
-    // 为项目分配评审专家
-    if (pathname === '/api/assistant/projects/assign-reviewer' && req.method === 'POST') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
-        sendResponse(res, 403, { success: false, error: '没有权限' });
-        return;
-      }
-      
-      try {
-        const body = await getBody(req);
-        const { projectId, reviewerIds } = body;
-        
-        if (!projectId || !reviewerIds || !Array.isArray(reviewerIds) || reviewerIds.length === 0) {
-          sendResponse(res, 400, { success: false, error: '请提供项目ID和评审专家ID列表' });
-          return;
-        }
-        
-        console.log('分配评审专家，项目ID:', projectId, '专家IDs:', reviewerIds);
-        
-        // 检查项目是否存在
-        const [projects] = await pool.query(
-          'SELECT * FROM `Project` WHERE id = ?',
-          [projectId]
-        );
-        
-        if (projects.length === 0) {
-          sendResponse(res, 404, { success: false, error: '项目不存在' });
-          return;
-        }
-        
-        const project = projects[0];
-        
-        // 检查专家是否存在
-        const [reviewers] = await pool.query(`
-          SELECT id, name FROM \`User\` 
-          WHERE id IN (?) AND role = 'reviewer' AND status = 'active'
-        `, [reviewerIds]);
-        
-        if (reviewers.length !== reviewerIds.length) {
-          sendResponse(res, 400, { 
-            success: false, 
-            error: '部分评审专家不存在或不是有效专家' 
-          });
-          return;
-        }
-        
-        const assignmentResults = [];
-        
-        // 为每个评审专家创建记录
-        for (const reviewer of reviewers) {
-          // 检查是否已分配
-          const [existing] = await pool.query(`
-            SELECT pr.id FROM \`ProjectReview\` pr
-            WHERE pr.project_id = ? AND pr.expert_id = ?
-          `, [projectId, reviewer.id]);
-          
-          if (existing.length === 0) {
-            // 1. 先创建 ExpertAssignment 记录
-            const assignmentId = generateUUID();
-            
-            await pool.query(`
-              INSERT INTO \`ExpertAssignment\` (
-                id, project_id, expert_id, assigned_by, assigned_at, status, created_at
-              ) VALUES (?, ?, ?, ?, NOW(), 'assigned', NOW())
-            `, [assignmentId, projectId, reviewer.id, user.id]);
-            
-            // 2. 再创建 ProjectReview 记录
-            const reviewId = generateUUID();
-            
-            await pool.query(`
-              INSERT INTO \`ProjectReview\` (
-                id, project_id, expert_id, assignment_id, recommendation,
-                comments, status, created_at
-              ) VALUES (?, ?, ?, ?, 'recommend', '', 'draft', NOW())
-            `, [reviewId, projectId, reviewer.id, assignmentId]);
-            
-            assignmentResults.push({ 
-              reviewerId: reviewer.id, 
-              assigned: true, 
-              reviewId,
-              assignmentId 
-            });
-            
-            // 创建通知
-            await createNotification(
-              reviewer.id,
-              '新评审任务分配',
-              `您已被分配评审项目："${project.title}"，请及时处理。`,
-              'review',
-              projectId
-            );
-          } else {
-            assignmentResults.push({ reviewerId: reviewer.id, assigned: false, message: '已分配' });
-          }
-        }
-        
-        // 更新项目状态
-        if (project.status === 'submitted') {
-          await pool.query(
-            'UPDATE `Project` SET status = "under_review" WHERE id = ?',
-            [projectId]
-          );
-        }
-        
-        // 为申请人创建通知
-        await createNotification(
-          project.applicant_id,
-          '项目进入评审阶段',
-          `您的项目"${project.title}"已分配评审专家，正在评审中。`,
-          'project',
-          projectId
-        );
-        
-        // 记录操作日志
-        await pool.query(
-          `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
-          VALUES (?, 'assign_reviewer', 'Project', ?, ?, NOW())`,
-          [user.id, projectId, JSON.stringify({ projectId, reviewerIds, assignedBy: user.id })]
-        );
-        
-        sendResponse(res, 200, {
-          success: true,
-          message: '评审专家分配成功',
-          data: {
-            projectId,
-            assignmentResults,
-            assignedCount: assignmentResults.filter(r => r.assigned).length
-          }
-        });
-        
-      } catch (error) {
-        console.error('分配评审专家失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '分配评审专家失败',
-          message: error.message
-        });
-      }
-      return;
-    }
-
-    // 4. 移除已分配的评审专家
-    // 移除已分配的评审专家
-    if (pathname === '/api/assistant/projects/remove-reviewer' && req.method === 'DELETE') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
-        sendResponse(res, 403, { success: false, error: '没有权限' });
-        return;
-      }
-      
-      try {
-        const body = await getBody(req);
-        const { projectId, reviewerId } = body;
-        
-        if (!projectId || !reviewerId) {
-          sendResponse(res, 400, { success: false, error: '请提供项目ID和评审专家ID' });
-          return;
-        }
-        
-        console.log('移除评审专家，项目ID:', projectId, '专家ID:', reviewerId);
-        
-        // 检查评审记录是否存在
-        const [reviews] = await pool.query(`
-          SELECT pr.*, p.title as project_title, u.name as reviewer_name
-          FROM \`ProjectReview\` pr
-          LEFT JOIN \`Project\` p ON pr.project_id = p.id
-          LEFT JOIN \`User\` u ON pr.expert_id = u.id
-          WHERE pr.project_id = ? AND pr.expert_id = ?
-        `, [projectId, reviewerId]);
-        
-        if (reviews.length === 0) {
-          sendResponse(res, 404, { success: false, error: '评审记录不存在' });
-          return;
-        }
-        
-        const review = reviews[0];
-        
-        // 删除 ProjectReview 记录
-        await pool.query('DELETE FROM `ProjectReview` WHERE id = ?', [review.id]);
-        
-        // 删除 ExpertAssignment 记录
-        if (review.assignment_id) {
-          await pool.query('DELETE FROM `ExpertAssignment` WHERE id = ?', [review.assignment_id]);
-        }
-        
-        // 通知评审专家
-        await createNotification(
-          reviewerId,
-          '评审任务取消',
-          `您对项目"${review.project_title}"的评审任务已被取消。`,
-          'review',
-          projectId
-        );
-        
-        sendResponse(res, 200, {
-          success: true,
-          message: '评审专家移除成功'
-        });
-        
-      } catch (error) {
-        console.error('移除评审专家失败:', error);
-        sendResponse(res, 500, { success: false, error: '移除评审专家失败' });
-      }
-      return;
-    }
-
-    // 5. 获取项目评审分配详情
-    if (pathname.startsWith('/api/projects/') && pathname.endsWith('/assignments') && req.method === 'GET') {
-      const match = pathname.match(/\/api\/projects\/(.+)\/assignments/);
-      if (match) {
-        const projectId = match[1];
-        const token = req.headers.authorization;
-        const user = await verifyToken(token);
-        
-        if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
-          sendResponse(res, 403, { success: false, error: '没有权限' });
-          return;
-        }
-        
-        try {
-          console.log('获取项目评审分配详情，项目ID:', projectId);
-          
-          // 获取已分配的评审专家
-          const [assignedReviewers] = await pool.query(`
-            SELECT 
-              pr.id as review_id,
-              pr.expert_id as id,
-              u.name,
-              u.email,
-              u.department,
-              u.title,
-              pr.status,
-              pr.submitted_at,
-              pr.created_at
-            FROM \`ProjectReview\` pr
-            LEFT JOIN \`User\` u ON pr.expert_id = u.id
-            WHERE pr.project_id = ?
-            ORDER BY pr.created_at DESC
-          `, [projectId]);
-          
-          sendResponse(res, 200, {
-            success: true,
-            data: assignedReviewers
-          });
-          
-        } catch (error) {
-          console.error('获取项目评审分配详情失败:', error);
-          sendResponse(res, 500, { success: false, error: '获取分配详情失败' });
-        }
-        return;
-      }
-    }
-
-    // 6. 获取待分配评审专家的项目统计
-    if (pathname === '/api/assistant/stats/reviewer-assignment' && req.method === 'GET') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
-        sendResponse(res, 403, { success: false, error: '没有权限' });
-        return;
-      }
-      
-      try {
-        console.log('获取待分配专家项目统计，助理ID:', user.id);
-        
-        const [statsResult] = await pool.query(`
-          SELECT 
-            COUNT(*) as total,
-            SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted,
-            SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as under_review
-          FROM \`Project\`
-          WHERE status IN ('submitted', 'under_review', 'revision', 'batch_review')
-        `);
-        
-        const stats = {
-          total: statsResult[0]?.total || 0,
-          submitted: statsResult[0]?.submitted || 0,
-          under_review: statsResult[0]?.under_review || 0
-        };
-        
-        sendResponse(res, 200, {
-          success: true,
-          data: stats
-        });
-        
-      } catch (error) {
-        console.error('获取待分配专家项目统计失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取统计失败' });
-      }
-      return;
-    }
     // ==================== 用户注册API ====================
     
     if (pathname === '/api/auth/register' && req.method === 'POST') {
@@ -13333,6 +12554,8 @@ function getRoleText(role) {
     }
     
     // ==================== 项目管理API ====================
+    
+    // 创建项目
     if ((pathname === '/api/project' || pathname === '/api/projects') && req.method === 'POST') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -13355,8 +12578,25 @@ function getRoleText(role) {
       
       console.log('📥 接收到的原始数据:', body);
       
+      // 数据转换
+      const transformedData = {
+        title: body.title || '未命名项目',
+        abstract: body.abstract || body.description || body.title + '的项目摘要',
+        category: body.category || '其他',
+        research_field: body.research_field || body.researchField || '未指定领域',
+        objectives: body.objectives || body.title + '的研究目标',
+        budget_total: body.budget_total || body.budget || 0,
+        duration_months: body.duration_months || body.duration || 12,
+        keywords: body.keywords || body.title,
+        background: body.background || '暂无研究背景说明',
+        methodology: body.methodology || '暂无研究方法说明',
+        expected_outcomes: body.expected_outcomes || body.expectedOutcomes || '预期取得重要研究成果'
+      };
+      
+      console.log('🔄 转换后的数据:', transformedData);
+      
       // 验证必填字段
-      if (!body.title) {
+      if (!transformedData.title) {
         sendResponse(res, 400, {
           success: false,
           error: '项目标题不能为空'
@@ -13364,170 +12604,57 @@ function getRoleText(role) {
         return;
       }
       
-      // 验证研究领域
-      if (!body.domain_id) {
-        sendResponse(res, 400, {
-          success: false,
-          error: '研究领域不能为空'
-        });
-        return;
-      }
-      
       try {
         // 使用UUID作为项目ID
         const projectId = randomUUID();
-        const projectCode = `PROJ-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
+        const projectCode = `PROJ-${new Date().toISOString().slice(0,10).replace(/-/g, '')}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
         
         console.log('🆔 生成项目ID:', projectId, '项目编号:', projectCode);
         
-        // 准备数据（适配新数据库字段）
-        const startDate = body.start_date || null;
-        const endDate = body.end_date || null;
-        const durationMonths = body.duration_months || calculateDurationMonths(startDate, endDate);
-        
-        // 插入项目数据 - 使用正确的表名 Project
+        // 插入数据 - 使用正确的表名 Project
         const sql = `
           INSERT INTO \`Project\` (
-            id, 
-            project_code, 
-            applicant_id, 
-            title, 
-            domain_id, 
-            keywords, 
-            abstract, 
-            background, 
-            objectives, 
-            methodology, 
-            expected_outcomes, 
-            budget_total, 
-            duration_months, 
-            status, 
-            start_date, 
-            end_date,
-            created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+            id, applicant_id, project_code, title, category, research_field, 
+            keywords, abstract, background, objectives, methodology, 
+            expected_outcomes, budget_total, duration_months, status, 
+            current_stage, start_date, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
         
         const params = [
           projectId,
-          projectCode,
           user.id,
-          body.title,
-          body.domain_id,
-          body.keywords || '',
-          body.abstract || '',
-          body.background || '',
-          body.objectives || '',
-          body.methodology || '',
-          body.expected_outcomes || '',
-          parseFloat(body.budget_total) || 0,
-          parseInt(durationMonths) || 12,
-          'draft',
-          startDate,
-          endDate
+          projectCode,
+          transformedData.title,
+          transformedData.category,
+          transformedData.research_field,
+          transformedData.keywords,
+          transformedData.abstract,
+          transformedData.background,
+          transformedData.objectives,
+          transformedData.methodology,
+          transformedData.expected_outcomes,
+          parseFloat(transformedData.budget_total) || 0,
+          parseInt(transformedData.duration_months) || 12,
+          body.status || 'draft',
+          1,
+          body.start_date || new Date().toISOString().split('T')[0]
         ];
         
         console.log('📝 执行SQL:', sql);
-        console.log('📝 参数:', {
-          id: projectId,
-          project_code: projectCode,
-          applicant_id: user.id,
-          title: body.title,
-          domain_id: body.domain_id,
-          keywords: body.keywords,
-          abstract: body.abstract,
-          background: body.background,
-          objectives: body.objectives,
-          methodology: body.methodology,
-          expected_outcomes: body.expected_outcomes,
-          budget_total: body.budget_total,
-          duration_months: durationMonths,
-          status: 'draft',
-          start_date: startDate,
-          end_date: endDate
-        });
+        console.log('📝 参数:', params);
         
         const [result] = await pool.query(sql, params);
         
-        console.log('✅ 项目插入成功，ID:', projectId);
+        console.log('✅ 项目插入成功，ID:', projectId, '结果:', result);
         
-        // 插入项目成员（负责人）
-        if (body.team_members && body.team_members.length > 0) {
-          for (const member of body.team_members) {
-            if (member.name && member.name.trim()) {
-              await pool.query(`
-                INSERT INTO \`ProjectMember\` (
-                  id, project_id, name, user_id, role, title, 
-                  organization, responsibility, workload_percentage, 
-                  is_notable, sort_order, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-              `, [
-                randomUUID(),
-                projectId,
-                member.name,
-                member.user_id || null,
-                member.member_role || 'researcher',
-                member.title || null,
-                member.organization || null,
-                member.responsibility || null,
-                member.workload_percentage || 0,
-                member.is_notable || false,
-                member.sort_order || 0
-              ]);
-            }
-          }
-        } else {
-          // 默认添加申请人作为负责人
-          await pool.query(`
-            INSERT INTO \`ProjectMember\` (
-              id, project_id, name, user_id, role, title, 
-              organization, responsibility, workload_percentage, 
-              is_notable, sort_order, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-          `, [
-            randomUUID(),
-            projectId,
-            user.name || user.username,
-            user.id,
-            'principal',
-            user.title || null,
-            user.department || null,
-            '项目负责人，全面负责项目的研究工作',
-            100,
-            false,
-            0
-          ]);
-        }
+        // 将申请者添加为项目成员（负责人）
+        await pool.query(
+          'INSERT INTO `ProjectMember` (id, project_id, user_id, role, join_date, created_at) VALUES (?, ?, ?, ?, CURDATE(), NOW())',
+          [randomUUID(), projectId, user.id, 'principal']
+        );
         
         console.log('✅ 添加项目成员成功');
-        
-        // 插入预算明细
-        if (body.budget_items && body.budget_items.length > 0) {
-          for (let i = 0; i < body.budget_items.length; i++) {
-            const item = body.budget_items[i];
-            if (item.category && item.item_name && item.amount > 0) {
-              await pool.query(`
-                INSERT INTO \`ProjectBudget\` (
-                  id, project_id, category, item_name, description, 
-                  amount, calculation_method, justification, sort_order, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-              `, [
-                randomUUID(),
-                projectId,
-                item.category,
-                item.item_name,
-                item.description || '',
-                parseFloat(item.amount) || 0,
-                item.calculation_method || '',
-                item.justification || '',
-                i
-              ]);
-            }
-          }
-        }
-        
-        console.log('✅ 添加预算明细成功');
         
         sendResponse(res, 201, {
           success: true,
@@ -13536,186 +12663,22 @@ function getRoleText(role) {
             id: projectId,
             project_code: projectCode,
             applicant_id: user.id,
-            title: body.title,
-            status: 'draft'
+            title: transformedData.title
           }
         });
-        
       } catch (error) {
         console.error('❌ 创建项目失败:', error);
         sendResponse(res, 500, {
           success: false,
           error: '创建项目失败',
           message: error.message,
-          sqlMessage: error.sqlMessage
+          sqlMessage: error.sqlMessage,
+          sql: error.sql
         });
       }
       return;
-    }
-
-    // 辅助函数：计算项目周期（月）
-    function calculateDurationMonths(startDate, endDate) {
-      if (!startDate || !endDate) return 0;
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      return (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
     }
     
-    // ==================== 获取研究领域列表API ====================
-    if (pathname === '/api/research-domains' && req.method === 'GET') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-      
-      try {
-        const [domains] = await pool.query(`
-          SELECT 
-            id,
-            name,
-            code,
-            parent_id,
-            level,
-            sort_order,
-            enabled
-          FROM \`ResearchDomain\`
-          WHERE enabled = TRUE
-          ORDER BY sort_order ASC, level ASC, name ASC
-        `);
-        
-        sendResponse(res, 200, {
-          success: true,
-          data: domains
-        });
-        
-      } catch (error) {
-        console.error('获取研究领域失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '获取研究领域失败',
-          message: error.message
-        });
-      }
-      return;
-    }
-    // ==================== 更新项目API ====================
-    if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'PUT') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-      
-      // 提取项目ID
-      let projectId;
-      if (pathname.startsWith('/api/project/')) {
-        projectId = pathname.replace('/api/project/', '');
-      } else {
-        projectId = pathname.replace('/api/projects/', '');
-      }
-      
-      try {
-        // 检查项目是否存在
-        const [projects] = await pool.query(
-          'SELECT * FROM `Project` WHERE id = ?',
-          [projectId]
-        );
-        
-        if (projects.length === 0) {
-          sendResponse(res, 404, {
-            success: false,
-            error: '项目未找到'
-          });
-          return;
-        }
-        
-        const project = projects[0];
-        
-        // 检查权限
-        const isOwner = project.applicant_id === user.id;
-        const isAdmin = checkPermission(user.role, 'admin');
-        
-        if (!isOwner && !isAdmin) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限更新此项目'
-          });
-          return;
-        }
-        
-        const body = await parseRequestBody(req);
-        
-        // 构建更新字段（适配新数据库字段）
-        const updateFields = [];
-        const updateValues = [];
-        
-        // 允许更新的字段
-        const allowedFields = [
-          'title', 'domain_id', 'keywords', 'abstract', 'background',
-          'objectives', 'methodology', 'expected_outcomes', 'budget_total',
-          'duration_months', 'start_date', 'end_date', 'status', 'remarks'
-        ];
-        
-        allowedFields.forEach(field => {
-          if (body[field] !== undefined) {
-            updateFields.push(`${field} = ?`);
-            updateValues.push(body[field]);
-          }
-        });
-        
-        // 如果有提交操作，添加提交日期
-        if (body.status === 'submitted' && project.status === 'draft') {
-          updateFields.push('submit_date = ?');
-          updateValues.push(new Date().toISOString().split('T')[0]);
-        }
-        
-        // 如果有批准操作，添加批准日期
-        if (body.status === 'approved' && project.status !== 'approved') {
-          updateFields.push('approval_date = ?');
-          updateValues.push(new Date().toISOString().split('T')[0]);
-        }
-        
-        if (updateFields.length === 0) {
-          sendResponse(res, 400, {
-            success: false,
-            error: '没有提供更新数据'
-          });
-          return;
-        }
-        
-        updateValues.push(projectId);
-        
-        const updateSql = `UPDATE \`Project\` SET ${updateFields.join(', ')}, updated_at = NOW() WHERE id = ?`;
-        
-        await pool.query(updateSql, updateValues);
-        
-        sendResponse(res, 200, {
-          success: true,
-          message: '项目更新成功',
-          id: projectId
-        });
-        
-      } catch (error) {
-        console.error('更新项目失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '更新项目失败',
-          message: error.message
-        });
-      }
-      return;
-    }
     // 获取项目列表
     if ((pathname === '/api/project' || pathname === '/api/projects') && req.method === 'GET') {
       const token = req.headers.authorization;
@@ -13809,112 +12772,10 @@ function getRoleText(role) {
       }
       return;
     }
-    // ==================== 删除项目API ====================
-    if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'DELETE') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-      
-      // 提取项目ID
-      let projectId;
-      if (pathname.startsWith('/api/project/')) {
-        projectId = pathname.replace('/api/project/', '');
-      } else {
-        projectId = pathname.replace('/api/projects/', '');
-      }
-      
-      console.log('🗑️ 删除项目请求:', {
-        projectId: projectId,
-        userId: user.id,
-        userRole: user.role
-      });
-      
-      try {
-        // 检查项目是否存在
-        const [projects] = await pool.query(
-          'SELECT * FROM `Project` WHERE id = ?',
-          [projectId]
-        );
-        
-        if (projects.length === 0) {
-          sendResponse(res, 404, {
-            success: false,
-            error: '项目未找到'
-          });
-          return;
-        }
-        
-        const project = projects[0];
-        
-        // 检查权限：只有项目申请人、管理员可以删除
-        const isOwner = project.applicant_id === user.id;
-        const isAdmin = checkPermission(user.role, 'admin');
-        
-        if (!isOwner && !isAdmin) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限删除此项目'
-          });
-          return;
-        }
-        
-        // 检查项目状态：只有草稿状态可以删除
-        if (project.status !== 'draft') {
-          sendResponse(res, 409, {
-            success: false,
-            error: '只能删除草稿状态的项目',
-            currentStatus: project.status
-          });
-          return;
-        }
-        
-        console.log('✅ 验证通过，开始删除项目...');
-        
-        // 删除项目成员（ProjectMember表）
-        await pool.query('DELETE FROM `ProjectMember` WHERE project_id = ?', [projectId]);
-        
-        // 删除项目预算（ProjectBudget表）
-        await pool.query('DELETE FROM `ProjectBudget` WHERE project_id = ?', [projectId]);
-        
-        // 删除项目成果（ProjectAchievement表）
-        await pool.query('DELETE FROM `ProjectAchievement` WHERE project_id = ?', [projectId]);
-        
-        // 删除项目附件（ProjectAttachment表）
-        await pool.query('DELETE FROM `ProjectAttachment` WHERE project_id = ?', [projectId]);
-        
-        // 删除项目（Project表）
-        const [result] = await pool.query('DELETE FROM `Project` WHERE id = ?', [projectId]);
-        
-        console.log('✅ 项目删除成功，影响行数:', result.affectedRows);
-        
-        sendResponse(res, 200, {
-          success: true,
-          message: '项目删除成功',
-          id: projectId
-        });
-        
-      } catch (error) {
-        console.error('删除项目失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '删除项目失败',
-          message: error.message
-        });
-      }
-      return;
-    }
+    
     // ==================== 项目进度API（必须放在项目详情API之前） ====================
     
     // 1. 获取项目进度总览（放在项目详情API前面）
-    // ==================== 项目进度API ====================
-
     if (pathname.match(/^\/api\/projects\/[^\/]+\/progress$/) && req.method === 'GET') {
       console.log('🎯 进入项目进度API处理');
       
@@ -13940,39 +12801,10 @@ function getRoleText(role) {
       try {
         // 1. 查询项目是否存在
         console.log('🔍 查询项目，ID:', projectId);
-        const [projects] = await pool.query(`
-          SELECT 
-            p.id,
-            p.project_code,
-            p.title,
-            p.domain_id,
-            p.keywords,
-            p.abstract,
-            p.background,
-            p.objectives,
-            p.methodology,
-            p.expected_outcomes,
-            p.budget_total,
-            p.approved_budget,
-            p.duration_months,
-            p.status,
-            p.start_date,
-            p.end_date,
-            p.submit_date,
-            p.approval_date,
-            p.support_level,
-            p.remarks,
-            p.created_at,
-            p.updated_at,
-            p.applicant_id,
-            p.manager_id,
-            u.name as applicant_name,
-            m.name as manager_name
-          FROM \`Project\` p
-          LEFT JOIN \`User\` u ON p.applicant_id = u.id
-          LEFT JOIN \`User\` m ON p.manager_id = m.id
-          WHERE p.id = ?
-        `, [projectId]);
+        const [projects] = await pool.query(
+          'SELECT * FROM `Project` WHERE id = ?',
+          [projectId]
+        );
         
         console.log('📊 查询结果数量:', projects.length);
         
@@ -14001,14 +12833,12 @@ function getRoleText(role) {
         console.log('   用户角色:', user.role);
         
         const isOwner = project.applicant_id === user.id;
-        const isManager = project.manager_id === user.id;
         const hasAdminAccess = checkPermission(user.role, ['admin', 'assistant']);
         
         console.log('   是否是项目所有者:', isOwner);
-        console.log('   是否是项目经理:', isManager);
         console.log('   是否有管理员权限:', hasAdminAccess);
         
-        if (!isOwner && !isManager && !hasAdminAccess) {
+        if (!isOwner && !hasAdminAccess) {
           console.error('❌ 权限不足');
           sendResponse(res, 403, {
             success: false,
@@ -14016,7 +12846,6 @@ function getRoleText(role) {
             details: {
               userId: user.id,
               applicantId: project.applicant_id,
-              managerId: project.manager_id,
               userRole: user.role
             }
           });
@@ -14025,217 +12854,184 @@ function getRoleText(role) {
         
         console.log('✅ 权限检查通过');
         
-        // 3. 获取项目预算明细
-        const [budgets] = await pool.query(`
-          SELECT 
+        // 3. 获取项目阶段时间线
+        const [stages] = await pool.query(
+          `SELECT 
+            stage_number,
+            stage_name,
+            description,
+            start_date,
+            planned_end_date,
+            actual_end_date,
+            required_deliverables,
+            review_required,
+            status,
+            approval_date
+           FROM \`ProjectStage\` 
+           WHERE project_id = ? 
+           ORDER BY stage_number`,
+          [projectId]
+        );
+        
+        // 4. 获取经费支出记录
+        const [expenditures] = await pool.query(
+          `SELECT 
             id,
+            expense_no,
             category,
             item_name,
-            description,
             amount,
-            calculation_method,
-            justification,
-            sort_order
-          FROM \`ProjectBudget\`
-          WHERE project_id = ?
-          ORDER BY sort_order ASC, created_at ASC
-        `, [projectId]);
+            expense_date,
+            payee,
+            description,
+            status,
+            review_comment
+           FROM \`ExpenditureRecord\` 
+           WHERE project_id = ? 
+           ORDER BY expense_date DESC`,
+          [projectId]
+        );
         
-        // 4. 获取项目成果
-        const [achievements] = await pool.query(`
-          SELECT 
+        // 5. 获取项目成果
+        const [achievements] = await pool.query(
+          `SELECT 
             id,
             type,
             title,
             description,
             achievement_date,
-            authors,
-            external_link,
             status,
-            verified_by,
-            verified_date,
-            verification_comment,
-            created_at
-          FROM \`ProjectAchievement\`
-          WHERE project_id = ?
-          ORDER BY achievement_date DESC, created_at DESC
-        `, [projectId]);
+            created_by
+           FROM \`ProjectAchievement\` 
+           WHERE project_id = ? 
+           ORDER BY achievement_date DESC`,
+          [projectId]
+        );
         
-        // 5. 获取项目预算总额
+        // 6. 获取项目预算总额
         const [budgetResult] = await pool.query(
           'SELECT COALESCE(SUM(amount), 0) as total_budget FROM `ProjectBudget` WHERE project_id = ?',
           [projectId]
         );
         const totalBudget = budgetResult[0]?.total_budget || 0;
         
-        // 6. 获取已批准的预算总额（已立项的项目使用批准预算）
-        const approvedBudget = project.approved_budget || totalBudget;
-        const usedAmount = 0; // 支出记录暂时没有，设为0
-        const balance = approvedBudget - usedAmount;
+        // 7. 获取已批准的支出总额
+        const [expenditureResult] = await pool.query(
+          `SELECT COALESCE(SUM(amount), 0) as total_used 
+           FROM \`ExpenditureRecord\` 
+           WHERE project_id = ? AND status = 'approved'`,
+          [projectId]
+        );
+        const usedAmount = expenditureResult[0]?.total_used || 0;
         
-        // 7. 获取项目通知提醒（关联该项目的通知）
-        const [notifications] = await pool.query(`
-          SELECT 
+        // 8. 获取项目通知提醒
+        const [notifications] = await pool.query(
+          `SELECT 
             id,
             type,
             title,
-            content as description,
+            content,
             priority,
             is_read,
             created_at
-          FROM \`Notification\`
-          WHERE user_id = ? 
-            AND related_id = ? 
-            AND related_type = 'project'
-          ORDER BY created_at DESC 
-          LIMIT 10
-        `, [user.id, projectId]);
+           FROM \`Notification\` 
+           WHERE user_id = ? 
+             AND related_id = ? 
+             AND related_type = 'project'
+             AND (expires_at IS NULL OR expires_at > NOW())
+           ORDER BY created_at DESC 
+           LIMIT 10`,
+          [user.id, projectId]
+        );
         
-        // 8. 获取专家评审记录（如果有）
-        const [reviews] = await pool.query(`
-          SELECT 
-            pr.id,
-            pr.recommendation,
-            pr.innovation_score,
-            pr.feasibility_score,
-            pr.significance_score,
-            pr.team_score,
-            pr.budget_score,
-            pr.total_score,
-            pr.comments,
-            pr.suggestions,
-            pr.submitted_at,
-            u.name as expert_name
-          FROM \`ProjectReview\` pr
-          LEFT JOIN \`User\` u ON pr.expert_id = u.id
-          WHERE pr.project_id = ?
-            AND pr.status = 'submitted'
-          ORDER BY pr.submitted_at DESC
-        `, [projectId]);
+        // 9. 获取项目评审记录
+        const [reviews] = await pool.query(
+          `SELECT 
+            review_type,
+            review_date,
+            total_score,
+            recommendation,
+            comments,
+            u.name as reviewer_name
+           FROM \`ProjectReview\` pr
+           LEFT JOIN \`User\` u ON pr.reviewer_id = u.id
+           WHERE project_id = ?
+           ORDER BY review_date DESC`,
+          [projectId]
+        );
         
-        // 9. 获取批审批次决策（如果有）
-        const [batchDecisions] = await pool.query(`
-          SELECT 
-            bd.decision,
-            bd.support_type,
-            bd.approved_budget,
-            bd.support_details,
-            bd.conditions,
-            bd.decision_comment,
-            bd.decided_at,
-            rb.batch_name
-          FROM \`BatchReviewDecision\` bd
-          LEFT JOIN \`ReviewBatch\` rb ON bd.batch_id = rb.id
-          WHERE bd.project_id = ?
-          ORDER BY bd.decided_at DESC
-          LIMIT 1
-        `, [projectId]);
-        
-        // 10. 获取孵化记录（如果有）
-        const [incubation] = await pool.query(`
-          SELECT 
-            ir.id,
-            ir.start_date,
-            ir.planned_end_date,
-            ir.actual_end_date,
-            ir.status as incubation_status,
-            ir.created_at,
-            ir.updated_at
-          FROM \`IncubationRecord\` ir
-          WHERE ir.project_id = ?
-          ORDER BY ir.created_at DESC
-          LIMIT 1
-        `, [projectId]);
-        
-        // 11. 构建项目阶段时间线（根据项目状态动态生成）
-        const stages = buildProgressStages(project, incubation[0], batchDecisions[0]);
+        // 10. 获取创建者信息用于成果
+        for (const achievement of achievements) {
+          if (achievement.created_by) {
+            const [creators] = await pool.query(
+              'SELECT name FROM `User` WHERE id = ?',
+              [achievement.created_by]
+            );
+            if (creators.length > 0) {
+              achievement.author = creators[0].name;
+            }
+          }
+        }
         
         // 构建响应数据
         const responseData = {
           success: true,
           data: {
             project: project,
-            stages: stages,
-            budgets: budgets.map(budget => ({
-              id: budget.id,
-              category: budget.category,
-              item_name: budget.item_name,
-              description: budget.description,
-              amount: budget.amount,
-              calculation_method: budget.calculation_method,
-              justification: budget.justification
+            stages: stages.map(stage => ({
+              key: `stage_${stage.stage_number}`,
+              title: stage.stage_name,
+              description: stage.description,
+              status: stage.status,
+              estimatedTime: stage.planned_end_date ? 
+                `预计 ${stage.planned_end_date} 完成` : '未设定',
+              actualTime: stage.actual_end_date || null,
+              completed: stage.status === 'completed' || stage.status === 'approved',
+              current: stage.status === 'in_progress' || stage.status === 'under_review',
+              pending: stage.status === 'not_started' || stage.status === 'delayed'
+            })),
+            expenditures: expenditures.map(exp => ({
+              id: exp.id,
+              date: exp.expense_date,
+              category: exp.category,
+              purpose: exp.description || exp.item_name,
+              amount: exp.amount,
+              status: exp.status,
+              payee: exp.payee,
+              review_comment: exp.review_comment
             })),
             achievements: achievements.map(ach => ({
               id: ach.id,
               type: ach.type,
               title: ach.title,
               description: ach.description,
-              achievement_date: ach.achievement_date,
-              authors: ach.authors,
-              external_link: ach.external_link,
-              status: ach.status,
-              verified_by: ach.verified_by,
-              verified_date: ach.verified_date,
-              verification_comment: ach.verification_comment,
-              created_at: ach.created_at
+              date: ach.achievement_date,
+              author: ach.author || '项目组',
+              status: ach.status
             })),
             notifications: notifications.map(notif => ({
               id: notif.id,
               type: notif.type,
               title: notif.title,
-              content: notif.description,
+              content: notif.content,
               priority: notif.priority,
               is_read: notif.is_read,
               created_at: notif.created_at
             })),
-            reviews: reviews.map(review => ({
-              id: review.id,
-              recommendation: review.recommendation,
-              scores: {
-                innovation: review.innovation_score,
-                feasibility: review.feasibility_score,
-                significance: review.significance_score,
-                team: review.team_score,
-                budget: review.budget_score
-              },
-              total_score: review.total_score,
-              comments: review.comments,
-              suggestions: review.suggestions,
-              submitted_at: review.submitted_at,
-              expert_name: review.expert_name
-            })),
-            batch_decision: batchDecisions[0] ? {
-              decision: batchDecisions[0].decision,
-              support_type: batchDecisions[0].support_type,
-              approved_budget: batchDecisions[0].approved_budget,
-              support_details: batchDecisions[0].support_details,
-              conditions: batchDecisions[0].conditions,
-              decision_comment: batchDecisions[0].decision_comment,
-              decided_at: batchDecisions[0].decided_at,
-              batch_name: batchDecisions[0].batch_name
-            } : null,
-            incubation: incubation[0] ? {
-              start_date: incubation[0].start_date,
-              planned_end_date: incubation[0].planned_end_date,
-              actual_end_date: incubation[0].actual_end_date,
-              status: incubation[0].incubation_status,
-              created_at: incubation[0].created_at,
-              updated_at: incubation[0].updated_at
-            } : null,
+            reviews: reviews,
             budget_summary: {
               total: totalBudget,
-              approved: approvedBudget,
               used: usedAmount,
-              balance: balance
+              balance: totalBudget - usedAmount
             }
           }
         };
         
         console.log(`✅ 获取项目进度成功，数据量:`, {
-          预算明细: budgets.length,
+          阶段数: stages.length,
+          支出记录: expenditures.length,
           成果数: achievements.length,
-          通知数: notifications.length,
-          评审数: reviews.length
+          通知数: notifications.length
         });
         
         sendResponse(res, 200, responseData);
@@ -14245,358 +13041,14 @@ function getRoleText(role) {
         sendResponse(res, 500, {
           success: false,
           error: '获取项目进度失败',
-          message: error.message,
-          stack: error.stack
-        });
-      }
-      return;
-    }
-
-    // ==================== 辅助函数：构建项目阶段时间线 ====================
-
-    function buildProgressStages(project, incubation, batchDecision) {
-      const stages = [];
-      const status = project.status;
-      
-      // 阶段1：项目创建
-      stages.push({
-        stage_number: 1,
-        stage_name: '项目创建',
-        description: '项目基本信息填写完成',
-        status: 'completed',
-        estimatedTime: '1-2个工作日',
-        actualTime: project.created_at ? formatDate(project.created_at) : null,
-        completed: true,
-        current: false,
-        pending: false
-      });
-      
-      // 阶段2：项目提交
-      stages.push({
-        stage_number: 2,
-        stage_name: '项目申报',
-        description: '提交项目申请材料',
-        status: project.submit_date ? 'completed' : (status === 'draft' ? 'not_started' : 'in_progress'),
-        estimatedTime: '1-3个工作日',
-        actualTime: project.submit_date ? formatDate(project.submit_date) : null,
-        completed: !!project.submit_date,
-        current: status === 'submitted' && !project.submit_date,
-        pending: status === 'draft'
-      });
-      
-      // 阶段3：专家评审
-      const reviewStatus = getReviewStatus(status);
-      stages.push({
-        stage_number: 3,
-        stage_name: '专家评审',
-        description: '专家对项目进行评审',
-        status: reviewStatus,
-        estimatedTime: '5-7个工作日',
-        actualTime: null,
-        completed: ['revision', 'batch_review', 'approved', 'incubating', 'completed', 'rejected'].includes(status),
-        current: status === 'under_review',
-        pending: ['draft', 'submitted'].includes(status)
-      });
-      
-      // 阶段4：修改完善
-      if (status === 'revision' || ['batch_review', 'approved', 'incubating', 'completed'].includes(status)) {
-        stages.push({
-          stage_number: 4,
-          stage_name: '修改完善',
-          description: '根据评审意见修改项目',
-          status: status === 'revision' ? 'in_progress' : 'completed',
-          estimatedTime: '3-5个工作日',
-          actualTime: null,
-          completed: status !== 'revision',
-          current: status === 'revision',
-          pending: false
-        });
-      }
-      
-      // 阶段5：集中评审
-      if (status === 'batch_review' || ['approved', 'incubating', 'completed'].includes(status)) {
-        stages.push({
-          stage_number: 5,
-          stage_name: '集中评审',
-          description: batchDecision ? `评审批次：${batchDecision.batch_name || '集中评审'}` : '项目进入集中评审环节',
-          status: status === 'batch_review' ? 'in_progress' : 'completed',
-          estimatedTime: '3-5个工作日',
-          actualTime: batchDecision?.decided_at ? formatDate(batchDecision.decided_at) : null,
-          completed: status !== 'batch_review',
-          current: status === 'batch_review',
-          pending: false,
-          result: batchDecision?.decision,
-          comments: batchDecision?.decision_comment,
-          score: batchDecision?.approved_budget ? calculateScore(batchDecision.approved_budget, project.budget_total) : null
-        });
-      }
-      
-      // 阶段6：项目立项
-      if (status === 'approved' || ['incubating', 'completed'].includes(status)) {
-        stages.push({
-          stage_number: 6,
-          stage_name: '项目立项',
-          description: '项目正式批准立项',
-          status: 'completed',
-          estimatedTime: '1-2个工作日',
-          actualTime: project.approval_date ? formatDate(project.approval_date) : null,
-          completed: true,
-          current: false,
-          pending: false
-        });
-      }
-      
-      // 阶段7：项目孵化
-      if (status === 'incubating' || status === 'completed') {
-        stages.push({
-          stage_number: 7,
-          stage_name: '项目孵化',
-          description: incubation ? `孵化期：${formatDate(incubation.start_date)} 至 ${formatDate(incubation.planned_end_date) || '待定'}` : '项目进入孵化阶段',
-          status: status === 'incubating' ? 'in_progress' : 'completed',
-          estimatedTime: project.end_date ? `至 ${formatDate(project.end_date)}` : '待定',
-          actualTime: incubation?.actual_end_date ? formatDate(incubation.actual_end_date) : null,
-          completed: status === 'completed',
-          current: status === 'incubating',
-          pending: false
-        });
-      }
-      
-      // 阶段8：项目完成
-      if (status === 'completed') {
-        stages.push({
-          stage_number: 8,
-          stage_name: '项目完成',
-          description: '项目已完成所有研究工作',
-          status: 'completed',
-          estimatedTime: '项目结束',
-          actualTime: project.end_date ? formatDate(project.end_date) : null,
-          completed: true,
-          current: false,
-          pending: false
-        });
-      }
-      
-      // 如果项目被拒绝或终止
-      if (status === 'rejected' || status === 'terminated') {
-        stages.push({
-          stage_number: 9,
-          stage_name: status === 'rejected' ? '项目未通过' : '项目已终止',
-          description: status === 'rejected' ? '项目未通过评审，不予立项' : '项目孵化期间终止支持',
-          status: 'rejected',
-          estimatedTime: '--',
-          actualTime: null,
-          completed: true,
-          current: false,
-          pending: false
-        });
-      }
-      
-      return stages;
-    }
-
-    // 获取评审阶段状态文本
-    function getReviewStatus(status) {
-      switch(status) {
-        case 'under_review': return 'in_progress';
-        case 'revision': return 'completed';
-        case 'batch_review': return 'completed';
-        case 'approved': return 'completed';
-        case 'incubating': return 'completed';
-        case 'completed': return 'completed';
-        case 'rejected': return 'rejected';
-        default: return 'not_started';
-      }
-    }
-
-    // 计算评分（用于集中评审）
-    function calculateScore(approvedBudget, requestedBudget) {
-      if (!requestedBudget || requestedBudget === 0) return null;
-      const ratio = approvedBudget / requestedBudget;
-      if (ratio >= 0.9) return 90;
-      if (ratio >= 0.7) return 70;
-      if (ratio >= 0.5) return 50;
-      return 30;
-    }
-
-    // 格式化日期辅助函数
-    function formatDate(date) {
-      if (!date) return null;
-      const d = new Date(date);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    }
-    // ==================== 获取项目预算明细API ====================
-    if (pathname.match(/^\/api\/projects\/[^\/]+\/budgets$/) && req.method === 'GET') {
-      console.log('🎯 进入项目预算明细API');
-      
-      // 提取项目ID
-      const match = pathname.match(/^\/api\/projects\/([^\/]+)\/budgets$/);
-      const projectId = match[1];
-      
-      console.log('📋 项目ID:', projectId);
-      
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-      
-      try {
-        // 检查项目是否存在和权限
-        const [projects] = await pool.query(
-          'SELECT applicant_id, manager_id FROM `Project` WHERE id = ?',
-          [projectId]
-        );
-        
-        if (projects.length === 0) {
-          sendResponse(res, 404, {
-            success: false,
-            error: '项目未找到'
-          });
-          return;
-        }
-        
-        const project = projects[0];
-        const isOwner = project.applicant_id === user.id;
-        const isManager = project.manager_id === user.id;
-        const hasAdminAccess = checkPermission(user.role, ['admin', 'assistant']);
-        
-        if (!isOwner && !isManager && !hasAdminAccess) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限查看此项目的预算'
-          });
-          return;
-        }
-        
-        // 获取预算明细
-        const [budgets] = await pool.query(`
-          SELECT 
-            id,
-            category,
-            item_name,
-            description,
-            amount,
-            calculation_method,
-            justification,
-            sort_order,
-            created_at
-          FROM \`ProjectBudget\`
-          WHERE project_id = ?
-          ORDER BY sort_order ASC, created_at ASC
-        `, [projectId]);
-        
-        console.log(`✅ 获取预算明细成功，共 ${budgets.length} 条`);
-        
-        sendResponse(res, 200, {
-          success: true,
-          data: budgets
-        });
-        
-      } catch (error) {
-        console.error('获取预算明细失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '获取预算明细失败',
           message: error.message
         });
       }
       return;
     }
-    // ==================== 获取项目成果列表API ====================
-
-    if (pathname.match(/^\/api\/projects\/[^\/]+\/achievements$/) && req.method === 'GET') {
-      console.log('🎯 进入项目成果列表API');
-      
-      // 提取项目ID
-      const match = pathname.match(/^\/api\/projects\/([^\/]+)\/achievements$/);
-      const projectId = match[1];
-      
-      console.log('📋 项目ID:', projectId);
-      
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-      
-      try {
-        // 检查项目是否存在和权限
-        const [projects] = await pool.query(
-          'SELECT applicant_id, manager_id FROM `Project` WHERE id = ?',
-          [projectId]
-        );
-        
-        if (projects.length === 0) {
-          sendResponse(res, 404, {
-            success: false,
-            error: '项目未找到'
-          });
-          return;
-        }
-        
-        const project = projects[0];
-        const isOwner = project.applicant_id === user.id;
-        const isManager = project.manager_id === user.id;
-        const hasAdminAccess = checkPermission(user.role, ['admin', 'assistant']);
-        
-        if (!isOwner && !isManager && !hasAdminAccess) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限查看此项目的成果'
-          });
-          return;
-        }
-        
-        // 获取成果列表
-        const [achievements] = await pool.query(`
-          SELECT 
-            id,
-            type,
-            title,
-            description,
-            achievement_date,
-            authors,
-            external_link,
-            status,
-            verified_by,
-            verified_date,
-            verification_comment,
-            created_at,
-            (SELECT name FROM \`User\` WHERE id = created_by) as author_name
-          FROM \`ProjectAchievement\`
-          WHERE project_id = ?
-          ORDER BY achievement_date DESC, created_at DESC
-        `, [projectId]);
-        
-        console.log(`✅ 获取成果列表成功，共 ${achievements.length} 条`);
-        
-        sendResponse(res, 200, {
-          success: true,
-          data: achievements
-        });
-        
-      } catch (error) {
-        console.error('获取成果列表失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '获取成果列表失败',
-          message: error.message
-        });
-      }
-      return;
-    }
-    // ==================== 项目详情API ====================
-
+    
+    // ==================== 项目详情API（放在进度API之后） ====================
+    
     // 获取单个项目详情
     if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'GET') {
       const token = req.headers.authorization;
@@ -14618,12 +13070,14 @@ function getRoleText(role) {
         projectId = pathname.replace('/api/projects/', '');
       }
       
-      // 检查是否包含/progress，如果是，跳过
+      // 检查是否包含/progress，如果是，已经在上面的代码处理了
       if (projectId.includes('/progress')) {
-        // 这里不应该到达
+        // 这里不应该到达，因为进度API已经在上面处理了
+        console.log('⚠️ 路径包含/progress，但进度API未匹配，路径:', pathname);
         sendResponse(res, 404, {
           success: false,
-          error: 'API路径错误'
+          error: 'API路径错误',
+          received_path: pathname
         });
         return;
       }
@@ -14631,40 +13085,11 @@ function getRoleText(role) {
       console.log('📋 处理项目详情API，项目ID:', projectId);
       
       try {
-        // 获取项目基本信息（适配新数据库字段）
-        const [projects] = await pool.query(`
-          SELECT 
-            p.id,
-            p.project_code,
-            p.title,
-            p.domain_id,
-            rd.name as research_field,
-            p.keywords,
-            p.abstract,
-            p.background,
-            p.objectives,
-            p.methodology,
-            p.expected_outcomes,
-            p.budget_total,
-            p.duration_months,
-            p.status,
-            p.start_date,
-            p.end_date,
-            p.applicant_id,
-            p.manager_id,
-            p.support_level,
-            p.approved_budget,
-            p.submit_date,
-            p.approval_date,
-            p.remarks,
-            p.created_at,
-            p.updated_at,
-            u.name as applicant_name
-          FROM \`Project\` p
-          LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
-          LEFT JOIN \`User\` u ON p.applicant_id = u.id
-          WHERE p.id = ?
-        `, [projectId]);
+        // 获取项目基本信息
+        const [projects] = await pool.query(
+          'SELECT * FROM `Project` WHERE id = ?',
+          [projectId]
+        );
         
         if (projects.length === 0) {
           sendResponse(res, 404, {
@@ -14676,108 +13101,44 @@ function getRoleText(role) {
         
         const project = projects[0];
         
-        // 检查权限：申请人本人、项目经理、管理员可以查看
-        const isApplicant = project.applicant_id === user.id;
-        const isManager = project.manager_id === user.id;
-        const isAdmin = checkPermission(user.role, 'admin');
-        const isAssistant = checkPermission(user.role, 'assistant');
-        
-        if (!isApplicant && !isManager && !isAdmin && !isAssistant) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限查看此项目'
-          });
-          return;
+        // 检查权限
+        if (!checkPermission(user.role, ['admin', 'assistant'])) {
+          const [memberCheck] = await pool.query(
+            'SELECT id FROM `ProjectMember` WHERE project_id = ? AND user_id = ?',
+            [projectId, user.id]
+          );
+          if (project.applicant_id !== user.id && memberCheck.length === 0) {
+            sendResponse(res, 403, {
+              success: false,
+              error: '没有权限查看此项目'
+            });
+            return;
+          }
         }
         
-        // 获取项目成员（适配 ProjectMember 表）
-        const [members] = await pool.query(`
-          SELECT 
-            pm.id,
-            pm.name,
-            pm.user_id,
-            pm.role as member_role,
-            pm.title,
-            pm.organization as department,
-            pm.responsibility,
-            pm.is_notable,
-            pm.workload_percentage,
-            u.username,
-            u.email
-          FROM \`ProjectMember\` pm
-          LEFT JOIN \`User\` u ON pm.user_id = u.id
-          WHERE pm.project_id = ?
-          ORDER BY pm.sort_order ASC, pm.created_at ASC
-        `, [projectId]);
+        // 获取项目成员
+        const [members] = await pool.query(
+          `SELECT u.id, u.username, u.email, u.role, pm.role as member_role, pm.join_date
+           FROM \`ProjectMember\` pm
+           JOIN \`User\` u ON pm.user_id = u.id
+           WHERE pm.project_id = ?`,
+          [projectId]
+        );
         
-        // 获取项目预算（适配 ProjectBudget 表）
-        const [budgets] = await pool.query(`
-          SELECT 
-            id,
-            category,
-            item_name,
-            description,
-            amount,
-            calculation_method,
-            justification,
-            sort_order
-          FROM \`ProjectBudget\`
-          WHERE project_id = ?
-          ORDER BY sort_order ASC, created_at ASC
-        `, [projectId]);
-        
-        // 获取项目成果（适配 ProjectAchievement 表）
-        const [achievements] = await pool.query(`
-          SELECT 
-            id,
-            type,
-            title,
-            description,
-            achievement_date,
-            authors,
-            external_link,
-            status,
-            verified_by,
-            verified_date,
-            verification_comment,
-            created_at
-          FROM \`ProjectAchievement\`
-          WHERE project_id = ?
-          ORDER BY achievement_date DESC, created_at DESC
-          LIMIT 10
-        `, [projectId]);
-        
-        // 获取项目附件（如果有 ProjectAttachment 表）
-        const [attachments] = await pool.query(`
-          SELECT 
-            id,
-            file_name as name,
-            file_path,
-            file_size as size,
-            mime_type as type,
-            media_type,
-            section,
-            created_at
-          FROM \`ProjectAttachment\`
-          WHERE project_id = ?
-          ORDER BY created_at DESC
-        `, [projectId]);
+        // 获取项目预算
+        const [budgets] = await pool.query(
+          'SELECT * FROM `ProjectBudget` WHERE project_id = ?',
+          [projectId]
+        );
         
         sendResponse(res, 200, {
           success: true,
           data: {
-            project: {
-              ...project,
-              research_field: project.research_field || project.domain_id,
-              applicant_name: project.applicant_name
-            },
+            project: project,
             members: members,
-            budgets: budgets,
-            achievements: achievements,
-            attachments: attachments
+            budgets: budgets
           }
         });
-        
       } catch (error) {
         console.error('获取项目详情失败:', error);
         sendResponse(res, 500, {
@@ -14788,9 +13149,7 @@ function getRoleText(role) {
       }
       return;
     }
-
-    // ==================== 更新项目API ====================
-
+    
     // 更新项目
     if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'PUT') {
       const token = req.headers.authorization;
@@ -14836,7 +13195,14 @@ function getRoleText(role) {
         if (!isOwner && !isAdmin) {
           sendResponse(res, 403, {
             success: false,
-            error: '没有权限更新此项目'
+            error: '没有权限更新此项目',
+            details: {
+              userId: user.id,
+              applicantId: project.applicant_id,
+              userRole: user.role,
+              isOwner: isOwner,
+              isAdmin: isAdmin
+            }
           });
           return;
         }
@@ -14846,19 +13212,20 @@ function getRoleText(role) {
         console.log('🔄 更新项目请求:', {
           projectId: projectId,
           userId: user.id,
+          userRole: user.role,
           data: body
         });
         
-        // 构建更新字段（适配新数据库字段）
+        // 构建更新字段
         const updateFields = [];
         const updateValues = [];
         
-        // 新数据库允许更新的字段
+        // 允许更新的字段
         const allowedFields = [
-          'title', 'domain_id', 'keywords', 'abstract', 'background',
-          'objectives', 'methodology', 'expected_outcomes', 'budget_total',
-          'duration_months', 'status', 'start_date', 'end_date',
-          'support_level', 'approved_budget', 'remarks'
+          'title', 'category', 'research_field', 'keywords', 'abstract',
+          'background', 'objectives', 'methodology', 'expected_outcomes',
+          'budget_total', 'duration_months', 'status', 'start_date', 'end_date',
+          'current_stage'
         ];
         
         allowedFields.forEach(field => {
@@ -14867,18 +13234,6 @@ function getRoleText(role) {
             updateValues.push(body[field]);
           }
         });
-        
-        // 如果有提交操作，添加提交日期
-        if (body.status === 'submitted' && project.status === 'draft') {
-          updateFields.push('submit_date = ?');
-          updateValues.push(new Date().toISOString().split('T')[0]);
-        }
-        
-        // 如果有批准操作，添加批准日期
-        if (body.status === 'approved' && project.status !== 'approved') {
-          updateFields.push('approval_date = ?');
-          updateValues.push(new Date().toISOString().split('T')[0]);
-        }
         
         // 如果没有更新数据
         if (updateFields.length === 0) {
@@ -14891,9 +13246,10 @@ function getRoleText(role) {
         
         updateValues.push(projectId);
         
-        const updateSql = `UPDATE \`Project\` SET ${updateFields.join(', ')}, updated_at = NOW() WHERE id = ?`;
+        const updateSql = `UPDATE \`Project\` SET ${updateFields.join(', ')} WHERE id = ?`;
         
         console.log('更新项目SQL:', updateSql);
+        console.log('参数:', updateValues);
         
         await pool.query(updateSql, updateValues);
         
@@ -14908,15 +13264,14 @@ function getRoleText(role) {
         sendResponse(res, 500, {
           success: false,
           error: '更新项目失败',
-          message: error.message
+          message: error.message,
+          sqlMessage: error.sqlMessage
         });
       }
       return;
     }
-
-    // ==================== 删除项目API ====================
-
-    // 删除项目
+    
+    // 删除项目API
     if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'DELETE') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -14960,14 +13315,21 @@ function getRoleText(role) {
         
         const project = projects[0];
         
-        // 检查权限：只有项目申请人、管理员可以删除
+        // 检查权限：只有项目申请人、管理员或助理可以删除
         const isOwner = project.applicant_id === user.id;
         const isAdmin = checkPermission(user.role, 'admin');
+        const isAssistant = checkPermission(user.role, 'assistant');
         
-        if (!isOwner && !isAdmin) {
+        if (!isOwner && !isAdmin && !isAssistant) {
           sendResponse(res, 403, {
             success: false,
-            error: '没有权限删除此项目'
+            error: '没有权限删除此项目',
+            details: {
+              userId: user.id,
+              applicantId: project.applicant_id,
+              userRole: user.role,
+              projectStatus: project.status
+            }
           });
           return;
         }
@@ -14977,26 +13339,21 @@ function getRoleText(role) {
           sendResponse(res, 409, {
             success: false,
             error: '只能删除草稿状态的项目',
-            currentStatus: project.status
+            currentStatus: project.status,
+            allowedStatus: 'draft'
           });
           return;
         }
         
         console.log('✅ 验证通过，开始删除项目...');
         
-        // 删除项目成员（ProjectMember表）
+        // 删除项目成员
         await pool.query('DELETE FROM `ProjectMember` WHERE project_id = ?', [projectId]);
         
-        // 删除项目预算（ProjectBudget表）
+        // 删除项目预算
         await pool.query('DELETE FROM `ProjectBudget` WHERE project_id = ?', [projectId]);
         
-        // 删除项目成果（ProjectAchievement表）
-        await pool.query('DELETE FROM `ProjectAchievement` WHERE project_id = ?', [projectId]);
-        
-        // 删除项目附件（ProjectAttachment表）
-        await pool.query('DELETE FROM `ProjectAttachment` WHERE project_id = ?', [projectId]);
-        
-        // 删除项目（Project表）
+        // 删除项目
         const [result] = await pool.query('DELETE FROM `Project` WHERE id = ?', [projectId]);
         
         console.log('✅ 项目删除成功，影响行数:', result.affectedRows);
@@ -15012,16 +13369,15 @@ function getRoleText(role) {
         sendResponse(res, 500, {
           success: false,
           error: '删除项目失败',
-          message: error.message
+          message: error.message,
+          sqlMessage: error.sqlMessage
         });
       }
       return;
     }
-
-    // ==================== 创建项目API ====================
-
-    // 创建项目
-    if (pathname === '/api/projects' && req.method === 'POST') {
+    
+    // 2. 创建项目阶段记录
+    if (pathname.startsWith('/api/projects/') && pathname.endsWith('/stages') && req.method === 'POST') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
       
@@ -15033,120 +13389,11 @@ function getRoleText(role) {
         return;
       }
       
-      const body = await parseRequestBody(req);
-      
-      try {
-        const projectId = randomUUID();
-        const projectCode = `PROJ-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
-        
-        const sql = `
-          INSERT INTO \`Project\` (
-            id, project_code, applicant_id, title, domain_id, keywords,
-            abstract, background, objectives, methodology, expected_outcomes,
-            budget_total, duration_months, status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-        `;
-        
-        const params = [
-          projectId,
-          projectCode,
-          user.id,
-          body.title,
-          body.domain_id,
-          body.keywords,
-          body.abstract,
-          body.background,
-          body.objectives,
-          body.methodology,
-          body.expected_outcomes,
-          body.budget_total,
-          body.duration_months,
-          'draft'
-        ];
-        
-        await pool.query(sql, params);
-        
-        sendResponse(res, 201, {
-          success: true,
-          message: '项目创建成功',
-          id: projectId,
-          project_code: projectCode
-        });
-        
-      } catch (error) {
-        console.error('创建项目失败:', error);
-        sendResponse(res, 500, {
+      // 只有管理员和科研助理可以设置项目阶段
+      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+        sendResponse(res, 403, {
           success: false,
-          error: '创建项目失败',
-          message: error.message
-        });
-      }
-      return;
-    }
-
-    // ==================== 获取申请人项目列表API ====================
-
-    // 获取申请人的项目列表
-    if (pathname === '/api/applicant/projects' && req.method === 'GET') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-      
-      try {
-        const [projects] = await pool.query(`
-          SELECT 
-            p.id,
-            p.project_code,
-            p.title,
-            p.status,
-            p.budget_total,
-            p.duration_months,
-            p.start_date,
-            p.end_date,
-            p.created_at,
-            p.updated_at,
-            rd.name as research_field
-          FROM \`Project\` p
-          LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
-          WHERE p.applicant_id = ?
-          ORDER BY p.created_at DESC
-        `, [user.id]);
-        
-        sendResponse(res, 200, {
-          success: true,
-          data: projects,
-          total: projects.length
-        });
-        
-      } catch (error) {
-        console.error('获取项目列表失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '获取项目列表失败',
-          message: error.message
-        });
-      }
-      return;
-    }
-
-    // ==================== 添加项目成员API ====================
-
-    // 添加项目成员
-    if (pathname.startsWith('/api/projects/') && pathname.endsWith('/members') && req.method === 'POST') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
+          error: '没有权限设置项目阶段'
         });
         return;
       }
@@ -15156,12 +13403,8 @@ function getRoleText(role) {
       const body = await parseRequestBody(req);
       
       try {
-        // 检查项目是否存在和权限
-        const [projects] = await pool.query(
-          'SELECT applicant_id FROM `Project` WHERE id = ?',
-          [projectId]
-        );
-        
+        // 验证项目存在
+        const [projects] = await pool.query('SELECT id FROM `Project` WHERE id = ?', [projectId]);
         if (projects.length === 0) {
           sendResponse(res, 404, {
             success: false,
@@ -15170,63 +13413,50 @@ function getRoleText(role) {
           return;
         }
         
-        const project = projects[0];
-        const isOwner = project.applicant_id === user.id;
-        const isAdmin = checkPermission(user.role, 'admin');
-        
-        if (!isOwner && !isAdmin) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限添加成员'
-          });
-          return;
-        }
-        
-        const memberId = randomUUID();
-        
+        // 创建新阶段
+        const stageId = randomUUID();
         const sql = `
-          INSERT INTO \`ProjectMember\` (
-            id, project_id, name, user_id, role, title, organization,
-            responsibility, workload_percentage, sort_order, created_at
+          INSERT INTO \`ProjectStage\` (
+            id, project_id, stage_number, stage_name, description,
+            start_date, planned_end_date, required_deliverables,
+            review_required, status, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
         
         const params = [
-          memberId,
+          stageId,
           projectId,
-          body.name,
-          body.user_id || null,
-          body.role || 'researcher',
-          body.title || null,
-          body.organization || null,
-          body.responsibility || null,
-          body.workload_percentage || 0,
-          body.sort_order || 0
+          body.stage_number,
+          body.stage_name,
+          body.description,
+          body.start_date,
+          body.planned_end_date,
+          body.required_deliverables ? JSON.stringify(body.required_deliverables) : null,
+          body.review_required !== undefined ? body.review_required : true,
+          body.status || 'not_started'
         ];
         
         await pool.query(sql, params);
         
         sendResponse(res, 201, {
           success: true,
-          message: '成员添加成功',
-          id: memberId
+          message: '项目阶段创建成功',
+          stage_id: stageId
         });
         
       } catch (error) {
-        console.error('添加成员失败:', error);
+        console.error('创建项目阶段失败:', error);
         sendResponse(res, 500, {
           success: false,
-          error: '添加成员失败',
+          error: '创建项目阶段失败',
           message: error.message
         });
       }
       return;
     }
-
-    // ==================== 添加项目预算API ====================
-
-    // 添加项目预算项
-    if (pathname.startsWith('/api/projects/') && pathname.endsWith('/budgets') && req.method === 'POST') {
+    
+    // 3. 更新项目阶段状态
+    if (pathname.startsWith('/api/projects/') && pathname.includes('/stages/') && req.method === 'PUT') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
       
@@ -15239,16 +13469,13 @@ function getRoleText(role) {
       }
       
       const pathParts = pathname.split('/');
-      const projectId = pathParts[pathParts.length - 2];
+      const projectId = pathParts[pathParts.length - 3];
+      const stageId = pathParts[pathParts.length - 1];
       const body = await parseRequestBody(req);
       
       try {
-        // 检查项目是否存在和权限
-        const [projects] = await pool.query(
-          'SELECT applicant_id FROM `Project` WHERE id = ?',
-          [projectId]
-        );
-        
+        // 检查权限：项目申请人或管理员/助理
+        const [projects] = await pool.query('SELECT applicant_id FROM `Project` WHERE id = ?', [projectId]);
         if (projects.length === 0) {
           sendResponse(res, 404, {
             success: false,
@@ -15259,491 +13486,78 @@ function getRoleText(role) {
         
         const project = projects[0];
         const isOwner = project.applicant_id === user.id;
-        const isAdmin = checkPermission(user.role, 'admin');
+        const hasAdminAccess = checkPermission(user.role, ['admin', 'assistant']);
         
-        if (!isOwner && !isAdmin) {
+        if (!isOwner && !hasAdminAccess) {
           sendResponse(res, 403, {
             success: false,
-            error: '没有权限添加预算'
+            error: '没有权限更新项目阶段'
           });
           return;
         }
         
-        const budgetId = randomUUID();
+        // 构建更新字段
+        const updateFields = [];
+        const updateValues = [];
         
-        const sql = `
-          INSERT INTO \`ProjectBudget\` (
-            id, project_id, category, item_name, description,
-            amount, calculation_method, justification, sort_order, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-        `;
-        
-        const params = [
-          budgetId,
-          projectId,
-          body.category,
-          body.item_name,
-          body.description,
-          body.amount,
-          body.calculation_method,
-          body.justification,
-          body.sort_order || 0
-        ];
-        
-        await pool.query(sql, params);
-        
-        sendResponse(res, 201, {
-          success: true,
-          message: '预算项添加成功',
-          id: budgetId
-        });
-        
-      } catch (error) {
-        console.error('添加预算项失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '添加预算项失败',
-          message: error.message
-        });
-      }
-      return;
-    }    
-// ==================== 附件API ====================
-
-    // ==================== 附件API（独立路径） ====================
-
-    // 1. 下载附件 - GET /api/attachments/:id
-    if (pathname.startsWith('/api/attachments/') && req.method === 'GET') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-      
-      // 提取附件ID
-      const attachmentId = pathname.split('/')[3];
-      console.log('📥 下载附件请求:', { attachmentId, userId: user.id });
-      
-      try {
-        // 获取附件信息
-        const [attachments] = await pool.query(`
-          SELECT a.*, p.applicant_id, p.manager_id
-          FROM \`ProjectAttachment\` a
-          JOIN \`Project\` p ON a.project_id = p.id
-          WHERE a.id = ?
-        `, [attachmentId]);
-        
-        if (attachments.length === 0) {
-          sendResponse(res, 404, {
-            success: false,
-            error: '附件未找到'
-          });
-          return;
-        }
-        
-        const attachment = attachments[0];
-        
-        // 检查权限
-        const isApplicant = attachment.applicant_id === user.id;
-        const isManager = attachment.manager_id === user.id;
-        const isAdmin = checkPermission(user.role, 'admin');
-        const isAssistant = checkPermission(user.role, 'assistant');
-        
-        if (!isApplicant && !isManager && !isAdmin && !isAssistant) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限下载此附件'
-          });
-          return;
-        }
-        
-        // 检查文件是否存在
-        const fs = require('fs');
-        if (!fs.existsSync(attachment.file_path)) {
-          console.error('文件不存在:', attachment.file_path);
-          sendResponse(res, 404, {
-            success: false,
-            error: '文件不存在'
-          });
-          return;
-        }
-        
-        // 获取文件大小
-        const stats = fs.statSync(attachment.file_path);
-        
-        // 设置响应头
-        const fileName = encodeURIComponent(attachment.file_name);
-        res.setHeader('Content-Type', attachment.mime_type);
-        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
-        res.setHeader('Content-Length', stats.size);
-        
-        // 发送文件
-        const fileStream = fs.createReadStream(attachment.file_path);
-        fileStream.pipe(res);
-        
-        fileStream.on('error', (error) => {
-          console.error('文件流错误:', error);
-          if (!res.headersSent) {
-            sendResponse(res, 500, {
-              success: false,
-              error: '文件读取失败'
-            });
+        const allowedFields = ['status', 'actual_end_date', 'description'];
+        allowedFields.forEach(field => {
+          if (body[field] !== undefined) {
+            updateFields.push(`${field} = ?`);
+            updateValues.push(body[field]);
           }
         });
         
-        
-        console.log('✅ 文件下载成功:', attachment.file_name);
-        
-      } catch (error) {
-        console.error('❌ 下载附件失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '下载附件失败',
-          message: error.message
-        });
-      }
-      return;
-    }
-
-    // 2. 删除附件 - DELETE /api/attachments/:id
-    if (pathname.startsWith('/api/attachments/') && req.method === 'DELETE') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-      
-      // 提取附件ID
-      const attachmentId = pathname.split('/')[3];
-      console.log('🗑️ 删除附件请求:', { attachmentId, userId: user.id });
-      
-      try {
-        // 获取附件信息
-        const [attachments] = await pool.query(`
-          SELECT a.*, p.applicant_id, p.status
-          FROM \`ProjectAttachment\` a
-          JOIN \`Project\` p ON a.project_id = p.id
-          WHERE a.id = ?
-        `, [attachmentId]);
-        
-        if (attachments.length === 0) {
-          sendResponse(res, 404, {
-            success: false,
-            error: '附件未找到'
-          });
-          return;
+        if (body.status === 'completed' && body.actual_end_date === undefined) {
+          updateFields.push('actual_end_date = ?');
+          updateValues.push(new Date().toISOString().split('T')[0]);
         }
         
-        const attachment = attachments[0];
-        
-        // 检查权限
-        const isOwner = attachment.applicant_id === user.id;
-        const isAdmin = checkPermission(user.role, 'admin');
-        
-        if (!isOwner && !isAdmin) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限删除此附件'
-          });
-          return;
-        }
-        
-        // 删除物理文件
-        const fs = require('fs');
-        if (fs.existsSync(attachment.file_path)) {
-          fs.unlinkSync(attachment.file_path);
-          console.log('✅ 删除物理文件:', attachment.file_path);
-        }
-        
-        // 从数据库删除
-        await pool.query('DELETE FROM \`ProjectAttachment\` WHERE id = ?', [attachmentId]);
-        
-        sendResponse(res, 200, {
-          success: true,
-          message: '附件删除成功'
-        });
-        
-      } catch (error) {
-        console.error('删除附件失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '删除附件失败',
-          message: error.message
-        });
-      }
-      return;
-    }
-
-    // 3. 上传附件 - POST /api/attachments
-    // 上传附件 - POST /api/attachments
-    if (pathname === '/api/attachments' && req.method === 'POST') {
-      console.log('📤 收到上传请求');
-      
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-      
-      const fs = require('fs');
-      const path = require('path');
-      
-      // 创建上传目录
-      const uploadDir = path.join(__dirname, 'uploads/temp');
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-      
-      // 正确使用 formidable - 注意：不要用 new
-      const form = formidable({
-        uploadDir: uploadDir,
-        keepExtensions: true,
-        maxFileSize: 50 * 1024 * 1024,
-        multiples: true,
-      });
-      
-      form.parse(req, async (err, fields, files) => {
-        if (err) {
-          console.error('文件解析失败:', err);
+        if (updateFields.length === 0) {
           sendResponse(res, 400, {
             success: false,
-            error: '文件上传失败',
-            message: err.message
+            error: '没有提供更新数据'
           });
           return;
         }
         
-        try {
-          // 获取文件
-          let file = files.file;
-          if (Array.isArray(file)) {
-            file = file[0];
-          }
-          
-          // 获取项目ID
-          let projectId = fields.project_id;
-          if (Array.isArray(projectId)) {
-            projectId = projectId[0];
-          }
-          
-          let section = fields.section || 'attachment';
-          if (Array.isArray(section)) {
-            section = section[0];
-          }
-          
-          let mediaType = fields.media_type || 'other';
-          if (Array.isArray(mediaType)) {
-            mediaType = mediaType[0];
-          }
-          
-          console.log('📤 上传附件请求:', {
-            projectId,
-            fileName: file?.originalFilename,
-            fileSize: file?.size,
-            userId: user.id
-          });
-          
-          if (!file) {
-            sendResponse(res, 400, { success: false, error: '未提供文件' });
-            return;
-          }
-          
-          if (!projectId) {
-            if (file.filepath && fs.existsSync(file.filepath)) {
-              fs.unlinkSync(file.filepath);
-            }
-            sendResponse(res, 400, { success: false, error: '未提供项目ID' });
-            return;
-          }
-          
-          // 检查项目是否存在
-          const [projects] = await pool.query(
-            'SELECT applicant_id FROM `Project` WHERE id = ?',
-            [projectId]
+        updateValues.push(stageId);
+        
+        const updateSql = `UPDATE \`ProjectStage\` SET ${updateFields.join(', ')} WHERE id = ?`;
+        
+        await pool.query(updateSql, updateValues);
+        
+        // 如果阶段完成，更新项目当前阶段
+        if (body.status === 'completed') {
+          const [stageResult] = await pool.query(
+            'SELECT stage_number FROM `ProjectStage` WHERE id = ?',
+            [stageId]
           );
-          
-          if (projects.length === 0) {
-            if (file.filepath && fs.existsSync(file.filepath)) {
-              fs.unlinkSync(file.filepath);
-            }
-            sendResponse(res, 404, { success: false, error: '项目未找到' });
-            return;
+          if (stageResult.length > 0) {
+            const nextStage = stageResult[0].stage_number + 1;
+            await pool.query(
+              'UPDATE `Project` SET current_stage = ? WHERE id = ?',
+              [nextStage, projectId]
+            );
           }
-          
-          const project = projects[0];
-          const isOwner = project.applicant_id === user.id;
-          const isAdmin = checkPermission(user.role, 'admin');
-          
-          if (!isOwner && !isAdmin) {
-            if (file.filepath && fs.existsSync(file.filepath)) {
-              fs.unlinkSync(file.filepath);
-            }
-            sendResponse(res, 403, { success: false, error: '没有权限上传附件' });
-            return;
-          }
-          
-          // 创建项目专属文件夹
-          const projectUploadDir = path.join(__dirname, 'uploads/projects', projectId);
-          if (!fs.existsSync(projectUploadDir)) {
-            fs.mkdirSync(projectUploadDir, { recursive: true });
-            console.log('✅ 创建项目文件夹:', projectUploadDir);
-          }
-          
-          // 生成唯一文件名
-          const originalName = file.originalFilename || file.name;
-          const ext = path.extname(originalName);
-          const storedName = `${Date.now()}_${Math.random().toString(36).substring(7)}${ext}`;
-          const storedPath = path.join(projectUploadDir, storedName);
-          
-          // 移动文件到项目文件夹
-          fs.renameSync(file.filepath, storedPath);
-          console.log('✅ 文件已移动到:', storedPath);
-          
-          // 确定媒体类型
-          const mimeType = file.mimetype || file.type;
-          let finalMediaType = mediaType;
-          if (finalMediaType === 'other') {
-            if (mimeType?.startsWith('image/')) finalMediaType = 'image';
-            else if (mimeType?.startsWith('audio/')) finalMediaType = 'audio';
-            else if (mimeType?.startsWith('video/')) finalMediaType = 'video';
-            else if (mimeType?.includes('pdf')) finalMediaType = 'document';
-          }
-          
-          // 保存到数据库
-          const attachmentId = randomUUID();
-          await pool.query(`
-            INSERT INTO \`ProjectAttachment\` (
-              id, project_id, file_name, file_path, file_size,
-              mime_type, media_type, section, uploaded_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-          `, [
-            attachmentId, projectId, originalName, storedPath, file.size,
-            mimeType, finalMediaType, section, user.id
-          ]);
-          
-          console.log('✅ 附件记录已保存到数据库');
-          
-          sendResponse(res, 201, {
-            success: true,
-            message: '文件上传成功',
-            data: {
-              id: attachmentId,
-              name: originalName,
-              size: file.size,
-              type: mimeType,
-              media_type: finalMediaType,
-              created_at: new Date().toISOString()
-            }
-          });
-          
-        } catch (error) {
-          console.error('❌ 上传失败:', error);
-          // 清理临时文件
-          if (files && files.file) {
-            let file = files.file;
-            if (Array.isArray(file)) file = file[0];
-            if (file && file.filepath && fs.existsSync(file.filepath)) {
-              try {
-                fs.unlinkSync(file.filepath);
-              } catch (e) {}
-            }
-          }
-          sendResponse(res, 500, {
-            success: false,
-            error: '上传失败',
-            message: error.message
-          });
         }
-      });
-      return;
-    }
-    // ==================== 获取项目附件列表API（已包含在项目详情中，但也可以单独提供） ====================
-
-    // 获取项目附件列表
-    if (pathname.startsWith('/api/projects/') && pathname.endsWith('/attachments') && req.method === 'GET') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-      
-      // 提取项目ID
-      const projectId = pathname.split('/')[3];
-      
-      try {
-        // 检查权限
-        const [projects] = await pool.query(
-          'SELECT applicant_id, manager_id FROM `Project` WHERE id = ?',
-          [projectId]
-        );
-        
-        if (projects.length === 0) {
-          sendResponse(res, 404, {
-            success: false,
-            error: '项目未找到'
-          });
-          return;
-        }
-        
-        const project = projects[0];
-        const isApplicant = project.applicant_id === user.id;
-        const isManager = project.manager_id === user.id;
-        const isAdmin = checkPermission(user.role, 'admin');
-        const isAssistant = checkPermission(user.role, 'assistant');
-        
-        if (!isApplicant && !isManager && !isAdmin && !isAssistant) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限查看附件'
-          });
-          return;
-        }
-        
-        // 获取附件列表
-        const [attachments] = await pool.query(`
-          SELECT 
-            id, file_name as name, file_size as size,
-            mime_type as type, media_type, section, created_at
-          FROM \`ProjectAttachment\`
-          WHERE project_id = ?
-          ORDER BY created_at DESC
-        `, [projectId]);
         
         sendResponse(res, 200, {
           success: true,
-          data: attachments
+          message: '项目阶段更新成功'
         });
         
       } catch (error) {
-        console.error('获取附件列表失败:', error);
+        console.error('更新项目阶段失败:', error);
         sendResponse(res, 500, {
           success: false,
-          error: '获取附件列表失败',
+          error: '更新项目阶段失败',
           message: error.message
         });
       }
       return;
     }
+    
     // ==================== 用户管理API ====================
     
     if ((pathname === '/api/user' || pathname === '/api/users') && req.method === 'GET') {
@@ -17405,2179 +15219,1911 @@ function getRoleText(role) {
     return;
   }
 
-  // ==================== 经费管理API（基于新数据库） ====================
+     // ==================== 经费管理API ====================
 
-  // 1. 获取经费统计（基于 Project 和 ProjectBudget）
-  if (pathname === '/api/funding/stats' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    console.log('📊 获取经费统计，用户:', user.id, '角色:', user.role);
-    
-    try {
-      let totalBudget = 0;
-      let totalApprovedBudget = 0;
+    // 1. 获取经费统计
+    if (pathname === '/api/funding/stats' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
       
-      // 获取用户的所有项目
-      let projectsSql = `
-        SELECT 
-          p.id, 
-          p.budget_total, 
-          p.approved_budget,
-          p.status
-        FROM \`Project\` p
-        WHERE p.applicant_id = ?
-          AND p.status NOT IN ('draft', 'rejected', 'terminated')
-      `;
-      
-      const [projects] = await pool.query(projectsSql, [user.id]);
-      
-      console.log(`📁 找到 ${projects.length} 个项目`);
-      
-      // 计算总预算和批准预算
-      projects.forEach(project => {
-        const budget = parseFloat(project.budget_total || 0);
-        const approved = parseFloat(project.approved_budget || budget);
-        totalBudget += budget;
-        totalApprovedBudget += approved;
-      });
-      
-      // 计算已使用金额（从预算明细中汇总已批准的支出）
-      let usedAmount = 0;
-      if (projects.length > 0) {
-        const projectIds = projects.map(p => p.id);
-        const placeholders = projectIds.map(() => '?').join(',');
-        
-        // 从 ProjectBudget 获取已批准的预算（作为已使用金额）
-        // 实际项目中，已使用金额应从支出记录表获取，这里暂时使用已批准的预算作为参考
-        const [budgets] = await pool.query(
-          `SELECT COALESCE(SUM(amount), 0) as total
-          FROM \`ProjectBudget\`
-          WHERE project_id IN (${placeholders})`,
-          projectIds
-        );
-        
-        usedAmount = parseFloat(budgets[0]?.total || 0);
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
       }
       
-      // 获取待处理的经费申请（如果需要，可以从 FundingApplication 表获取）
-      let pendingApplications = 0;
-      let pendingReimbursements = 0;
+      console.log('📊 获取经费统计，用户:', user.id, '角色:', user.role);
       
-      // 尝试获取待处理的申请（如果有 FundingApplication 表）
       try {
-        const [apps] = await pool.query(
-          `SELECT COUNT(*) as count 
-          FROM \`FundingApplication\` 
-          WHERE applicant_id = ? AND status = 'submitted'`,
-          [user.id]
-        );
-        pendingApplications = apps[0]?.count || 0;
+        let totalBudget = 0;
+        let usedAmount = 0;
+        let pendingApplications = 0;
+        let pendingReimbursements = 0;
+        
+        // 获取用户的所有项目（包含各种状态）
+        let projectsSql = `
+          SELECT p.id, p.budget_total, p.status
+          FROM \`Project\` p
+          WHERE p.applicant_id = ?
+            AND p.status NOT IN ('draft', 'rejected', 'cancelled')
+        `;
+        
+        console.log('🔍 执行项目查询SQL:', projectsSql);
+        console.log('🔍 查询参数:', user.id);
+        
+        const [projects] = await pool.query(projectsSql, [user.id]);
+        
+        console.log(`📁 找到 ${projects.length} 个项目`);
+        
+        // 计算总预算
+        projects.forEach(project => {
+          const budget = parseFloat(project.budget_total || 0);
+          totalBudget += budget;
+          console.log(`  - 项目 ${project.id}: budget_total = ${budget}, 状态 = ${project.status}`);
+        });
+        
+        console.log(`📊 总预算计算: ${totalBudget}`);
+        
+        // 获取已批准的支出总额
+        if (projects.length > 0) {
+          const projectIds = projects.map(p => p.id);
+          const placeholders = projectIds.map(() => '?').join(',');
+          
+          const [expenditures] = await pool.query(
+            `SELECT COALESCE(SUM(amount), 0) as total_used 
+            FROM \`ExpenditureRecord\` 
+            WHERE project_id IN (${placeholders}) 
+              AND status = 'approved'`,
+            projectIds
+          );
+          
+          usedAmount = parseFloat(expenditures[0]?.total_used || 0);
+          console.log(`📊 已使用金额: ${usedAmount}`);
+          
+          // 获取待处理的支出申请
+          const [pendingApps] = await pool.query(
+            `SELECT COUNT(*) as count 
+            FROM \`ExpenditureRecord\` 
+            WHERE project_id IN (${placeholders}) 
+              AND status IN ('draft', 'submitted')`,
+            projectIds
+          );
+          
+          pendingApplications = parseInt(pendingApps[0]?.count || 0);
+          console.log(`📊 待处理申请数: ${pendingApplications}`);
+        }
+        
+        // 获取待处理的经费申请（使用 FundingApplication 表）
+        try {
+          const [applications] = await pool.query(
+            `SELECT COUNT(*) as count 
+            FROM \`FundingApplication\` 
+            WHERE project_id IN (
+              SELECT id FROM \`Project\` WHERE applicant_id = ?
+            ) AND status = 'submitted'`,
+            [user.id]
+          );
+          pendingReimbursements = parseInt(applications[0]?.count || 0);
+          console.log(`📊 待处理经费申请数: ${pendingReimbursements}`);
+        } catch (error) {
+          console.log('经费申请表查询失败，跳过:', error.message);
+        }
+        
+        const availableBalance = totalBudget - usedAmount;
+        const usedPercentage = totalBudget > 0 ? ((usedAmount / totalBudget) * 100).toFixed(1) : 0;
+        
+        console.log('📊 统计结果:', {
+          totalBudget,
+          usedAmount,
+          availableBalance,
+          pendingApplications,
+          pendingReimbursements
+        });
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            total_budget: totalBudget,
+            used_amount: usedAmount,
+            available_balance: availableBalance,
+            used_percentage: parseFloat(usedPercentage),
+            pending_applications: pendingApplications,
+            pending_reimbursements: pendingReimbursements
+          }
+        });
+        
       } catch (error) {
-        console.log('经费申请表不存在或查询失败，跳过');
+        console.error('获取经费统计失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取经费统计失败',
+          message: error.message,
+          sql: error.sql
+        });
+      }
+      return;
+    }
+
+    // 2. 获取支出记录列表
+    if (pathname === '/api/expenditures' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
       }
       
-      const availableBalance = totalApprovedBudget - usedAmount;
-      const usedPercentage = totalApprovedBudget > 0 ? ((usedAmount / totalApprovedBudget) * 100).toFixed(1) : 0;
+      const { 
+        page = 1, 
+        limit = 10, 
+        status, 
+        project_id, 
+        category,
+        start_date,
+        end_date,
+        sort_by = 'expense_date',
+        sort_order = 'desc'
+      } = query;
       
-      console.log('📊 统计结果:', {
-        totalBudget,
-        totalApprovedBudget,
-        usedAmount,
-        availableBalance,
-        usedPercentage
-      });
+      const offset = (page - 1) * limit;
       
-      sendResponse(res, 200, {
-        success: true,
-        data: {
-          total_budget: totalBudget,
-          approved_budget: totalApprovedBudget,
-          used_amount: usedAmount,
-          available_balance: availableBalance,
-          used_percentage: parseFloat(usedPercentage),
-          pending_applications: pendingApplications,
-          pending_reimbursements: pendingReimbursements,
-          project_count: projects.length
+      console.log('📋 获取支出记录，用户:', user.id, '查询参数:', query);
+      
+      try {
+        // 构建查询 - 使用正确的表名和字段
+        let sql = `
+          SELECT 
+            er.*,
+            p.title as project_title,
+            p.project_code,
+            u.name as applicant_name,
+            r.name as reviewer_name
+          FROM \`ExpenditureRecord\` er
+          LEFT JOIN \`Project\` p ON er.project_id = p.id
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          LEFT JOIN \`User\` r ON er.reviewer_id = r.id
+          WHERE 1=1
+        `;
+        
+        let countSql = 'SELECT COUNT(*) as total FROM `ExpenditureRecord` er WHERE 1=1';
+        const params = [];
+        const countParams = [];
+        
+        // 根据用户角色过滤
+        if (!checkPermission(user.role, ['admin', 'assistant'])) {
+          // 普通用户只能查看自己项目的支出
+          sql += ` AND er.project_id IN (
+            SELECT id FROM \`Project\` WHERE applicant_id = ?
+            UNION
+            SELECT project_id FROM \`ProjectMember\` WHERE user_id = ?
+          )`;
+          countSql += ` AND er.project_id IN (
+            SELECT id FROM \`Project\` WHERE applicant_id = ?
+            UNION
+            SELECT project_id FROM \`ProjectMember\` WHERE user_id = ?
+          )`;
+          params.push(user.id, user.id);
+          countParams.push(user.id, user.id);
         }
-      });
-      
-    } catch (error) {
-      console.error('获取经费统计失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取经费统计失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 2. 获取项目预算列表（替代支出记录）
-  if (pathname === '/api/budget/items' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const { project_id, limit = 10, page = 1 } = query;
-    const offset = (page - 1) * limit;
-    
-    console.log('💰 获取预算明细，用户:', user.id, '项目:', project_id);
-    
-    try {
-      let sql = `
-        SELECT 
-          pb.id,
-          pb.project_id,
-          p.title as project_title,
-          p.project_code,
-          pb.category,
-          pb.item_name,
-          pb.description,
-          pb.amount,
-          pb.calculation_method,
-          pb.justification,
-          pb.sort_order,
-          pb.created_at
-        FROM \`ProjectBudget\` pb
-        LEFT JOIN \`Project\` p ON pb.project_id = p.id
-        WHERE 1=1
-      `;
-      
-      let countSql = 'SELECT COUNT(*) as total FROM `ProjectBudget` pb WHERE 1=1';
-      const params = [];
-      const countParams = [];
-      
-      // 权限过滤：只能查看自己项目的预算
-      sql += ` AND pb.project_id IN (
-        SELECT id FROM \`Project\` WHERE applicant_id = ?
-        UNION
-        SELECT project_id FROM \`ProjectMember\` WHERE user_id = ?
-      )`;
-      countSql += ` AND pb.project_id IN (
-        SELECT id FROM \`Project\` WHERE applicant_id = ?
-        UNION
-        SELECT project_id FROM \`ProjectMember\` WHERE user_id = ?
-      )`;
-      params.push(user.id, user.id);
-      countParams.push(user.id, user.id);
-      
-      // 项目筛选
-      if (project_id) {
-        sql += ' AND pb.project_id = ?';
-        countSql += ' AND pb.project_id = ?';
-        params.push(project_id);
-        countParams.push(project_id);
-      }
-      
-      sql += ' ORDER BY pb.sort_order ASC, pb.created_at DESC LIMIT ? OFFSET ?';
-      params.push(parseInt(limit), offset);
-      
-      const [rows] = await pool.query(sql, params);
-      const [totalResult] = await pool.query(countSql, countParams);
-      const total = totalResult[0]?.total || 0;
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: rows,
-        total: total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / limit)
-      });
-      
-    } catch (error) {
-      console.error('获取预算明细失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取预算明细失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 3. 获取预算分类统计
-  if (pathname === '/api/budget/categories' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const { project_id } = query;
-    
-    console.log('📊 获取预算分类统计，用户:', user.id, '项目:', project_id);
-    
-    try {
-      // 获取用户的项目
-      let projectsSql = `
-        SELECT p.id, p.title, p.budget_total, p.approved_budget
-        FROM \`Project\` p
-        WHERE p.applicant_id = ?
-          AND p.status IN ('approved', 'incubating', 'completed')
-      `;
-      let projectsParams = [user.id];
-      
-      if (project_id) {
-        projectsSql += ' AND p.id = ?';
-        projectsParams.push(project_id);
-      }
-      
-      const [projects] = await pool.query(projectsSql, projectsParams);
-      
-      if (projects.length === 0) {
+        
+        // 项目筛选
+        if (project_id) {
+          sql += ' AND er.project_id = ?';
+          countSql += ' AND er.project_id = ?';
+          params.push(project_id);
+          countParams.push(project_id);
+        }
+        
+        // 状态筛选 - 使用你的数据库中的状态值
+        if (status) {
+          const statusList = status.split(',');
+          sql += ` AND er.status IN (${statusList.map(() => '?').join(',')})`;
+          countSql += ` AND er.status IN (${statusList.map(() => '?').join(',')})`;
+          params.push(...statusList);
+          countParams.push(...statusList);
+        }
+        
+        // 分类筛选 - 使用你的数据库中的分类枚举
+        if (category) {
+          sql += ' AND er.category = ?';
+          countSql += ' AND er.category = ?';
+          params.push(category);
+          countParams.push(category);
+        }
+        
+        // 日期范围筛选
+        if (start_date) {
+          sql += ' AND er.expense_date >= ?';
+          countSql += ' AND er.expense_date >= ?';
+          params.push(start_date);
+          countParams.push(start_date);
+        }
+        
+        if (end_date) {
+          sql += ' AND er.expense_date <= ?';
+          countSql += ' AND er.expense_date <= ?';
+          params.push(end_date);
+          countParams.push(end_date);
+        }
+        
+        // 排序
+        const validSortFields = ['expense_date', 'created_at', 'amount'];
+        const sortField = validSortFields.includes(sort_by) ? sort_by : 'expense_date';
+        const sortDirection = sort_order.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+        sql += ` ORDER BY er.${sortField} ${sortDirection}`;
+        
+        // 分页
+        sql += ' LIMIT ? OFFSET ?';
+        params.push(parseInt(limit), offset);
+        
+        console.log('🔍 执行支出查询SQL:', sql);
+        
+        const [rows] = await pool.query(sql, params);
+        const [totalResult] = await pool.query(countSql, countParams);
+        const total = totalResult[0]?.total || 0;
+        
+        // 处理JSON字段
+        rows.forEach(row => {
+          if (row.supporting_docs) {
+            try {
+              row.supporting_docs = JSON.parse(row.supporting_docs);
+            } catch (e) {
+              console.error('解析支持文档失败:', e);
+              row.supporting_docs = [];
+            }
+          }
+        });
+        
         sendResponse(res, 200, {
           success: true,
-          data: []
+          data: rows,
+          total: total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(total / limit)
         });
-        return;
-      }
-      
-      const projectIds = projects.map(p => p.id);
-      const placeholders = projectIds.map(() => '?').join(',');
-      
-      // 按分类统计预算
-      const [categoryStats] = await pool.query(
-        `SELECT 
-          category,
-          COUNT(*) as item_count,
-          SUM(amount) as total_amount
-        FROM \`ProjectBudget\`
-        WHERE project_id IN (${placeholders})
-        GROUP BY category
-        ORDER BY total_amount DESC`,
-        projectIds
-      );
-      
-      // 获取各项目的总预算
-      const projectBudgets = {};
-      projects.forEach(p => {
-        projectBudgets[p.id] = parseFloat(p.approved_budget || p.budget_total || 0);
-      });
-      
-      // 计算每个分类的预算分配
-      const result = categoryStats.map(stat => {
-        const totalBudget = Object.values(projectBudgets).reduce((a, b) => a + b, 0);
-        const budget = stat.total_amount;
-        const used = stat.total_amount; // 已使用暂时等于预算，实际应从支出表获取
-        const percentage = budget > 0 ? Math.round((used / budget) * 100) : 0;
         
-        return {
-          id: stat.category,
-          name: stat.category,
-          budget: budget,
-          used: used,
-          balance: budget - used,
-          percentage: percentage,
-          status: getCategoryStatusByPercentage(percentage),
-          item_count: stat.item_count
-        };
-      });
-      
-      console.log(`📊 预算分类统计结果: ${result.length} 个分类`);
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: result,
-        total_projects: projects.length,
-        total_budget: projects.reduce((sum, p) => sum + (p.approved_budget || p.budget_total || 0), 0)
-      });
-      
-    } catch (error) {
-      console.error('获取预算分类统计失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取预算分类统计失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 4. 获取预算执行数据（按项目）
-  if (pathname === '/api/budget/execution' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
+      } catch (error) {
+        console.error('获取支出记录失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取支出记录失败',
+          message: error.message,
+          sql: error.sql
+        });
+      }
       return;
     }
-    
-    try {
-      // 获取用户的项目
-      const [projects] = await pool.query(`
-        SELECT 
-          p.id,
-          p.title,
-          p.project_code,
-          p.budget_total,
-          p.approved_budget,
-          p.status,
-          p.start_date,
-          p.end_date
-        FROM \`Project\` p
-        WHERE p.applicant_id = ?
-        ORDER BY p.created_at DESC
-      `, [user.id]);
+
+    // 3. 创建支出记录
+    if (pathname === '/api/expenditures' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
       
-      if (projects.length === 0) {
-        sendResponse(res, 200, {
-          success: true,
-          data: []
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
         });
         return;
       }
       
-      const projectIds = projects.map(p => p.id);
-      const placeholders = projectIds.map(() => '?').join(',');
+      console.log('📝 创建支出记录，用户:', user.id);
       
-      // 获取每个项目的预算明细
-      const [budgets] = await pool.query(`
-        SELECT 
-          project_id,
-          category,
-          SUM(amount) as total_budget
-        FROM \`ProjectBudget\`
-        WHERE project_id IN (${placeholders})
-        GROUP BY project_id, category
-      `, projectIds);
-      
-      // 按项目组织预算数据
-      const projectBudgetsMap = {};
-      budgets.forEach(b => {
-        if (!projectBudgetsMap[b.project_id]) {
-          projectBudgetsMap[b.project_id] = {
-            total: 0,
-            categories: []
-          };
-        }
-        projectBudgetsMap[b.project_id].total += parseFloat(b.total_budget);
-        projectBudgetsMap[b.project_id].categories.push({
-          category: b.category,
-          amount: parseFloat(b.total_budget)
-        });
-      });
-      
-      // 构建结果
-      const result = projects.map(project => {
-        const approvedBudget = parseFloat(project.approved_budget || project.budget_total || 0);
-        const projectBudget = projectBudgetsMap[project.id] || { total: 0, categories: [] };
-        const budgetTotal = projectBudget.total;
-        const used = 0; // 暂时设为0，实际应从支出表获取
-        const percentage = budgetTotal > 0 ? Math.round((used / budgetTotal) * 100) : 0;
+      try {
+        const body = await parseRequestBody(req);
         
-        return {
-          id: project.id,
-          title: project.title,
-          project_code: project.project_code,
-          status: project.status,
-          start_date: project.start_date,
-          end_date: project.end_date,
-          budget: budgetTotal,
-          approved_budget: approvedBudget,
-          used: used,
-          balance: budgetTotal - used,
-          percentage: percentage,
-          categories: projectBudget.categories,
-          progress_status: getProjectProgressStatus(project.status)
-        };
-      });
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: result,
-        total_projects: projects.length
-      });
-      
-    } catch (error) {
-      console.error('获取预算执行数据失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取预算执行数据失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 5. 获取单个项目的预算详情
-  if (pathname.match(/^\/api\/projects\/[^\/]+\/budgets$/) && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const projectId = pathname.split('/')[3];
-    
-    try {
-      // 检查权限
-      const [projects] = await pool.query(
-        'SELECT applicant_id, manager_id FROM `Project` WHERE id = ?',
-        [projectId]
-      );
-      
-      if (projects.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '项目未找到'
-        });
-        return;
-      }
-      
-      const project = projects[0];
-      const isOwner = project.applicant_id === user.id;
-      const isManager = project.manager_id === user.id;
-      const hasAdminAccess = checkPermission(user.role, ['admin', 'assistant']);
-      
-      if (!isOwner && !isManager && !hasAdminAccess) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限查看此项目的预算'
-        });
-        return;
-      }
-      
-      // 获取预算明细
-      const [budgets] = await pool.query(`
-        SELECT 
-          id,
-          category,
-          item_name,
-          description,
-          amount,
-          calculation_method,
-          justification,
-          sort_order,
-          created_at
-        FROM \`ProjectBudget\`
-        WHERE project_id = ?
-        ORDER BY sort_order ASC, created_at ASC
-      `, [projectId]);
-      
-      // 计算分类汇总
-      const categorySummary = {};
-      budgets.forEach(item => {
-        if (!categorySummary[item.category]) {
-          categorySummary[item.category] = {
-            total: 0,
-            items: []
-          };
+        console.log('📥 支出记录数据:', body);
+        
+        // 验证必填字段
+        if (!body.project_id || !body.category || !body.item_name || !body.amount) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '项目ID、类别、项目名称和金额是必填字段'
+          });
+          return;
         }
-        categorySummary[item.category].total += parseFloat(item.amount);
-        categorySummary[item.category].items.push(item);
-      });
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: {
-          budgets: budgets,
-          category_summary: categorySummary,
-          total_budget: budgets.reduce((sum, item) => sum + parseFloat(item.amount), 0)
+        
+        // 验证项目是否存在且用户有权限
+        const [projects] = await pool.query(
+          'SELECT id, applicant_id, status FROM `Project` WHERE id = ?',
+          [body.project_id]
+        );
+        
+        if (projects.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '项目不存在'
+          });
+          return;
         }
-      });
-      
-    } catch (error) {
-      console.error('获取项目预算失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取项目预算失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 辅助函数
-  function getCategoryStatusByPercentage(percentage) {
-    if (percentage >= 90) return 'danger';
-    if (percentage >= 70) return 'warning';
-    return 'normal';
-  }
-
-  function getProjectProgressStatus(status) {
-    const statusMap = {
-      'approved': 'not_started',
-      'incubating': 'in_progress',
-      'completed': 'completed'
-    };
-    return statusMap[status] || 'not_started';
-  }
-
-  // ==================== 预算管理API ====================
-
-  // 1. 获取预算列表
-  if (pathname === '/api/budgets' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const { 
-      page = 1, 
-      limit = 10, 
-      project_id, 
-      category,
-      search 
-    } = query;
-    
-    const offset = (page - 1) * limit;
-    
-    console.log('📋 获取预算列表，用户:', user.id, '查询参数:', query);
-    
-    try {
-      // 构建查询SQL
-      let sql = `
-        SELECT 
-          pb.id,
-          pb.project_id,
-          pb.category,
-          pb.item_name,
-          pb.description,
-          pb.amount,
-          pb.calculation_method,
-          pb.justification,
-          pb.sort_order,
-          pb.created_at,
-          p.title as project_title,
-          p.project_code,
-          p.status as project_status
-        FROM \`ProjectBudget\` pb
-        LEFT JOIN \`Project\` p ON pb.project_id = p.id
-        WHERE 1=1
-      `;
-      
-      let countSql = 'SELECT COUNT(*) as total FROM `ProjectBudget` pb LEFT JOIN `Project` p ON pb.project_id = p.id WHERE 1=1';
-      const params = [];
-      const countParams = [];
-      
-      // 权限过滤：普通用户只能看到自己项目的预算
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
-        sql += ' AND p.applicant_id = ?';
-        countSql += ' AND p.applicant_id = ?';
-        params.push(user.id);
-        countParams.push(user.id);
-      }
-      
-      // 项目筛选
-      if (project_id) {
-        sql += ' AND pb.project_id = ?';
-        countSql += ' AND pb.project_id = ?';
-        params.push(project_id);
-        countParams.push(project_id);
-      }
-      
-      // 类别筛选
-      if (category) {
-        sql += ' AND pb.category = ?';
-        countSql += ' AND pb.category = ?';
-        params.push(category);
-        countParams.push(category);
-      }
-      
-      // 搜索
-      if (search) {
-        sql += ' AND (p.title LIKE ? OR pb.item_name LIKE ? OR pb.description LIKE ?)';
-        countSql += ' AND (p.title LIKE ? OR pb.item_name LIKE ? OR pb.description LIKE ?)';
-        const searchParam = `%${search}%`;
-        params.push(searchParam, searchParam, searchParam);
-        countParams.push(searchParam, searchParam, searchParam);
-      }
-      
-      sql += ' ORDER BY pb.sort_order ASC, pb.created_at DESC LIMIT ? OFFSET ?';
-      params.push(parseInt(limit), offset);
-      
-      console.log('🔍 执行预算查询SQL:', sql);
-      
-      const [rows] = await pool.query(sql, params);
-      const [totalResult] = await pool.query(countSql, countParams);
-      const total = totalResult[0]?.total || 0;
-      
-      // 计算每个预算项目的使用情况（没有支出记录，使用金额设为0）
-      for (const budget of rows) {
-        budget.used_amount = 0; // 暂时设为0，实际应从支出表获取
-        budget.balance = budget.amount - budget.used_amount;
-        budget.usage_rate = budget.amount > 0 ? Math.round((budget.used_amount / budget.amount) * 100) : 0;
-      }
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: rows,
-        total: total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / limit)
-      });
-      
-    } catch (error) {
-      console.error('获取预算列表失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取预算列表失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 2. 创建预算
-  if (pathname === '/api/budgets' && req.method === 'POST') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    console.log('📝 创建预算，用户:', user.id);
-    
-    try {
-      const body = await parseRequestBody(req);
-      
-      console.log('📥 预算数据:', body);
-      
-      // 验证必填字段
-      if (!body.project_id || !body.category || !body.item_name || !body.amount) {
-        sendResponse(res, 400, {
-          success: false,
-          error: '项目ID、类别、预算项目和金额是必填字段'
-        });
-        return;
-      }
-      
-      // 验证项目权限
-      const [projects] = await pool.query(
-        'SELECT applicant_id FROM `Project` WHERE id = ?',
-        [body.project_id]
-      );
-      
-      if (projects.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '项目不存在'
-        });
-        return;
-      }
-      
-      const project = projects[0];
-      
-      // 检查权限：只有项目负责人或管理员可以创建预算
-      const isOwner = project.applicant_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
-      
-      if (!isOwner && !isAdmin) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限为此项目创建预算'
-        });
-        return;
-      }
-      
-      // 生成预算ID
-      const budgetId = randomUUID();
-      
-      // 插入预算记录
-      const sql = `
-        INSERT INTO \`ProjectBudget\` (
-          id, project_id, category, item_name, description,
-          amount, calculation_method, justification, sort_order, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-      `;
-      
-      const params = [
-        budgetId,
-        body.project_id,
-        body.category,
-        body.item_name,
-        body.description || '',
-        parseFloat(body.amount),
-        body.calculation_method || '',
-        body.justification || '',
-        body.sort_order || 0
-      ];
-      
-      console.log('📝 执行创建预算SQL:', sql);
-      
-      await pool.query(sql, params);
-      
-      // 获取新创建的预算
-      const [newBudgets] = await pool.query(
-        `SELECT 
-          pb.id,
-          pb.project_id,
-          pb.category,
-          pb.item_name,
-          pb.description,
-          pb.amount,
-          pb.calculation_method,
-          pb.justification,
-          pb.sort_order,
-          pb.created_at,
-          p.title as project_title,
-          p.project_code
-        FROM \`ProjectBudget\` pb
-        LEFT JOIN \`Project\` p ON pb.project_id = p.id
-        WHERE pb.id = ?`,
-        [budgetId]
-      );
-      
-      sendResponse(res, 201, {
-        success: true,
-        message: '预算创建成功',
-        data: newBudgets[0]
-      });
-      
-    } catch (error) {
-      console.error('创建预算失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '创建预算失败',
-        message: error.message,
-        sqlMessage: error.sqlMessage
-      });
-    }
-    return;
-  }
-
-  // 3. 更新预算
-  if (pathname.startsWith('/api/budgets/') && req.method === 'PUT') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const budgetId = pathname.replace('/api/budgets/', '');
-    const body = await parseRequestBody(req);
-    
-    console.log('🔄 更新预算:', budgetId, '数据:', body);
-    
-    try {
-      // 检查预算是否存在
-      const [budgets] = await pool.query(
-        `SELECT pb.*, p.applicant_id 
-        FROM \`ProjectBudget\` pb
-        LEFT JOIN \`Project\` p ON pb.project_id = p.id
-        WHERE pb.id = ?`,
-        [budgetId]
-      );
-      
-      if (budgets.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '预算不存在'
-        });
-        return;
-      }
-      
-      const budget = budgets[0];
-      
-      // 检查权限：只有项目负责人或管理员可以更新
-      const isOwner = budget.applicant_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
-      
-      if (!isOwner && !isAdmin) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限修改此预算'
-        });
-        return;
-      }
-      
-      // 构建更新字段
-      const updateFields = [];
-      const updateValues = [];
-      
-      const allowedFields = [
-        'category', 'item_name', 'description', 
-        'amount', 'calculation_method', 'justification', 'sort_order'
-      ];
-      
-      allowedFields.forEach(field => {
-        if (body[field] !== undefined) {
-          updateFields.push(`${field} = ?`);
-          updateValues.push(body[field]);
+        
+        const project = projects[0];
+        
+        // 检查权限
+        const isOwner = project.applicant_id === user.id;
+        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        const [isMember] = await pool.query(
+          'SELECT id FROM `ProjectMember` WHERE project_id = ? AND user_id = ?',
+          [body.project_id, user.id]
+        );
+        
+        if (!isOwner && !isAdmin && isMember.length === 0) {
+          sendResponse(res, 403, {
+            success: false,
+            error: '没有权限为此项目创建支出记录'
+          });
+          return;
         }
-      });
-      
-      if (updateFields.length === 0) {
-        sendResponse(res, 400, {
-          success: false,
-          error: '没有提供更新数据'
-        });
-        return;
-      }
-      
-      updateValues.push(budgetId);
-      
-      const updateSql = `UPDATE \`ProjectBudget\` SET ${updateFields.join(', ')} WHERE id = ?`;
-      
-      console.log('📝 执行更新SQL:', updateSql);
-      
-      await pool.query(updateSql, updateValues);
-      
-      sendResponse(res, 200, {
-        success: true,
-        message: '预算更新成功',
-        budget_id: budgetId
-      });
-      
-    } catch (error) {
-      console.error('更新预算失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '更新预算失败',
-        message: error.message,
-        sqlMessage: error.sqlMessage
-      });
-    }
-    return;
-  }
-
-  // 4. 删除预算
-  if (pathname.startsWith('/api/budgets/') && req.method === 'DELETE') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const budgetId = pathname.replace('/api/budgets/', '');
-    
-    console.log('🗑️ 删除预算:', budgetId);
-    
-    try {
-      // 检查预算是否存在
-      const [budgets] = await pool.query(
-        `SELECT pb.*, p.applicant_id 
-        FROM \`ProjectBudget\` pb
-        LEFT JOIN \`Project\` p ON pb.project_id = p.id
-        WHERE pb.id = ?`,
-        [budgetId]
-      );
-      
-      if (budgets.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '预算不存在'
-        });
-        return;
-      }
-      
-      const budget = budgets[0];
-      
-      // 检查权限：只有项目负责人或管理员可以删除
-      const isOwner = budget.applicant_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
-      
-      if (!isOwner && !isAdmin) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限删除此预算'
-        });
-        return;
-      }
-      
-      // 删除预算（新数据库没有支出记录，直接删除）
-      const [result] = await pool.query('DELETE FROM `ProjectBudget` WHERE id = ?', [budgetId]);
-      
-      console.log('✅ 预算删除成功，影响行数:', result.affectedRows);
-      
-      sendResponse(res, 200, {
-        success: true,
-        message: '预算删除成功',
-        budget_id: budgetId
-      });
-      
-    } catch (error) {
-      console.error('删除预算失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '删除预算失败',
-        message: error.message,
-        sqlMessage: error.sqlMessage
-      });
-    }
-    return;
-  }
-
-  // 5. 获取项目预算详情
-  if (pathname.startsWith('/api/projects/') && pathname.endsWith('/budgets') && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const projectId = pathname.replace('/api/projects/', '').replace('/budgets', '');
-    
-    console.log('📊 获取项目预算详情，项目ID:', projectId);
-    
-    try {
-      // 检查项目权限
-      const [projects] = await pool.query(
-        'SELECT * FROM `Project` WHERE id = ?',
-        [projectId]
-      );
-      
-      if (projects.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '项目不存在'
-        });
-        return;
-      }
-      
-      const project = projects[0];
-      
-      // 检查权限
-      const isOwner = project.applicant_id === user.id;
-      const isManager = project.manager_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
-      const [isMember] = await pool.query(
-        'SELECT id FROM `ProjectMember` WHERE project_id = ? AND user_id = ?',
-        [projectId, user.id]
-      );
-      
-      if (!isOwner && !isManager && !isAdmin && isMember.length === 0) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限查看此项目的预算'
-        });
-        return;
-      }
-      
-      // 获取项目预算
-      const [budgets] = await pool.query(
-        'SELECT * FROM `ProjectBudget` WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC',
-        [projectId]
-      );
-      
-      // 计算每个预算的使用情况（没有支出记录，使用金额设为0）
-      for (const budget of budgets) {
-        budget.used_amount = 0; // 暂时设为0
-        budget.balance = budget.amount - budget.used_amount;
-        budget.usage_rate = budget.amount > 0 ? Math.round((budget.used_amount / budget.amount) * 100) : 0;
-        budget.record_count = 0;
-      }
-      
-      // 按分类汇总
-      const categorySummary = {};
-      budgets.forEach(budget => {
-        if (!categorySummary[budget.category]) {
-          categorySummary[budget.category] = {
-            total: 0,
-            items: []
-          };
+        
+        // 检查项目状态是否允许添加支出
+        if (!['approved', 'in_progress', 'stage_review', 'completed'].includes(project.status)) {
+          sendResponse(res, 409, {
+            success: false,
+            error: '项目当前状态不允许添加支出记录',
+            project_status: project.status
+          });
+          return;
         }
-        categorySummary[budget.category].total += parseFloat(budget.amount);
-        categorySummary[budget.category].items.push(budget);
-      });
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: {
-          budgets: budgets,
-          category_summary: categorySummary,
-          total_budget: budgets.reduce((sum, item) => sum + parseFloat(item.amount), 0),
-          project: {
-            id: project.id,
-            title: project.title,
-            project_code: project.project_code,
-            status: project.status
+        
+        // 生成支出ID和编号
+        const expenditureId = randomUUID();
+        const expenseNo = `EXP-${new Date().toISOString().slice(0,10).replace(/-/g, '')}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+        
+        // 准备支持文档
+        let supportingDocs = [];
+        if (body.supporting_docs) {
+          if (Array.isArray(body.supporting_docs)) {
+            supportingDocs = body.supporting_docs;
+          } else if (typeof body.supporting_docs === 'string') {
+            try {
+              supportingDocs = JSON.parse(body.supporting_docs);
+            } catch (e) {
+              console.error('解析支持文档失败:', e);
+            }
           }
         }
-      });
-      
-    } catch (error) {
-      console.error('获取项目预算失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取项目预算失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 6. 获取预算执行进度（按项目汇总）
-  if (pathname === '/api/budget/execution' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    console.log('📊 获取预算执行进度，用户:', user.id);
-    
-    try {
-      // 获取用户的项目（已批准或孵化中）
-      let projectsSql = `
-        SELECT 
-          id,
-          title,
-          project_code,
-          budget_total,
-          approved_budget,
-          status
-        FROM \`Project\`
-        WHERE applicant_id = ?
-        ORDER BY created_at DESC
-      `;
-      const params = [user.id];
-      
-      // 管理员可以查看所有项目
-      if (checkPermission(user.role, ['admin', 'assistant'])) {
-        projectsSql = `
-          SELECT 
-            id,
-            title,
-            project_code,
-            budget_total,
-            approved_budget,
-            status
-          FROM \`Project\`
-          WHERE status IN ('approved', 'incubating', 'completed')
-          ORDER BY created_at DESC
-        `;
-        params.length = 0;
-      }
-      
-      const [projects] = await pool.query(projectsSql, params);
-      
-      if (projects.length === 0) {
-        sendResponse(res, 200, {
-          success: true,
-          data: []
-        });
-        return;
-      }
-      
-      const projectIds = projects.map(p => p.id);
-      const placeholders = projectIds.map(() => '?').join(',');
-      
-      // 获取每个项目的预算汇总
-      const [budgetSummary] = await pool.query(`
-        SELECT 
-          project_id,
-          SUM(amount) as total_budget
-        FROM \`ProjectBudget\`
-        WHERE project_id IN (${placeholders})
-        GROUP BY project_id
-      `, projectIds);
-      
-      const budgetMap = {};
-      budgetSummary.forEach(b => {
-        budgetMap[b.project_id] = parseFloat(b.total_budget);
-      });
-      
-      // 构建结果
-      const result = projects.map(project => {
-        const budget = budgetMap[project.id] || 0;
-        const approvedBudget = parseFloat(project.approved_budget || project.budget_total || 0);
-        const used = 0; // 暂时设为0
-        const remaining = budget - used;
-        const percentage = budget > 0 ? Math.round((used / budget) * 100) : 0;
         
-        return {
-          id: project.id,
-          title: project.title,
-          project_code: project.project_code,
-          status: project.status,
-          budget: budget,
-          approved_budget: approvedBudget,
-          used: used,
-          remaining: remaining,
-          percentage: percentage
-        };
-      });
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: result
-      });
-      
-    } catch (error) {
-      console.error('获取预算执行进度失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取预算执行进度失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 7. 获取预算分类统计
-  if (pathname === '/api/budget/categories' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    console.log('📊 获取预算分类统计，用户:', user.id);
-    
-    try {
-      // 获取用户的项目
-      let projectsSql = `
-        SELECT id FROM \`Project\`
-        WHERE applicant_id = ?
-          AND status IN ('approved', 'incubating', 'completed')
-      `;
-      const params = [user.id];
-      
-      if (checkPermission(user.role, ['admin', 'assistant'])) {
-        projectsSql = `
-          SELECT id FROM \`Project\`
-          WHERE status IN ('approved', 'incubating', 'completed')
-        `;
-        params.length = 0;
-      }
-      
-      const [projects] = await pool.query(projectsSql, params);
-      
-      if (projects.length === 0) {
-        sendResponse(res, 200, {
-          success: true,
-          data: []
-        });
-        return;
-      }
-      
-      const projectIds = projects.map(p => p.id);
-      const placeholders = projectIds.map(() => '?').join(',');
-      
-      // 按分类统计预算
-      const [categoryStats] = await pool.query(`
-        SELECT 
-          category,
-          COUNT(*) as item_count,
-          SUM(amount) as total_budget
-        FROM \`ProjectBudget\`
-        WHERE project_id IN (${placeholders})
-        GROUP BY category
-        ORDER BY total_budget DESC
-      `, projectIds);
-      
-      // 计算每个分类的使用率（暂时设为0）
-      const result = categoryStats.map(stat => ({
-        category: stat.category,
-        budget: parseFloat(stat.total_budget),
-        used: 0,
-        balance: parseFloat(stat.total_budget),
-        percentage: 0,
-        status: 'normal',
-        item_count: stat.item_count
-      }));
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: result,
-        total_projects: projects.length
-      });
-      
-    } catch (error) {
-      console.error('获取预算分类统计失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取预算分类统计失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-  // ==================== 预算支出管理API（基于ProjectBudget表） ====================
-
-  // 1. 获取预算支出统计（替代支出统计）
-  if (pathname === '/api/expenditures/stats' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    try {
-      // 获取用户的项目
-      let projectsSql = `
-        SELECT id, budget_total, approved_budget 
-        FROM \`Project\` 
-        WHERE applicant_id = ?
-          AND status IN ('approved', 'incubating', 'completed')
-      `;
-      const params = [user.id];
-      
-      if (checkPermission(user.role, ['admin', 'assistant'])) {
-        projectsSql = `
-          SELECT id, budget_total, approved_budget 
-          FROM \`Project\` 
-          WHERE status IN ('approved', 'incubating', 'completed')
-        `;
-        params.length = 0;
-      }
-      
-      const [projects] = await pool.query(projectsSql, params);
-      
-      let totalBudget = 0;
-      let totalUsed = 0;
-      let budgetCount = 0;
-      
-      if (projects.length > 0) {
-        const projectIds = projects.map(p => p.id);
-        const placeholders = projectIds.map(() => '?').join(',');
+        // 验证支出类别是否有效
+        const validCategories = ['设备费', '材料费', '测试费', '差旅费', '会议费', '劳务费', '专家咨询费', '出版费', '管理费', '其他'];
+        if (!validCategories.includes(body.category)) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '无效的支出类别',
+            valid_categories: validCategories
+          });
+          return;
+        }
         
-        // 获取预算总额
-        const [budgetResult] = await pool.query(
-          `SELECT COALESCE(SUM(amount), 0) as total_budget, COUNT(*) as count
-          FROM \`ProjectBudget\`
-          WHERE project_id IN (${placeholders})`,
-          projectIds
+        // 插入支出记录
+        const sql = `
+          INSERT INTO \`ExpenditureRecord\` (
+            id, project_id, expense_no, category, item_name, amount,
+            expense_date, payee, description, supporting_docs, status,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `;
+        
+        const params = [
+          expenditureId,
+          body.project_id,
+          expenseNo,
+          body.category,
+          body.item_name,
+          parseFloat(body.amount),
+          body.expense_date || new Date().toISOString().split('T')[0],
+          body.payee || '',
+          body.description || '',
+          JSON.stringify(supportingDocs),
+          body.status || 'draft'
+        ];
+        
+        console.log('📝 执行创建支出SQL:', sql);
+        
+        await pool.query(sql, params);
+        
+        // 获取新创建的支出记录
+        const [newExpenditures] = await pool.query(
+          `SELECT 
+            er.*,
+            p.title as project_title,
+            p.project_code
+           FROM \`ExpenditureRecord\` er
+           LEFT JOIN \`Project\` p ON er.project_id = p.id
+           WHERE er.id = ?`,
+          [expenditureId]
         );
         
-        totalBudget = parseFloat(budgetResult[0]?.total_budget || 0);
-        budgetCount = parseInt(budgetResult[0]?.count || 0);
+        sendResponse(res, 201, {
+          success: true,
+          message: '支出记录创建成功',
+          data: newExpenditures[0]
+        });
         
-        // 获取已使用金额（从预算明细中，实际使用金额需要支出记录，这里暂时设为0）
-        totalUsed = 0;
+      } catch (error) {
+        console.error('创建支出记录失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '创建支出记录失败',
+          message: error.message,
+          sqlMessage: error.sqlMessage
+        });
       }
-      
-      // 计算趋势（简化版）
-      const totalTrend = 0;
-      
-      const stats = {
-        total_expenditure: totalUsed,
-        total_budget: totalBudget,
-        total_trend: totalTrend,
-        pending_amount: 0,
-        pending_count: 0,
-        approved_amount: totalUsed,
-        approved_count: budgetCount,
-        avg_amount: budgetCount > 0 ? totalBudget / budgetCount : 0,
-        budget_count: budgetCount,
-        used_percent: totalBudget > 0 ? Math.round((totalUsed / totalBudget) * 100) : 0
-      };
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: stats
-      });
-      
-    } catch (error) {
-      console.error('获取预算统计失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取预算统计失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 2. 获取预算分类统计（替代支出分类统计）
-  if (pathname === '/api/expenditures/category-stats' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
       return;
     }
-    
-    try {
-      // 获取用户的项目
-      let projectsSql = `
-        SELECT id FROM \`Project\` 
-        WHERE applicant_id = ?
-          AND status IN ('approved', 'incubating', 'completed')
-      `;
-      const params = [user.id];
+
+    // 4. 获取预算分类统计
+    if (pathname === '/api/budget/categories' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
       
-      if (checkPermission(user.role, ['admin', 'assistant'])) {
-        projectsSql = `
-          SELECT id FROM \`Project\` 
-          WHERE status IN ('approved', 'incubating', 'completed')
-        `;
-        params.length = 0;
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
       }
       
-      const [projects] = await pool.query(projectsSql, params);
+      const { project_id } = query;
       
-      let categoryStats = [];
+      console.log('📊 获取预算分类统计，用户:', user.id, '项目:', project_id);
       
-      if (projects.length > 0) {
+      try {
+        // 获取用户的所有项目
+        let projectsSql = `
+          SELECT p.id, p.title, p.budget_total
+          FROM \`Project\` p
+          WHERE p.applicant_id = ?
+            AND p.status IN ('approved', 'in_progress', 'stage_review', 'completed')
+        `;
+        let projectsParams = [user.id];
+        
+        if (project_id) {
+          projectsSql += ' AND p.id = ?';
+          projectsParams.push(project_id);
+        }
+        
+        const [projects] = await pool.query(projectsSql, projectsParams);
+        
+        if (projects.length === 0) {
+          sendResponse(res, 200, {
+            success: true,
+            data: []
+          });
+          return;
+        }
+        
         const projectIds = projects.map(p => p.id);
         const placeholders = projectIds.map(() => '?').join(',');
         
-        // 按分类统计预算
-        const [stats] = await pool.query(
+        // 按分类统计支出 - 使用正确的支出类别枚举
+        const [categoryStats] = await pool.query(
           `SELECT 
             category,
-            COUNT(*) as count,
-            COALESCE(SUM(amount), 0) as total_amount
-          FROM \`ProjectBudget\`
+            COUNT(*) as record_count,
+            SUM(amount) as total_amount,
+            SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) as approved_amount,
+            SUM(CASE WHEN status = 'draft' THEN amount ELSE 0 END) as draft_amount,
+            SUM(CASE WHEN status = 'submitted' THEN amount ELSE 0 END) as submitted_amount
+          FROM \`ExpenditureRecord\`
           WHERE project_id IN (${placeholders})
           GROUP BY category
           ORDER BY total_amount DESC`,
           projectIds
         );
         
-        // 计算总金额
-        const totalAmount = stats.reduce((sum, item) => sum + parseFloat(item.total_amount), 0);
+        // 获取项目的预算分配
+        let budgetAllocations = [];
+        try {
+          const [budgets] = await pool.query(
+            `SELECT 
+              category,
+              SUM(amount) as budget_amount
+            FROM \`ProjectBudget\`
+            WHERE project_id IN (${placeholders})
+            GROUP BY category`,
+            projectIds
+          );
+          budgetAllocations = budgets;
+        } catch (error) {
+          console.log('项目预算表可能没有数据，跳过:', error.message);
+        }
         
-        // 计算百分比
-        categoryStats = stats.map(item => ({
-          category: item.category,
-          count: parseInt(item.count),
-          total_amount: parseFloat(item.total_amount),
-          percentage: totalAmount > 0 ? Math.round((parseFloat(item.total_amount) / totalAmount) * 100) : 0
-        }));
-      }
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: categoryStats
-      });
-      
-    } catch (error) {
-      console.error('获取预算分类统计失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取预算分类统计失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 3. 获取预算列表（替代支出列表）
-  if (pathname === '/api/expenditures' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const { 
-      page = 1, 
-      limit = 10, 
-      status, 
-      project_id, 
-      category,
-      search
-    } = query;
-    
-    const offset = (page - 1) * limit;
-    
-    try {
-      // 构建查询SQL（从ProjectBudget表查询）
-      let sql = `
-        SELECT 
-          pb.id,
-          pb.project_id,
-          pb.category,
-          pb.item_name,
-          pb.description,
-          pb.amount,
-          pb.calculation_method,
-          pb.justification,
-          pb.sort_order,
-          pb.created_at,
-          p.title as project_title,
-          p.project_code,
-          p.status as project_status,
-          u.name as applicant_name
-        FROM \`ProjectBudget\` pb
-        LEFT JOIN \`Project\` p ON pb.project_id = p.id
-        LEFT JOIN \`User\` u ON p.applicant_id = u.id
-        WHERE 1=1
-      `;
-      
-      let countSql = 'SELECT COUNT(*) as total FROM `ProjectBudget` pb LEFT JOIN `Project` p ON pb.project_id = p.id WHERE 1=1';
-      const params = [];
-      const countParams = [];
-      
-      // 权限过滤
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
-        sql += ' AND p.applicant_id = ?';
-        countSql += ' AND p.applicant_id = ?';
-        params.push(user.id);
-        countParams.push(user.id);
-      }
-      
-      // 项目筛选
-      if (project_id) {
-        sql += ' AND pb.project_id = ?';
-        countSql += ' AND pb.project_id = ?';
-        params.push(project_id);
-        countParams.push(project_id);
-      }
-      
-      // 类别筛选
-      if (category) {
-        sql += ' AND pb.category = ?';
-        countSql += ' AND pb.category = ?';
-        params.push(category);
-        countParams.push(category);
-      }
-      
-      // 搜索
-      if (search) {
-        sql += ' AND (p.title LIKE ? OR pb.item_name LIKE ? OR pb.description LIKE ?)';
-        countSql += ' AND (p.title LIKE ? OR pb.item_name LIKE ? OR pb.description LIKE ?)';
-        const searchParam = `%${search}%`;
-        params.push(searchParam, searchParam, searchParam);
-        countParams.push(searchParam, searchParam, searchParam);
-      }
-      
-      // 状态筛选（预算状态根据使用率判断）
-      if (status === 'normal') {
-        sql += ' AND pb.amount > 0';
-      } else if (status === 'warning') {
-        // 预警状态需要根据使用率判断，这里简化处理
-        sql += ' AND pb.amount > 0';
-      } else if (status === 'danger') {
-        sql += ' AND pb.amount > 0';
-      }
-      
-      sql += ' ORDER BY pb.sort_order ASC, pb.created_at DESC LIMIT ? OFFSET ?';
-      params.push(parseInt(limit), offset);
-      
-      const [rows] = await pool.query(sql, params);
-      const [totalResult] = await pool.query(countSql, countParams);
-      const total = totalResult[0]?.total || 0;
-      
-      // 计算使用率（暂时设为0）
-      for (const budget of rows) {
-        budget.used_amount = 0;
-        budget.balance = budget.amount - budget.used_amount;
-        budget.usage_rate = budget.amount > 0 ? Math.round((budget.used_amount / budget.amount) * 100) : 0;
-        budget.status = budget.usage_rate >= 90 ? 'warning' : (budget.usage_rate >= 100 ? 'danger' : 'normal');
-        budget.expense_no = `BUD-${budget.id.substring(0, 8).toUpperCase()}`;
-        budget.expense_date = formatDate(budget.created_at);
-      }
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: rows,
-        total: total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / limit)
-      });
-      
-    } catch (error) {
-      console.error('获取预算列表失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取预算列表失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 4. 提交预算（替代提交支出申请）
-  if (pathname.startsWith('/api/expenditures/') && pathname.includes('/submit') && req.method === 'POST') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const budgetId = pathname.replace('/api/expenditures/', '').replace('/submit', '');
-    
-    console.log('📨 提交预算:', budgetId);
-    
-    try {
-      const [budgets] = await pool.query(
-        'SELECT * FROM `ProjectBudget` WHERE id = ?',
-        [budgetId]
-      );
-      
-      if (budgets.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '预算不存在'
+        // 合并数据
+        const result = categoryStats.map(stat => {
+          const budgetItem = budgetAllocations.find(b => b.category === stat.category);
+          const budget = budgetItem ? parseFloat(budgetItem.budget_amount) : 0;
+          const used = parseFloat(stat.approved_amount || 0);
+          const percentage = budget > 0 ? Math.round((used / budget) * 100) : 0;
+          
+          // 如果没有预算数据，从项目总预算按比例分配
+          let finalBudget = budget;
+          if (budget === 0) {
+            // 尝试从项目总预算中估算
+            const totalProjectsBudget = projects.reduce((sum, p) => sum + parseFloat(p.budget_total || 0), 0);
+            const categoryCount = categoryStats.length;
+            finalBudget = totalProjectsBudget / categoryCount;
+          }
+          
+          return {
+            id: stat.category,
+            name: stat.category,
+            budget: finalBudget,
+            used: used,
+            balance: finalBudget - used,
+            percentage: percentage,
+            status: getCategoryStatusByPercentage(percentage),
+            record_count: stat.record_count,
+            draft_amount: parseFloat(stat.draft_amount || 0),
+            submitted_amount: parseFloat(stat.submitted_amount || 0)
+          };
         });
-        return;
-      }
-      
-      const budget = budgets[0];
-      
-      // 检查权限
-      const [projects] = await pool.query(
-        'SELECT applicant_id FROM `Project` WHERE id = ?',
-        [budget.project_id]
-      );
-      
-      if (projects.length === 0 || projects[0].applicant_id !== user.id) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限提交此预算'
-        });
-        return;
-      }
-      
-      // 预算已经存在，无需提交，直接返回成功
-      sendResponse(res, 200, {
-        success: true,
-        message: '预算已保存',
-        budget_id: budgetId
-      });
-      
-    } catch (error) {
-      console.error('提交预算失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '提交预算失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 5. 删除预算
-  if (pathname.startsWith('/api/expenditures/') && req.method === 'DELETE') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const budgetId = pathname.replace('/api/expenditures/', '');
-    
-    console.log('🗑️ 删除预算:', budgetId);
-    
-    try {
-      const [budgets] = await pool.query(
-        'SELECT * FROM `ProjectBudget` WHERE id = ?',
-        [budgetId]
-      );
-      
-      if (budgets.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '预算不存在'
-        });
-        return;
-      }
-      
-      const budget = budgets[0];
-      
-      // 检查权限
-      const [projects] = await pool.query(
-        'SELECT applicant_id FROM `Project` WHERE id = ?',
-        [budget.project_id]
-      );
-      
-      const isOwner = projects.length > 0 && projects[0].applicant_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
-      
-      if (!isOwner && !isAdmin) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限删除此预算'
-        });
-        return;
-      }
-      
-      // 删除预算
-      const [result] = await pool.query('DELETE FROM `ProjectBudget` WHERE id = ?', [budgetId]);
-      
-      console.log('✅ 预算删除成功，影响行数:', result.affectedRows);
-      
-      sendResponse(res, 200, {
-        success: true,
-        message: '预算删除成功',
-        budget_id: budgetId
-      });
-      
-    } catch (error) {
-      console.error('删除预算失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '删除预算失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 6. 导出预算数据
-  if (pathname === '/api/expenditures/export' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const { project_id, category, search, ids } = query;
-    
-    try {
-      let sql = `
-        SELECT 
-          pb.category as 预算类别,
-          pb.item_name as 预算事项,
-          pb.description as 说明,
-          pb.amount as 预算金额,
-          pb.calculation_method as 计算方法,
-          pb.justification as 预算依据,
-          p.title as 项目名称,
-          p.project_code as 项目编号,
-          pb.created_at as 创建时间
-        FROM \`ProjectBudget\` pb
-        LEFT JOIN \`Project\` p ON pb.project_id = p.id
-        WHERE 1=1
-      `;
-      const params = [];
-      
-      // 权限过滤
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
-        sql += ' AND p.applicant_id = ?';
-        params.push(user.id);
-      }
-      
-      // 按ID列表导出
-      if (ids) {
-        const idList = ids.split(',');
-        const placeholders = idList.map(() => '?').join(',');
-        sql += ` AND pb.id IN (${placeholders})`;
-        params.push(...idList);
-      }
-      
-      if (project_id) {
-        sql += ' AND pb.project_id = ?';
-        params.push(project_id);
-      }
-      
-      if (category) {
-        sql += ' AND pb.category = ?';
-        params.push(category);
-      }
-      
-      if (search) {
-        sql += ' AND (p.title LIKE ? OR pb.item_name LIKE ? OR pb.description LIKE ?)';
-        const searchParam = `%${search}%`;
-        params.push(searchParam, searchParam, searchParam);
-      }
-      
-      sql += ' ORDER BY pb.created_at DESC';
-      
-      const [rows] = await pool.query(sql, params);
-      
-      // 设置响应头，返回CSV文件
-      const csvRows = [];
-      if (rows.length > 0) {
-        const headers = Object.keys(rows[0]);
-        csvRows.push(headers.join(','));
         
-        for (const row of rows) {
-          const values = headers.map(header => {
-            const value = row[header] || '';
-            return `"${String(value).replace(/"/g, '""')}"`;
+        console.log(`📊 预算分类统计结果: ${result.length} 个分类`);
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: result,
+          total_projects: projects.length
+        });
+        
+      } catch (error) {
+        console.error('获取预算分类统计失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取预算分类统计失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 辅助函数：根据百分比获取分类状态
+    function getCategoryStatusByPercentage(percentage) {
+      if (percentage >= 90) return 'danger';
+      if (percentage >= 70) return 'warning';
+      return 'normal';
+    }
+        // 8. 获取支出趋势数据
+    if (pathname === '/api/expenditures/trend' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      const { period = 30 } = query;
+      const days = parseInt(period);
+      
+      try {
+        // 获取用户的项目
+        const [projects] = await pool.query(
+          'SELECT id FROM `Project` WHERE applicant_id = ?',
+          [user.id]
+        );
+        
+        if (projects.length === 0) {
+          sendResponse(res, 200, {
+            success: true,
+            data: []
           });
-          csvRows.push(values.join(','));
+          return;
         }
-      }
-      
-      const csvContent = csvRows.join('\n');
-      const fileName = `预算记录_${new Date().toISOString().slice(0, 10)}.csv`;
-      
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
-      res.setHeader('Content-Length', Buffer.byteLength(csvContent, 'utf-8'));
-      res.end('\uFEFF' + csvContent);
-      
-    } catch (error) {
-      console.error('导出预算数据失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '导出预算数据失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 辅助函数：格式化日期
-  function formatDate(date) {
-    if (!date) return null;
-    const d = new Date(date);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  }
-  // ==================== 支出申请API ====================
-
-  // 创建支出申请（新增）
-  if (pathname === '/api/expenditures' && req.method === 'POST') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    console.log('📝 创建支出申请，用户:', user.id);
-    
-    try {
-      const body = await parseRequestBody(req);
-      
-      console.log('📥 支出申请数据:', body);
-      
-      // 验证必填字段
-      if (!body.project_id || !body.budget_id || !body.category || !body.amount) {
-        sendResponse(res, 400, {
-          success: false,
-          error: '项目ID、预算ID、类别和金额是必填字段'
-        });
-        return;
-      }
-      
-      // 验证项目是否存在且用户有权限
-      const [projects] = await pool.query(
-        'SELECT id, applicant_id, status FROM `Project` WHERE id = ?',
-        [body.project_id]
-      );
-      
-      if (projects.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '项目不存在'
-        });
-        return;
-      }
-      
-      const project = projects[0];
-      
-      // 检查权限：只有项目申请人可以申请支出
-      const isOwner = project.applicant_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
-      
-      if (!isOwner && !isAdmin) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限为此项目申请支出'
-        });
-        return;
-      }
-      
-      // 检查项目状态是否允许申请支出
-      if (!['approved', 'incubating'].includes(project.status)) {
-        sendResponse(res, 409, {
-          success: false,
-          error: '项目当前状态不允许申请支出',
-          project_status: project.status
-        });
-        return;
-      }
-      
-      // 验证预算项是否存在
-      const [budgets] = await pool.query(
-        'SELECT * FROM `ProjectBudget` WHERE id = ? AND project_id = ?',
-        [body.budget_id, body.project_id]
-      );
-      
-      if (budgets.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '预算项不存在或不属于该项目'
-        });
-        return;
-      }
-      
-      const budget = budgets[0];
-      const currentUsed = budget.used_amount || 0;
-      const newUsed = currentUsed + parseFloat(body.amount);
-      
-      // 检查预算是否足够
-      if (newUsed > budget.amount) {
-        sendResponse(res, 409, {
-          success: false,
-          error: '申请金额超过预算余额',
-          budget_amount: budget.amount,
-          used_amount: currentUsed,
-          available: budget.amount - currentUsed,
-          requested: parseFloat(body.amount)
-        });
-        return;
-      }
-      
-      // 生成支出申请编号
-      const expenseNo = `EXP-${new Date().toISOString().slice(0,10).replace(/-/g, '')}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
-      const expenditureId = randomUUID();
-      
-      // 插入支出申请记录
-      const sql = `
-        INSERT INTO \`ExpenditureRecord\` (
-          id, project_id, budget_id, expense_no, category, item_name,
-          amount, description, calculation_method, payee_name, payee_type,
-          bank_account, bank_name, status, applicant_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-      `;
-      
-      const params = [
-        expenditureId,
-        body.project_id,
-        body.budget_id,
-        expenseNo,
-        body.category,
-        body.item_name || budget.item_name,
-        parseFloat(body.amount),
-        body.description || '',
-        body.calculation_method || '',
-        body.payee_name || '',
-        body.payee_type || 'company',
-        body.bank_account || '',
-        body.bank_name || '',
-        'submitted',
-        user.id
-      ];
-      
-      console.log('📝 执行创建支出申请SQL:', sql);
-      
-      await pool.query(sql, params);
-      
-      // 可选：更新预算已使用金额（可以在审批通过后更新，这里先不更新）
-      
-      // 获取新创建的支出申请
-      const [newExpenditures] = await pool.query(
-        `SELECT 
-          er.*,
-          p.title as project_title,
-          p.project_code,
-          b.item_name as budget_item_name,
-          u.name as applicant_name
-        FROM \`ExpenditureRecord\` er
-        LEFT JOIN \`Project\` p ON er.project_id = p.id
-        LEFT JOIN \`ProjectBudget\` b ON er.budget_id = b.id
-        LEFT JOIN \`User\` u ON er.applicant_id = u.id
-        WHERE er.id = ?`,
-        [expenditureId]
-      );
-      
-      sendResponse(res, 201, {
-        success: true,
-        message: '支出申请提交成功',
-        data: {
-          id: expenditureId,
-          expense_no: expenseNo,
-          ...newExpenditures[0]
-        }
-      });
-      
-    } catch (error) {
-      console.error('创建支出申请失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '创建支出申请失败',
-        message: error.message,
-        sqlMessage: error.sqlMessage
-      });
-    }
-    return;
-  }
-
-  // ==================== 获取支出申请列表 ====================
-
-  if (pathname === '/api/expenditures' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const { 
-      page = 1, 
-      limit = 10, 
-      status, 
-      project_id, 
-      category,
-      search
-    } = query;
-    
-    const offset = (page - 1) * limit;
-    
-    try {
-      let sql = `
-        SELECT 
-          er.*,
-          p.title as project_title,
-          p.project_code,
-          b.item_name as budget_item_name,
-          u.name as applicant_name,
-          r.name as reviewer_name
-        FROM \`ExpenditureRecord\` er
-        LEFT JOIN \`Project\` p ON er.project_id = p.id
-        LEFT JOIN \`ProjectBudget\` b ON er.budget_id = b.id
-        LEFT JOIN \`User\` u ON er.applicant_id = u.id
-        LEFT JOIN \`User\` r ON er.reviewer_id = r.id
-        WHERE 1=1
-      `;
-      
-      let countSql = 'SELECT COUNT(*) as total FROM `ExpenditureRecord` er WHERE 1=1';
-      const params = [];
-      const countParams = [];
-      
-      // 权限过滤
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
-        sql += ' AND er.applicant_id = ?';
-        countSql += ' AND er.applicant_id = ?';
-        params.push(user.id);
-        countParams.push(user.id);
-      }
-      
-      // 状态筛选
-      if (status) {
-        const statusList = status.split(',');
-        sql += ` AND er.status IN (${statusList.map(() => '?').join(',')})`;
-        countSql += ` AND er.status IN (${statusList.map(() => '?').join(',')})`;
-        params.push(...statusList);
-        countParams.push(...statusList);
-      }
-      
-      // 项目筛选
-      if (project_id) {
-        sql += ' AND er.project_id = ?';
-        countSql += ' AND er.project_id = ?';
-        params.push(project_id);
-        countParams.push(project_id);
-      }
-      
-      // 类别筛选
-      if (category) {
-        sql += ' AND er.category = ?';
-        countSql += ' AND er.category = ?';
-        params.push(category);
-        countParams.push(category);
-      }
-      
-      // 搜索
-      if (search) {
-        sql += ' AND (er.item_name LIKE ? OR er.description LIKE ?)';
-        countSql += ' AND (er.item_name LIKE ? OR er.description LIKE ?)';
-        const searchParam = `%${search}%`;
-        params.push(searchParam, searchParam);
-        countParams.push(searchParam, searchParam);
-      }
-      
-      sql += ' ORDER BY er.created_at DESC LIMIT ? OFFSET ?';
-      params.push(parseInt(limit), offset);
-      
-      const [rows] = await pool.query(sql, params);
-      const [totalResult] = await pool.query(countSql, countParams);
-      const total = totalResult[0]?.total || 0;
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: rows,
-        total: total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / limit)
-      });
-      
-    } catch (error) {
-      console.error('获取支出申请列表失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取支出申请列表失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // ==================== 获取支出申请统计 ====================
-
-  if (pathname === '/api/expenditures/stats' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    try {
-      // 获取用户的项目预算
-      let projectsSql = `
-        SELECT id, budget_total, approved_budget 
-        FROM \`Project\` 
-        WHERE applicant_id = ?
-          AND status IN ('approved', 'incubating')
-      `;
-      const params = [user.id];
-      
-      if (checkPermission(user.role, ['admin', 'assistant'])) {
-        projectsSql = `
-          SELECT id, budget_total, approved_budget 
-          FROM \`Project\` 
-          WHERE status IN ('approved', 'incubating')
-        `;
-        params.length = 0;
-      }
-      
-      const [projects] = await pool.query(projectsSql, params);
-      
-      let totalBudget = 0;
-      let totalUsed = 0;
-      let budgetCount = 0;
-      
-      if (projects.length > 0) {
+        
         const projectIds = projects.map(p => p.id);
         const placeholders = projectIds.map(() => '?').join(',');
         
-        // 获取预算总额
-        const [budgetResult] = await pool.query(
-          `SELECT COALESCE(SUM(amount), 0) as total_budget, COUNT(*) as count
-          FROM \`ProjectBudget\`
-          WHERE project_id IN (${placeholders})`,
-          projectIds
-        );
-        
-        totalBudget = parseFloat(budgetResult[0]?.total_budget || 0);
-        budgetCount = parseInt(budgetResult[0]?.count || 0);
-        
-        // 获取已批准的支出总额
-        const [expenditureResult] = await pool.query(
-          `SELECT COALESCE(SUM(amount), 0) as total_used
+        // 查询最近N天的支出趋势
+        const [trendData] = await pool.query(
+          `SELECT 
+            DATE(expense_date) as date,
+            COUNT(*) as count,
+            SUM(amount) as amount
           FROM \`ExpenditureRecord\`
-          WHERE project_id IN (${placeholders}) AND status = 'approved'`,
-          projectIds
+          WHERE project_id IN (${placeholders})
+            AND expense_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+            AND status = 'approved'
+          GROUP BY DATE(expense_date)
+          ORDER BY date`,
+          [...projectIds, days]
         );
         
-        totalUsed = parseFloat(expenditureResult[0]?.total_used || 0);
+        // 补全缺失的日期
+        const result = [];
+        const today = new Date();
+        
+        for (let i = days; i >= 0; i--) {
+          const date = new Date();
+          date.setDate(today.getDate() - i);
+          const dateStr = date.toISOString().split('T')[0];
+          
+          const dayData = trendData.find(d => d.date.toISOString().split('T')[0] === dateStr);
+          
+          result.push({
+            date: dateStr,
+            amount: dayData ? parseFloat(dayData.amount) : 0,
+            count: dayData ? parseInt(dayData.count) : 0
+          });
+        }
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: result
+        });
+        
+      } catch (error) {
+        console.error('获取支出趋势失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取支出趋势失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 9. 获取预算执行数据
+    if (pathname === '/api/budget/execution' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
       }
       
-      const stats = {
-        total_budget: totalBudget,
-        used_amount: totalUsed,
-        remaining_amount: totalBudget - totalUsed,
-        used_percent: totalBudget > 0 ? Math.round((totalUsed / totalBudget) * 100) : 0,
-        budget_count: budgetCount,
-        pending_count: 0,
-        approved_count: 0
-      };
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: stats
-      });
-      
-    } catch (error) {
-      console.error('获取支出统计失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取支出统计失败',
-        message: error.message
-      });
+      try {
+        // 获取用户的项目
+        const [projects] = await pool.query(
+          'SELECT id FROM `Project` WHERE applicant_id = ?',
+          [user.id]
+        );
+        
+        if (projects.length === 0) {
+          sendResponse(res, 200, {
+            success: true,
+            data: []
+          });
+          return;
+        }
+        
+        const projectIds = projects.map(p => p.id);
+        const placeholders = projectIds.map(() => '?').join(',');
+        
+        // 获取每个分类的预算和执行情况
+        const [executionData] = await pool.query(
+          `SELECT 
+            category,
+            COALESCE(SUM(budget_amount), 0) as budget,
+            COALESCE(SUM(approved_amount), 0) as spent,
+            MAX(last_spent_date) as last_spent_date
+          FROM (
+            -- 预算数据
+            SELECT 
+              pb.category,
+              pb.amount as budget_amount,
+              0 as approved_amount,
+              NULL as last_spent_date
+            FROM \`ProjectBudget\` pb
+            WHERE pb.project_id IN (${placeholders})
+            
+            UNION ALL
+            
+            -- 支出数据
+            SELECT 
+              er.category,
+              0 as budget_amount,
+              er.amount as approved_amount,
+              er.expense_date as last_spent_date
+            FROM \`ExpenditureRecord\` er
+            WHERE er.project_id IN (${placeholders})
+              AND er.status = 'approved'
+          ) as combined
+          GROUP BY category
+          HAVING budget > 0
+          ORDER BY spent DESC`,
+          [...projectIds, ...projectIds]
+        );
+        
+        // 处理数据
+        const result = executionData.map(item => {
+          const budget = parseFloat(item.budget || 0);
+          const spent = parseFloat(item.spent || 0);
+          const percentage = budget > 0 ? Math.round((spent / budget) * 100) : 0;
+          
+          return {
+            category: item.category,
+            budget: budget,
+            spent: spent,
+            percentage: percentage,
+            status: getCategoryStatusByPercentage(percentage),
+            lastSpent: item.last_spent_date ? item.last_spent_date.toISOString().split('T')[0] : '暂无',
+            nextPlan: getNextPlanByCategory(item.category)
+          };
+        });
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: result
+        });
+        
+      } catch (error) {
+        console.error('获取预算执行数据失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取预算执行数据失败',
+          message: error.message
+        });
+      }
+      return;
     }
-    return;
-  }
+
+    // 辅助函数：根据分类获取下一步计划
+    function getNextPlanByCategory(category) {
+      const plans = {
+        '设备费': '设备维护/采购',
+        '材料费': '实验耗材补充',
+        '差旅费': '学术会议/调研',
+        '会议费': '学术研讨会',
+        '劳务费': '人员劳务支付',
+        '专家咨询费': '专家咨询',
+        '出版费': '论文发表',
+        '管理费': '项目管理',
+        '其他': '其他支出'
+      };
+      return plans[category] || '待安排';
+    }
+
+    // ==================== 预算管理API ====================
+
+    // 1. 获取预算列表
+    if (pathname === '/api/budgets' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      const { 
+        page = 1, 
+        limit = 10, 
+        project_id, 
+        category,
+        search 
+      } = query;
+      
+      const offset = (page - 1) * limit;
+      
+      console.log('📋 获取预算列表，用户:', user.id, '查询参数:', query);
+      
+      try {
+        // 构建查询SQL
+        let sql = `
+          SELECT 
+            pb.*,
+            p.title as project_title,
+            p.project_code
+          FROM \`ProjectBudget\` pb
+          LEFT JOIN \`Project\` p ON pb.project_id = p.id
+          WHERE p.applicant_id = ?
+        `;
+        
+        let countSql = 'SELECT COUNT(*) as total FROM `ProjectBudget` pb LEFT JOIN `Project` p ON pb.project_id = p.id WHERE p.applicant_id = ?';
+        const params = [user.id];
+        const countParams = [user.id];
+        
+        // 管理员可以查看所有预算
+        if (checkPermission(user.role, ['admin', 'assistant'])) {
+          sql = sql.replace('WHERE p.applicant_id = ?', 'WHERE 1=1');
+          countSql = countSql.replace('WHERE p.applicant_id = ?', 'WHERE 1=1');
+          params.shift();
+          countParams.shift();
+        }
+        
+        // 项目筛选
+        if (project_id) {
+          sql += ' AND pb.project_id = ?';
+          countSql += ' AND pb.project_id = ?';
+          params.push(project_id);
+          countParams.push(project_id);
+        }
+        
+        // 类别筛选
+        if (category) {
+          sql += ' AND pb.category = ?';
+          countSql += ' AND pb.category = ?';
+          params.push(category);
+          countParams.push(category);
+        }
+        
+        // 搜索
+        if (search) {
+          sql += ' AND (p.title LIKE ? OR pb.item_name LIKE ? OR pb.description LIKE ?)';
+          countSql += ' AND (p.title LIKE ? OR pb.item_name LIKE ? OR pb.description LIKE ?)';
+          const searchParam = `%${search}%`;
+          params.push(searchParam, searchParam, searchParam);
+          countParams.push(searchParam, searchParam, searchParam);
+        }
+        
+        sql += ' ORDER BY pb.created_at DESC LIMIT ? OFFSET ?';
+        params.push(parseInt(limit), offset);
+        
+        console.log('🔍 执行预算查询SQL:', sql);
+        console.log('🔍 查询参数:', params);
+        
+        const [rows] = await pool.query(sql, params);
+        const [totalResult] = await pool.query(countSql, countParams);
+        const total = totalResult[0]?.total || 0;
+        
+        // 计算每个预算项目的使用情况
+        for (const budget of rows) {
+          // 获取该预算类别的已批准支出
+          const [expenditures] = await pool.query(
+            `SELECT COALESCE(SUM(amount), 0) as used_amount 
+            FROM \`ExpenditureRecord\` 
+            WHERE project_id = ? 
+              AND category = ? 
+              AND status = 'approved'`,
+            [budget.project_id, budget.category]
+          );
+          
+          budget.used_amount = parseFloat(expenditures[0]?.used_amount || 0);
+          budget.balance = budget.amount - budget.used_amount;
+          budget.usage_rate = budget.amount > 0 ? Math.round((budget.used_amount / budget.amount) * 100) : 0;
+        }
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: rows,
+          total: total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(total / limit)
+        });
+        
+      } catch (error) {
+        console.error('获取预算列表失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取预算列表失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 2. 创建预算
+    if (pathname === '/api/budgets' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      console.log('📝 创建预算，用户:', user.id);
+      
+      try {
+        const body = await parseRequestBody(req);
+        
+        console.log('📥 预算数据:', body);
+        
+        // 验证必填字段
+        if (!body.project_id || !body.category || !body.item_name || !body.amount) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '项目ID、类别、预算项目和金额是必填字段'
+          });
+          return;
+        }
+        
+        // 验证项目权限
+        const [projects] = await pool.query(
+          'SELECT applicant_id FROM `Project` WHERE id = ?',
+          [body.project_id]
+        );
+        
+        if (projects.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '项目不存在'
+          });
+          return;
+        }
+        
+        const project = projects[0];
+        
+        // 检查权限：只有项目负责人或管理员可以创建预算
+        const isOwner = project.applicant_id === user.id;
+        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        
+        if (!isOwner && !isAdmin) {
+          sendResponse(res, 403, {
+            success: false,
+            error: '没有权限为此项目创建预算'
+          });
+          return;
+        }
+        
+        // 生成预算ID
+        const budgetId = randomUUID();
+        
+        // 插入预算记录
+        const sql = `
+          INSERT INTO \`ProjectBudget\` (
+            id, project_id, category, item_name, description,
+            amount, justification, sequence, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `;
+        
+        const params = [
+          budgetId,
+          body.project_id,
+          body.category,
+          body.item_name,
+          body.description || '',
+          parseFloat(body.amount),
+          body.justification || '',
+          body.sequence || 1
+        ];
+        
+        console.log('📝 执行创建预算SQL:', sql);
+        
+        await pool.query(sql, params);
+        
+        // 获取新创建的预算
+        const [newBudgets] = await pool.query(
+          `SELECT 
+            pb.*,
+            p.title as project_title,
+            p.project_code
+          FROM \`ProjectBudget\` pb
+          LEFT JOIN \`Project\` p ON pb.project_id = p.id
+          WHERE pb.id = ?`,
+          [budgetId]
+        );
+        
+        sendResponse(res, 201, {
+          success: true,
+          message: '预算创建成功',
+          data: newBudgets[0]
+        });
+        
+      } catch (error) {
+        console.error('创建预算失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '创建预算失败',
+          message: error.message,
+          sqlMessage: error.sqlMessage
+        });
+      }
+      return;
+    }
+
+    // 3. 更新预算
+    if (pathname.startsWith('/api/budgets/') && req.method === 'PUT') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      const budgetId = pathname.replace('/api/budgets/', '');
+      const body = await parseRequestBody(req);
+      
+      console.log('🔄 更新预算:', budgetId, '数据:', body);
+      
+      try {
+        // 检查预算是否存在
+        const [budgets] = await pool.query(
+          `SELECT pb.*, p.applicant_id 
+          FROM \`ProjectBudget\` pb
+          LEFT JOIN \`Project\` p ON pb.project_id = p.id
+          WHERE pb.id = ?`,
+          [budgetId]
+        );
+        
+        if (budgets.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '预算不存在'
+          });
+          return;
+        }
+        
+        const budget = budgets[0];
+        
+        // 检查权限：只有项目负责人或管理员可以更新
+        const isOwner = budget.applicant_id === user.id;
+        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        
+        if (!isOwner && !isAdmin) {
+          sendResponse(res, 403, {
+            success: false,
+            error: '没有权限修改此预算'
+          });
+          return;
+        }
+        
+        // 构建更新字段
+        const updateFields = [];
+        const updateValues = [];
+        
+        const allowedFields = [
+          'category', 'item_name', 'description', 
+          'amount', 'justification', 'sequence'
+        ];
+        
+        allowedFields.forEach(field => {
+          if (body[field] !== undefined) {
+            updateFields.push(`${field} = ?`);
+            updateValues.push(body[field]);
+          }
+        });
+        
+        if (updateFields.length === 0) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '没有提供更新数据'
+          });
+          return;
+        }
+        
+        updateValues.push(budgetId);
+        
+        const updateSql = `UPDATE \`ProjectBudget\` SET ${updateFields.join(', ')} WHERE id = ?`;
+        
+        console.log('📝 执行更新SQL:', updateSql);
+        console.log('📝 参数:', updateValues);
+        
+        await pool.query(updateSql, updateValues);
+        
+        sendResponse(res, 200, {
+          success: true,
+          message: '预算更新成功',
+          budget_id: budgetId
+        });
+        
+      } catch (error) {
+        console.error('更新预算失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '更新预算失败',
+          message: error.message,
+          sqlMessage: error.sqlMessage
+        });
+      }
+      return;
+    }
+
+    // 4. 删除预算
+    if (pathname.startsWith('/api/budgets/') && req.method === 'DELETE') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      const budgetId = pathname.replace('/api/budgets/', '');
+      
+      console.log('🗑️ 删除预算:', budgetId);
+      
+      try {
+        // 检查预算是否存在
+        const [budgets] = await pool.query(
+          `SELECT pb.*, p.applicant_id 
+          FROM \`ProjectBudget\` pb
+          LEFT JOIN \`Project\` p ON pb.project_id = p.id
+          WHERE pb.id = ?`,
+          [budgetId]
+        );
+        
+        if (budgets.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '预算不存在'
+          });
+          return;
+        }
+        
+        const budget = budgets[0];
+        
+        // 检查权限：只有项目负责人或管理员可以删除
+        const isOwner = budget.applicant_id === user.id;
+        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        
+        if (!isOwner && !isAdmin) {
+          sendResponse(res, 403, {
+            success: false,
+            error: '没有权限删除此预算'
+          });
+          return;
+        }
+        
+        // 检查是否有相关的支出记录
+        const [expenditures] = await pool.query(
+          'SELECT COUNT(*) as count FROM `ExpenditureRecord` WHERE project_id = ? AND category = ?',
+          [budget.project_id, budget.category]
+        );
+        
+        if (expenditures[0]?.count > 0) {
+          sendResponse(res, 409, {
+            success: false,
+            error: '该预算类别已有支出记录，不能删除',
+            expenditure_count: expenditures[0].count
+          });
+          return;
+        }
+        
+        // 删除预算
+        const [result] = await pool.query('DELETE FROM `ProjectBudget` WHERE id = ?', [budgetId]);
+        
+        console.log('✅ 预算删除成功，影响行数:', result.affectedRows);
+        
+        sendResponse(res, 200, {
+          success: true,
+          message: '预算删除成功',
+          budget_id: budgetId
+        });
+        
+      } catch (error) {
+        console.error('删除预算失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '删除预算失败',
+          message: error.message,
+          sqlMessage: error.sqlMessage
+        });
+      }
+      return;
+    }
+
+    // 5. 获取项目预算详情
+    if (pathname.startsWith('/api/projects/') && pathname.endsWith('/budgets') && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      const projectId = pathname.replace('/api/projects/', '').replace('/budgets', '');
+      
+      console.log('📊 获取项目预算详情，项目ID:', projectId);
+      
+      try {
+        // 检查项目权限
+        const [projects] = await pool.query(
+          'SELECT * FROM `Project` WHERE id = ?',
+          [projectId]
+        );
+        
+        if (projects.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '项目不存在'
+          });
+          return;
+        }
+        
+        const project = projects[0];
+        
+        // 检查权限
+        const isOwner = project.applicant_id === user.id;
+        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        const [isMember] = await pool.query(
+          'SELECT id FROM `ProjectMember` WHERE project_id = ? AND user_id = ?',
+          [projectId, user.id]
+        );
+        
+        if (!isOwner && !isAdmin && isMember.length === 0) {
+          sendResponse(res, 403, {
+            success: false,
+            error: '没有权限查看此项目的预算'
+          });
+          return;
+        }
+        
+        // 获取项目预算
+        const [budgets] = await pool.query(
+          'SELECT * FROM `ProjectBudget` WHERE project_id = ? ORDER BY category, sequence',
+          [projectId]
+        );
+        
+        // 计算每个预算的使用情况
+        for (const budget of budgets) {
+          const [expenditures] = await pool.query(
+            `SELECT 
+              COALESCE(SUM(amount), 0) as used_amount,
+              COUNT(*) as record_count
+            FROM \`ExpenditureRecord\` 
+            WHERE project_id = ? 
+              AND category = ? 
+              AND status = 'approved'`,
+            [projectId, budget.category]
+          );
+          
+          budget.used_amount = parseFloat(expenditures[0]?.used_amount || 0);
+          budget.balance = budget.amount - budget.used_amount;
+          budget.usage_rate = budget.amount > 0 ? Math.round((budget.used_amount / budget.amount) * 100) : 0;
+          budget.record_count = expenditures[0]?.record_count || 0;
+        }
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: budgets,
+          project: {
+            id: project.id,
+            title: project.title,
+            project_code: project.project_code
+          }
+        });
+        
+      } catch (error) {
+        console.error('获取项目预算失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取项目预算失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+    // ==================== 支出管理API补充 ====================
+
+    // 1. 获取支出统计
+    if (pathname === '/api/expenditures/stats' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      try {
+        // 获取用户的项目
+        const [projects] = await pool.query(
+          'SELECT id FROM `Project` WHERE applicant_id = ?',
+          [user.id]
+        );
+        
+        let stats = {
+          total_expenditure: 0,
+          pending_amount: 0,
+          pending_count: 0,
+          approved_amount: 0,
+          approved_count: 0,
+          avg_amount: 0,
+          total_trend: 0
+        };
+        
+        if (projects.length > 0) {
+          const projectIds = projects.map(p => p.id);
+          const placeholders = projectIds.map(() => '?').join(',');
+          
+          // 总支出金额
+          const [totalResult] = await pool.query(
+            `SELECT COALESCE(SUM(amount), 0) as total_amount, COUNT(*) as count
+            FROM \`ExpenditureRecord\` 
+            WHERE project_id IN (${placeholders}) AND status = 'approved'`,
+            projectIds
+          );
+          
+          stats.total_expenditure = parseFloat(totalResult[0]?.total_amount || 0);
+          stats.approved_count = parseInt(totalResult[0]?.count || 0);
+          
+          // 待审批金额
+          const [pendingResult] = await pool.query(
+            `SELECT COALESCE(SUM(amount), 0) as pending_amount, COUNT(*) as count
+            FROM \`ExpenditureRecord\` 
+            WHERE project_id IN (${placeholders}) AND status = 'submitted'`,
+            projectIds
+          );
+          
+          stats.pending_amount = parseFloat(pendingResult[0]?.pending_amount || 0);
+          stats.pending_count = parseInt(pendingResult[0]?.count || 0);
+          
+          // 已批准金额
+          const [approvedResult] = await pool.query(
+            `SELECT COALESCE(SUM(amount), 0) as approved_amount, COUNT(*) as count
+            FROM \`ExpenditureRecord\` 
+            WHERE project_id IN (${placeholders}) AND status = 'approved'`,
+            projectIds
+          );
+          
+          stats.approved_amount = parseFloat(approvedResult[0]?.approved_amount || 0);
+          stats.approved_count = parseInt(approvedResult[0]?.count || 0);
+          
+          // 平均金额
+          if (stats.approved_count > 0) {
+            stats.avg_amount = stats.approved_amount / stats.approved_count;
+          }
+          
+          // 趋势计算（与上月比较）
+          const currentMonth = new Date().getMonth() + 1;
+          const lastMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+          const currentYear = new Date().getFullYear();
+          const lastMonthYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+          
+          // 本月支出
+          const [currentMonthResult] = await pool.query(
+            `SELECT COALESCE(SUM(amount), 0) as current_amount
+            FROM \`ExpenditureRecord\` 
+            WHERE project_id IN (${placeholders}) 
+              AND status = 'approved'
+              AND YEAR(expense_date) = ? 
+              AND MONTH(expense_date) = ?`,
+            [...projectIds, currentYear, currentMonth]
+          );
+          
+          // 上月支出
+          const [lastMonthResult] = await pool.query(
+            `SELECT COALESCE(SUM(amount), 0) as last_amount
+            FROM \`ExpenditureRecord\` 
+            WHERE project_id IN (${placeholders}) 
+              AND status = 'approved'
+              AND YEAR(expense_date) = ? 
+              AND MONTH(expense_date) = ?`,
+            [...projectIds, lastMonthYear, lastMonth]
+          );
+          
+          const currentAmount = parseFloat(currentMonthResult[0]?.current_amount || 0);
+          const lastAmount = parseFloat(lastMonthResult[0]?.last_amount || 0);
+          
+          if (lastAmount > 0) {
+            stats.total_trend = ((currentAmount - lastAmount) / lastAmount * 100).toFixed(1);
+          }
+        }
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: stats
+        });
+        
+      } catch (error) {
+        console.error('获取支出统计失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取支出统计失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 2. 获取支出分类统计
+    if (pathname === '/api/expenditures/category-stats' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      try {
+        // 获取用户的项目
+        const [projects] = await pool.query(
+          'SELECT id FROM `Project` WHERE applicant_id = ?',
+          [user.id]
+        );
+        
+        let categoryStats = [];
+        
+        if (projects.length > 0) {
+          const projectIds = projects.map(p => p.id);
+          const placeholders = projectIds.map(() => '?').join(',');
+          
+          // 按分类统计
+          const [stats] = await pool.query(
+            `SELECT 
+              category,
+              COUNT(*) as count,
+              COALESCE(SUM(amount), 0) as total_amount
+            FROM \`ExpenditureRecord\` 
+            WHERE project_id IN (${placeholders}) AND status = 'approved'
+            GROUP BY category
+            ORDER BY total_amount DESC`,
+            projectIds
+          );
+          
+          // 计算总金额
+          const totalAmount = stats.reduce((sum, item) => sum + parseFloat(item.total_amount), 0);
+          
+          // 计算百分比
+          categoryStats = stats.map(item => ({
+            category: item.category,
+            count: parseInt(item.count),
+            total_amount: parseFloat(item.total_amount),
+            percentage: totalAmount > 0 ? Math.round((parseFloat(item.total_amount) / totalAmount) * 100) : 0
+          }));
+        }
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: categoryStats
+        });
+        
+      } catch (error) {
+        console.error('获取支出分类统计失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取支出分类统计失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 3. 提交支出申请
+    if (pathname.startsWith('/api/expenditures/') && pathname.includes('/submit') && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      const expenditureId = pathname.replace('/api/expenditures/', '').replace('/submit', '');
+      
+      console.log('📨 提交支出申请:', expenditureId);
+      
+      try {
+        const [expenditures] = await pool.query(
+          'SELECT * FROM `ExpenditureRecord` WHERE id = ?',
+          [expenditureId]
+        );
+        
+        if (expenditures.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '支出记录不存在'
+          });
+          return;
+        }
+        
+        const expenditure = expenditures[0];
+        
+        // 检查权限：只有创建者可以提交
+        const [projects] = await pool.query(
+          'SELECT applicant_id FROM `Project` WHERE id = ?',
+          [expenditure.project_id]
+        );
+        
+        if (projects.length === 0 || projects[0].applicant_id !== user.id) {
+          sendResponse(res, 403, {
+            success: false,
+            error: '没有权限提交此支出申请'
+          });
+          return;
+        }
+        
+        // 检查当前状态
+        if (expenditure.status !== 'draft') {
+          sendResponse(res, 409, {
+            success: false,
+            error: '当前状态不允许提交',
+            current_status: expenditure.status
+          });
+          return;
+        }
+        
+        // 更新状态为待审批
+        await pool.query(
+          'UPDATE `ExpenditureRecord` SET status = ?, submitted_at = NOW() WHERE id = ?',
+          ['submitted', expenditureId]
+        );
+        
+        sendResponse(res, 200, {
+          success: true,
+          message: '支出申请已提交审核',
+          expenditure_id: expenditureId,
+          new_status: 'submitted'
+        });
+        
+      } catch (error) {
+        console.error('提交支出申请失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '提交支出申请失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 4. 审核支出申请
+    if (pathname.startsWith('/api/expenditures/') && pathname.includes('/review') && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      // 只有管理员和科研助理可以审核
+      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限审核支出申请'
+        });
+        return;
+      }
+      
+      const expenditureId = pathname.replace('/api/expenditures/', '').replace('/review', '');
+      const body = await parseRequestBody(req);
+      
+      console.log('📝 审核支出申请:', {
+        expenditureId: expenditureId,
+        reviewerId: user.id,
+        action: body.action,
+        reason: body.reason
+      });
+      
+      if (!body.action || !['approve', 'reject'].includes(body.action)) {
+        sendResponse(res, 400, {
+          success: false,
+          error: '审核动作不正确，必须是 approve 或 reject'
+        });
+        return;
+      }
+      
+      if (body.action === 'reject' && !body.reason) {
+        sendResponse(res, 400, {
+          success: false,
+          error: '驳回支出申请必须提供理由'
+        });
+        return;
+      }
+      
+      try {
+        const [expenditures] = await pool.query(
+          'SELECT * FROM `ExpenditureRecord` WHERE id = ?',
+          [expenditureId]
+        );
+        
+        if (expenditures.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '支出记录不存在'
+          });
+          return;
+        }
+        
+        const expenditure = expenditures[0];
+        
+        // 检查当前状态是否为待审批
+        if (expenditure.status !== 'submitted') {
+          sendResponse(res, 409, {
+            success: false,
+            error: '当前状态不允许审核',
+            current_status: expenditure.status
+          });
+          return;
+        }
+        
+        // 确定新的状态
+        const newStatus = body.action === 'approve' ? 'approved' : 'rejected';
+        
+        // 更新支出记录状态
+        await pool.query(
+          'UPDATE `ExpenditureRecord` SET status = ?, reviewer_id = ?, review_date = NOW(), review_comment = ? WHERE id = ?',
+          [newStatus, user.id, body.reason || '', expenditureId]
+        );
+        
+        sendResponse(res, 200, {
+          success: true,
+          message: `支出申请${body.action === 'approve' ? '已通过' : '已驳回'}`,
+          expenditure_id: expenditureId,
+          new_status: newStatus,
+          review_action: body.action
+        });
+        
+      } catch (error) {
+        console.error('审核支出申请失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '审核支出申请失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 5. 标记为已支付
+    if (pathname.startsWith('/api/expenditures/') && pathname.includes('/mark-paid') && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      // 只有管理员和科研助理可以标记支付
+      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限标记支付'
+        });
+        return;
+      }
+      
+      const expenditureId = pathname.replace('/api/expenditures/', '').replace('/mark-paid', '');
+      
+      console.log('💰 标记为已支付:', expenditureId);
+      
+      try {
+        const [expenditures] = await pool.query(
+          'SELECT * FROM `ExpenditureRecord` WHERE id = ?',
+          [expenditureId]
+        );
+        
+        if (expenditures.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '支出记录不存在'
+          });
+          return;
+        }
+        
+        const expenditure = expenditures[0];
+        
+        // 检查当前状态是否为已批准
+        if (expenditure.status !== 'approved') {
+          sendResponse(res, 409, {
+            success: false,
+            error: '只有已批准的支出可以标记为已支付',
+            current_status: expenditure.status
+          });
+          return;
+        }
+        
+        // 更新为已支付状态
+        await pool.query(
+          'UPDATE `ExpenditureRecord` SET status = ? WHERE id = ?',
+          ['paid', expenditureId]
+        );
+        
+        sendResponse(res, 200, {
+          success: true,
+          message: '已标记为已支付',
+          expenditure_id: expenditureId,
+          new_status: 'paid'
+        });
+        
+      } catch (error) {
+        console.error('标记支付失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '标记支付失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 6. 取消支出申请
+    if (pathname.startsWith('/api/expenditures/') && pathname.includes('/cancel') && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      const expenditureId = pathname.replace('/api/expenditures/', '').replace('/cancel', '');
+      
+      console.log('❌ 取消支出申请:', expenditureId);
+      
+      try {
+        const [expenditures] = await pool.query(
+          'SELECT * FROM `ExpenditureRecord` WHERE id = ?',
+          [expenditureId]
+        );
+        
+        if (expenditures.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '支出记录不存在'
+          });
+          return;
+        }
+        
+        const expenditure = expenditures[0];
+        
+        // 检查权限：只有创建者可以取消
+        const [projects] = await pool.query(
+          'SELECT applicant_id FROM `Project` WHERE id = ?',
+          [expenditure.project_id]
+        );
+        
+        if (projects.length === 0 || projects[0].applicant_id !== user.id) {
+          sendResponse(res, 403, {
+            success: false,
+            error: '没有权限取消此支出申请'
+          });
+          return;
+        }
+        
+        // 检查当前状态是否允许取消
+        if (!['draft', 'submitted'].includes(expenditure.status)) {
+          sendResponse(res, 409, {
+            success: false,
+            error: '当前状态不允许取消',
+            current_status: expenditure.status
+          });
+          return;
+        }
+        
+        // 更新为草稿状态
+        await pool.query(
+          'UPDATE `ExpenditureRecord` SET status = ? WHERE id = ?',
+          ['draft', expenditureId]
+        );
+        
+        sendResponse(res, 200, {
+          success: true,
+          message: '支出申请已取消',
+          expenditure_id: expenditureId,
+          new_status: 'draft'
+        });
+        
+      } catch (error) {
+        console.error('取消支出申请失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '取消支出申请失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 7. 删除支出记录
+    if (pathname.startsWith('/api/expenditures/') && req.method === 'DELETE') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      const expenditureId = pathname.replace('/api/expenditures/', '');
+      
+      console.log('🗑️ 删除支出记录:', expenditureId);
+      
+      try {
+        const [expenditures] = await pool.query(
+          'SELECT * FROM `ExpenditureRecord` WHERE id = ?',
+          [expenditureId]
+        );
+        
+        if (expenditures.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '支出记录不存在'
+          });
+          return;
+        }
+        
+        const expenditure = expenditures[0];
+        
+        // 检查权限：只有创建者或管理员可以删除
+        const [projects] = await pool.query(
+          'SELECT applicant_id FROM `Project` WHERE id = ?',
+          [expenditure.project_id]
+        );
+        
+        const isOwner = projects.length > 0 && projects[0].applicant_id === user.id;
+        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        
+        if (!isOwner && !isAdmin) {
+          sendResponse(res, 403, {
+            success: false,
+            error: '没有权限删除此支出记录'
+          });
+          return;
+        }
+        
+        // 检查状态：只有草稿状态可以删除
+        if (expenditure.status !== 'draft' && !isAdmin) {
+          sendResponse(res, 409, {
+            success: false,
+            error: '只能删除草稿状态的支出记录',
+            current_status: expenditure.status
+          });
+          return;
+        }
+        
+        // 删除支出记录
+        const [result] = await pool.query('DELETE FROM `ExpenditureRecord` WHERE id = ?', [expenditureId]);
+        
+        console.log('✅ 支出记录删除成功，影响行数:', result.affectedRows);
+        
+        sendResponse(res, 200, {
+          success: true,
+          message: '支出记录删除成功',
+          expenditure_id: expenditureId
+        });
+        
+      } catch (error) {
+        console.error('删除支出记录失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '删除支出记录失败',
+          message: error.message,
+          sqlMessage: error.sqlMessage
+        });
+      }
+      return;
+    }
+
     // ==================== 文件上传API ====================
     if (pathname === '/api/upload' && req.method === 'POST') {
       const token = req.headers.authorization;
@@ -21421,7 +18967,1445 @@ function getRoleText(role) {
       }
       return;
     }
+        // ==================== 评审专家历史API ====================
 
+    // 1. 获取评审历史列表
+    if (pathname === '/api/reviewer/history' && req.method === 'GET') {
+      console.log('1');
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      // 检查是否是评审专家
+      const isReviewer = user.role === 'reviewer' || user.role === 'admin';
+      if (!isReviewer) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限访问评审专家数据'
+        });
+        return;
+      }
+      
+      // 解析查询参数
+      const {
+        page = 1,
+        limit = 10,
+        search = '',
+        review_type = '',
+        recommendation = '',
+        start_date = '',
+        end_date = '',
+        sort_by = 'review_date',
+        sort_order = 'desc'
+      } = query;
+      
+      const offset = (page - 1) * limit;
+      
+      console.log('📊 获取评审历史，专家ID:', user.id, '参数:', {
+        page, limit, search, review_type, recommendation, start_date, end_date, sort_by, sort_order
+      });
+      
+      try {
+        // 构建查询条件
+        let sql = `
+          SELECT 
+            pr.id,
+            pr.project_id,
+            pr.review_type,
+            pr.review_date,
+            pr.innovation_score,
+            pr.feasibility_score,
+            pr.significance_score,
+            pr.team_score,
+            pr.budget_score,
+            pr.total_score,
+            pr.strengths,
+            pr.weaknesses,
+            pr.recommendation,
+            pr.comments,
+            pr.suggestions,
+            pr.is_confidential,
+            pr.status,
+            pr.submitted_at,
+            pr.created_at,
+            p.title as project_title,
+            p.project_code,
+            u.name as applicant_name
+          FROM \`ProjectReview\` pr
+          LEFT JOIN \`Project\` p ON pr.project_id = p.id
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE pr.reviewer_id = ?
+        `;
+        
+        let countSql = 'SELECT COUNT(*) as total FROM `ProjectReview` pr WHERE pr.reviewer_id = ?';
+        const params = [user.id];
+        const countParams = [user.id];
+        
+        // 搜索条件
+        if (search) {
+          sql += ' AND (p.title LIKE ? OR p.project_code LIKE ?)';
+          countSql += ' AND (SELECT 1 FROM `Project` p WHERE p.id = pr.project_id AND (p.title LIKE ? OR p.project_code LIKE ?))';
+          const searchParam = `%${search}%`;
+          params.push(searchParam, searchParam);
+          countParams.push(searchParam, searchParam);
+        }
+        
+        // 评审类型过滤
+        if (review_type) {
+          sql += ' AND pr.review_type = ?';
+          countSql += ' AND review_type = ?';
+          params.push(review_type);
+          countParams.push(review_type);
+        }
+        
+        // 结论过滤
+        if (recommendation) {
+          sql += ' AND pr.recommendation = ?';
+          countSql += ' AND recommendation = ?';
+          params.push(recommendation);
+          countParams.push(recommendation);
+        }
+        
+        // 日期范围过滤
+        if (start_date) {
+          sql += ' AND DATE(pr.review_date) >= ?';
+          countSql += ' AND DATE(review_date) >= ?';
+          params.push(start_date);
+          countParams.push(start_date);
+        }
+        
+        if (end_date) {
+          sql += ' AND DATE(pr.review_date) <= ?';
+          countSql += ' AND DATE(review_date) <= ?';
+          params.push(end_date);
+          countParams.push(end_date);
+        }
+        
+        // 排序
+        const validSortFields = ['review_date', 'total_score', 'project_code'];
+        const sortField = validSortFields.includes(sort_by) ? sort_by : 'review_date';
+        const sortDirection = sort_order.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+        sql += ` ORDER BY pr.${sortField} ${sortDirection}`;
+        
+        // 分页
+        sql += ' LIMIT ? OFFSET ?';
+        params.push(parseInt(limit), offset);
+        
+        console.log('🔍 执行评审历史查询SQL:', sql);
+        
+        // 执行查询
+        const [reviews] = await pool.query(sql, params);
+        const [totalResult] = await pool.query(countSql, countParams);
+        const total = totalResult[0]?.total || 0;
+        
+        // 获取统计数据
+        const [stats] = await pool.query(`
+          SELECT 
+            COUNT(*) as total_reviews,
+            AVG(pr.total_score) as average_score,
+            SUM(CASE WHEN pr.recommendation = 'approve' THEN 1 ELSE 0 END) as approve_count,
+            (SELECT COUNT(*) FROM \`ProjectReview\` pr2 
+             WHERE pr2.reviewer_id = ? AND pr2.status = 'draft'
+             AND pr2.project_id IN (SELECT id FROM \`Project\` WHERE status = 'under_review')) as pending_reviews
+          FROM \`ProjectReview\` pr
+          WHERE pr.reviewer_id = ?
+        `, [user.id, user.id]);
+        
+        console.log(`✅ 获取评审历史成功，共 ${reviews.length} 条，总共 ${total} 条`);
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            reviews: reviews,
+            stats: stats[0] || {
+              total_reviews: 0,
+              average_score: 0,
+              approve_count: 0,
+              pending_reviews: 0
+            },
+            pagination: {
+              page: parseInt(page),
+              limit: parseInt(limit),
+              total: total,
+              total_pages: Math.ceil(total / limit)
+            }
+          }
+        });
+        
+      } catch (error) {
+        console.error('获取评审历史失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取评审历史失败',
+          message: error.message,
+          sqlMessage: error.sqlMessage
+        });
+      }
+      return;
+    }
+
+    // 2. 获取评审详情(工作台)
+    // 获取评审专家待评审的项目列表
+    if (pathname.startsWith('/api/reviewer/review') && req.method === 'GET') {
+      console.log('2');
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+      
+      const isReviewer = user.role === 'reviewer' || user.role === 'admin';
+      if (!isReviewer) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      
+      try {
+        console.log(`📋 获取评审专家 ${user.id} 的待评审项目`);
+        
+        const sql = `
+          SELECT 
+            p.*,
+            u.name as applicant_name,
+            u.department as applicant_department,
+            u.title as applicant_title,
+            pr.id as review_id,
+            pr.status as review_status,
+            pr.created_at as review_created_at,
+            -- 计算紧急程度
+            CASE 
+              WHEN p.end_date IS NULL THEN 'medium'
+              WHEN p.end_date < CURDATE() THEN 'urgent'
+              WHEN DATEDIFF(p.end_date, CURDATE()) <= 3 THEN 'high'
+              WHEN DATEDIFF(p.end_date, CURDATE()) <= 7 THEN 'medium'
+              ELSE 'low'
+            END as priority,
+            -- 计算剩余天数
+            IF(p.end_date IS NULL, NULL, 
+              DATEDIFF(p.end_date, CURDATE())) as days_remaining
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          LEFT JOIN \`ProjectReview\` pr ON p.id = pr.project_id AND pr.reviewer_id = ?
+          WHERE p.status IN ('under_review', 'stage_review')
+            AND (pr.id IS NULL OR pr.status = 'draft')
+          ORDER BY 
+            CASE priority
+              WHEN 'urgent' THEN 1
+              WHEN 'high' THEN 2
+              WHEN 'medium' THEN 3
+              ELSE 4
+            END,
+            p.end_date ASC,
+            p.created_at DESC
+          LIMIT 20
+        `;
+        
+        const [projects] = await pool.query(sql, [user.id]);
+        console.log(`✅ 获取到 ${projects.length} 个待评审项目`);
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: projects,
+          count: projects.length
+        });
+        
+      } catch (error) {
+        console.error('获取待评审项目失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取待评审项目失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 4. 获取最近评审记录（用于工作台）
+    if (pathname === '/api/reviewer/recent-reviews' && req.method === 'GET') {
+      console.log('4');
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      // 检查是否是评审专家
+      const isReviewer = user.role === 'reviewer' || user.role === 'admin';
+      if (!isReviewer) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限访问评审记录'
+        });
+        return;
+      }
+      
+      const { limit = 5 } = query;
+      
+      console.log('📋 获取最近评审记录，专家ID:', user.id, '数量:', limit);
+      
+      try {
+        const sql = `
+          SELECT 
+            pr.id,
+            pr.project_id,
+            pr.review_date,
+            pr.total_score,
+            pr.recommendation,
+            pr.comments,
+            pr.status,
+            p.title as project_title,
+            p.project_code
+          FROM \`ProjectReview\` pr
+          LEFT JOIN \`Project\` p ON pr.project_id = p.id
+          WHERE pr.reviewer_id = ? AND pr.status = 'submitted'
+          ORDER BY pr.review_date DESC
+          LIMIT ?
+        `;
+        
+        const [recentReviews] = await pool.query(sql, [user.id, parseInt(limit)]);
+        
+        console.log(`✅ 获取最近评审记录成功，共 ${recentReviews.length} 条`);
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: recentReviews
+        });
+        
+      } catch (error) {
+        console.error('获取最近评审记录失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取最近评审记录失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+    // ==================== 评审专家API ====================
+
+    function formatDateForMySQL(dateString) {
+      if (!dateString) {
+        return new Date().toISOString().split('T')[0];
+      }
+      
+      try {
+        // 如果已经是 YYYY-MM-DD 格式，直接返回
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+          return dateString;
+        }
+        
+        // 尝试解析日期
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) {
+          throw new Error('Invalid date');
+        }
+        
+        // 格式化为 YYYY-MM-DD
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+        
+      } catch (error) {
+        console.error('日期格式转换失败，使用今天:', error);
+        return new Date().toISOString().split('T')[0];
+      }
+    }
+
+    // 辅助函数：计算平均分（用于手动计算，因为total_score是计算列）
+    function calculateAverageScore(...scores) {
+      const validScores = scores.filter(score => score > 0);
+      if (validScores.length === 0) return 0;
+      const sum = validScores.reduce((a, b) => a + b, 0);
+      return Number((sum / validScores.length).toFixed(2));
+    }
+
+    // 辅助函数：更新项目评审状态
+    async function updateProjectReviewStatus(projectId) {
+      try {
+        // 检查该项目是否所有评审都已提交
+        const [reviews] = await pool.query(`
+          SELECT status, COUNT(*) as count
+          FROM \`ProjectReview\`
+          WHERE project_id = ?
+          GROUP BY status
+        `, [projectId]);
+        
+        const totalReviews = reviews.reduce((sum, r) => sum + r.count, 0);
+        const submittedReviews = reviews.find(r => r.status === 'submitted')?.count || 0;
+        
+        console.log(`📊 项目 ${projectId} 评审状态: 总数 ${totalReviews}, 已提交 ${submittedReviews}`);
+        
+        // 如果所有评审都已提交，更新项目状态为待决策
+        if (totalReviews > 0 && totalReviews === submittedReviews) {
+          await pool.query(
+            'UPDATE `Project` SET status = ? WHERE id = ?',
+            ['review_completed', projectId]
+          );
+          
+          console.log(`✅ 项目 ${projectId} 所有评审已完成，状态更新为 review_completed`);
+        }
+      } catch (error) {
+        console.error('更新项目评审状态失败:', error);
+      }
+    }
+
+    // 辅助函数：创建评审通知
+    async function createReviewNotification(projectId, reviewerId, reviewId, action, projectTitle) {
+      try {
+        // 获取项目信息
+        const [projects] = await pool.query(
+          'SELECT title, applicant_id FROM `Project` WHERE id = ?',
+          [projectId]
+        );
+        
+        if (projects.length === 0) return;
+        
+        const project = projects[0];
+        const notificationId = randomUUID();
+        
+        if (action === 'submitted') {
+          // 给项目申请人发送评审完成通知
+          await pool.query(`
+            INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, priority, created_at)
+            VALUES (?, ?, 'review', '评审完成通知', ?, ?, 'ProjectReview', 'medium', NOW())
+          `, [
+            notificationId,
+            project.applicant_id,
+            `您的项目"${projectTitle}"收到新的评审意见，请查看详情。`,
+            reviewId
+          ]);
+          
+          console.log(`📢 已为申请人 ${project.applicant_id} 创建评审完成通知`);
+        } else if (action === 'draft_saved') {
+          // 给评审专家自己发送保存提醒
+          await pool.query(`
+            INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, priority, created_at)
+            VALUES (?, ?, 'reminder', '评审草稿保存提醒', ?, ?, 'ProjectReview', 'low', NOW())
+          `, [
+            notificationId,
+            reviewerId,
+            `您的评审草稿已保存，请及时提交。`,
+            reviewId
+          ]);
+          
+          console.log(`📢 已为评审专家 ${reviewerId} 创建草稿保存通知`);
+        }
+      } catch (error) {
+        console.error('创建评审通知失败:', error);
+      }
+    }
+
+    // 1. 获取评审任务列表
+    if (pathname.startsWith('/api/reviewer/viewreview/') && req.method === 'GET') {
+      console.log('5');
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      // 检查是否是评审专家
+      const isReviewer = user.role === 'reviewer' || user.role === 'admin';
+      if (!isReviewer) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限访问评审功能'
+        });
+        return;
+      }
+      
+      const { 
+        page = 1, 
+        limit = 10, 
+        status = '', 
+        review_type = '',
+        search = '' 
+      } = query;
+      
+      const offset = (page - 1) * limit;
+      
+      try {
+        console.log('📋 获取评审任务列表，专家ID:', user.id, '状态:', status);
+        
+        // 构建查询条件
+        let sql = `
+          SELECT 
+            pr.id,
+            pr.project_id,
+            pr.review_type,
+            pr.review_date,
+            pr.total_score,
+            pr.recommendation,
+            pr.status as review_status,
+            pr.submitted_at,
+            pr.created_at,
+            p.title as project_title,
+            p.project_code,
+            p.status as project_status,
+            p.category,
+            p.research_field,
+            p.budget_total,
+            p.duration_months,
+            u.name as applicant_name,
+            u.department as applicant_department
+          FROM \`ProjectReview\` pr
+          LEFT JOIN \`Project\` p ON pr.project_id = p.id
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE pr.reviewer_id = ?
+        `;
+        
+        let countSql = 'SELECT COUNT(*) as total FROM `ProjectReview` WHERE reviewer_id = ?';
+        const params = [user.id];
+        const countParams = [user.id];
+        
+        // 状态过滤
+        if (status) {
+          sql += ' AND pr.status = ?';
+          countSql += ' AND status = ?';
+          params.push(status);
+          countParams.push(status);
+        }
+        
+        // 评审类型过滤
+        if (review_type) {
+          sql += ' AND pr.review_type = ?';
+          countSql += ' AND review_type = ?';
+          params.push(review_type);
+          countParams.push(review_type);
+        }
+        
+        // 搜索条件
+        if (search) {
+          sql += ' AND (p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)';
+          countSql += ' AND project_id IN (SELECT id FROM `Project` WHERE title LIKE ? OR project_code LIKE ?)';
+          const searchParam = `%${search}%`;
+          params.push(searchParam, searchParam, searchParam);
+          countParams.push(searchParam, searchParam);
+        }
+        
+        sql += ' ORDER BY pr.created_at DESC LIMIT ? OFFSET ?';
+        params.push(parseInt(limit), offset);
+        
+        console.log('🔍 执行评审任务查询SQL:', sql);
+        
+        const [reviews] = await pool.query(sql, params);
+        const [totalResult] = await pool.query(countSql, countParams);
+        const total = totalResult[0]?.total || 0;
+        
+        // 获取统计数据
+        const [stats] = await pool.query(`
+          SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft_count,
+            SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted_count,
+            SUM(CASE WHEN status = 'locked' THEN 1 ELSE 0 END) as locked_count,
+            AVG(total_score) as average_score
+          FROM \`ProjectReview\`
+          WHERE reviewer_id = ?
+        `, [user.id]);
+        
+        console.log(`✅ 获取评审任务成功，共 ${reviews.length} 条`);
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            reviews: reviews,
+            stats: stats[0] || {
+              total: 0,
+              draft_count: 0,
+              submitted_count: 0,
+              locked_count: 0,
+              average_score: 0
+            },
+            pagination: {
+              page: parseInt(page),
+              limit: parseInt(limit),
+              total: total,
+              pages: Math.ceil(total / limit)
+            }
+          }
+        });
+        
+      } catch (error) {
+        console.error('获取评审任务失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取评审任务失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 2. 获取单个评审详情（带项目信息）
+    if (pathname.startsWith('/api/reviewer/viewreview/') && req.method === 'GET') {
+      console.log('6');
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      // 检查是否是评审专家
+      const isReviewer = user.role === 'reviewer' || user.role === 'admin';
+      if (!isReviewer) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限访问评审详情'
+        });
+        return;
+      }
+      
+      const reviewId = pathname.replace('/api/reviewer/review/', '');
+      if (!reviewId) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '评审ID不能为空'
+          });
+          return;
+        }
+      console.log('🔍 获取评审详情，评审ID:', reviewId, '专家ID:', user.id);
+      
+      try {
+        // 获取评审基本信息
+        const sql = `
+          SELECT 
+            pr.*,
+            p.title as project_title,
+            p.project_code,
+            p.abstract,
+            p.category,
+            p.research_field,
+            p.keywords,
+            p.budget_total,
+            p.duration_months,
+            p.status as project_status,
+            p.start_date,
+            p.end_date,
+            u.name as applicant_name,
+            u.department as applicant_department,
+            u.title as applicant_title,
+            u.research_field as applicant_research_field
+          FROM \`ProjectReview\` pr
+          LEFT JOIN \`Project\` p ON pr.project_id = p.id
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE pr.id = ? AND pr.reviewer_id = ?
+        `;
+        
+        const [reviews] = await pool.query(sql, [reviewId, user.id]);
+        
+        if (reviews.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '评审记录不存在或没有权限'
+          });
+          return;
+        }
+        
+        const review = reviews[0];
+        
+        // 获取项目预算
+        const [budgets] = await pool.query(
+          'SELECT category, item_name, description, amount, justification FROM `ProjectBudget` WHERE project_id = ? ORDER BY sequence',
+          [review.project_id]
+        );
+        
+        // 获取项目成员
+        const [members] = await pool.query(`
+          SELECT 
+            u.name,
+            u.title,
+            u.research_field,
+            pm.role as member_role,
+            pm.responsibility,
+            pm.workload_percentage
+          FROM \`ProjectMember\` pm
+          LEFT JOIN \`User\` u ON pm.user_id = u.id
+          WHERE pm.project_id = ?
+          ORDER BY 
+            CASE pm.role
+              WHEN 'principal' THEN 1
+              WHEN 'co_researcher' THEN 2
+              WHEN 'research_assistant' THEN 3
+              WHEN 'student' THEN 4
+              ELSE 5
+            END
+        `, [review.project_id]);
+        
+        // 处理分数字段，确保是数字类型
+        const reviewData = {
+          ...review,
+          // 转换分数字段为数字
+          innovation_score: parseFloat(review.innovation_score) || 0,
+          feasibility_score: parseFloat(review.feasibility_score) || 0,
+          significance_score: parseFloat(review.significance_score) || 0,
+          team_score: parseFloat(review.team_score) || 0,
+          budget_score: parseFloat(review.budget_score) || 0,
+          total_score: parseFloat(review.total_score) || 0,
+          // 布尔字段
+          is_confidential: Boolean(review.is_confidential),
+          // 项目相关信息
+          project_info: {
+            abstract: review.abstract,
+            category: review.category,
+            research_field: review.research_field,
+            keywords: review.keywords,
+            budget_total: review.budget_total,
+            duration_months: review.duration_months,
+            status: review.project_status,
+            start_date: review.start_date,
+            end_date: review.end_date,
+            budgets: budgets,
+            members: members
+          },
+          applicant_info: {
+            name: review.applicant_name,
+            department: review.applicant_department,
+            title: review.applicant_title,
+            research_field: review.applicant_research_field
+          }
+        };
+        
+        // 移除重复字段
+        delete reviewData.abstract;
+        delete reviewData.category;
+        delete reviewData.research_field;
+        delete reviewData.keywords;
+        delete reviewData.applicant_name;
+        delete reviewData.applicant_department;
+        delete reviewData.applicant_title;
+        delete reviewData.applicant_research_field;
+        
+        console.log('✅ 获取评审详情成功');
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: reviewData
+        });
+        
+      } catch (error) {
+        console.error('获取评审详情失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取评审详情失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+
+    // 3. 创建评审记录
+    if (pathname.startsWith('/api/reviewer/viewreview/') && req.method === 'POST') {
+      console.log('7');
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      // 检查是否是评审专家
+      const isReviewer = user.role === 'reviewer' || user.role === 'admin';
+      if (!isReviewer) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限创建评审'
+        });
+        return;
+      }
+      
+      try {
+        const body = await parseRequestBody(req);
+        
+        console.log('📝 创建评审请求:', {
+          reviewerId: user.id,
+          data: body
+        });
+        
+        // ========== 验证必要字段 ==========
+        if (!body.project_id) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '项目ID不能为空'
+          });
+          return;
+        }
+        
+        // 处理日期格式
+        if (body.review_date) {
+          body.review_date = formatDateForMySQL(body.review_date);
+        } else {
+          body.review_date = new Date().toISOString().split('T')[0];
+        }
+        
+        // 验证 recommendation 字段
+        const validRecommendations = ['approve', 'approve_with_revision', 'reject', 'resubmit'];
+        if (body.recommendation !== undefined && body.recommendation !== null) {
+          // 如果是空字符串，转为 null
+          if (typeof body.recommendation === 'string' && body.recommendation.trim() === '') {
+            body.recommendation = null;
+          } else if (!validRecommendations.includes(body.recommendation)) {
+            sendResponse(res, 400, {
+              success: false,
+              error: '评审结论必须是以下值之一：approve, approve_with_revision, reject, resubmit',
+              received_value: body.recommendation
+            });
+            return;
+          }
+        }
+        
+        // 如果是提交评审，recommendation 和 comments 必填
+        if (body.status === 'submitted') {
+          if (!body.recommendation) {
+            sendResponse(res, 400, {
+              success: false,
+              error: '提交评审时必须选择评审结论'
+            });
+            return;
+          }
+          
+          if (!body.comments || body.comments.trim() === '') {
+            sendResponse(res, 400, {
+              success: false,
+              error: '提交评审时必须填写评审意见'
+            });
+            return;
+          }
+        }
+        // ==================================
+        
+        // 检查项目是否存在
+        const [projects] = await pool.query(
+          'SELECT id, status, title FROM `Project` WHERE id = ?',
+          [body.project_id]
+        );
+        
+        if (projects.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '项目不存在'
+          });
+          return;
+        }
+        
+        const project = projects[0];
+        
+        // 检查项目状态是否允许评审
+        if (!['under_review', 'stage_review'].includes(project.status)) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '项目当前状态不允许评审',
+            project_status: project.status
+          });
+          return;
+        }
+        
+        // 检查是否已存在该项目的评审记录
+        const [existingReviews] = await pool.query(
+          'SELECT id FROM `ProjectReview` WHERE project_id = ? AND reviewer_id = ? AND review_type = ?',
+          [body.project_id, user.id, body.review_type || 'initial']
+        );
+        
+        if (existingReviews.length > 0) {
+          sendResponse(res, 409, {
+            success: false,
+            error: '该项目的评审记录已存在'
+          });
+          return;
+        }
+        
+        // 生成评审ID
+        const reviewId = randomUUID();
+        
+        // 插入评审记录
+        const sql = `
+          INSERT INTO \`ProjectReview\` (
+            id, project_id, reviewer_id, review_type, review_date,
+            innovation_score, feasibility_score, significance_score,
+            team_score, budget_score,
+            strengths, weaknesses, recommendation, comments, suggestions,
+            is_confidential, status, submitted_at, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `;
+        
+        const params = [
+          reviewId,
+          body.project_id,
+          user.id,
+          body.review_type || 'initial',
+          body.review_date,
+          parseFloat(body.innovation_score) || 0,
+          parseFloat(body.feasibility_score) || 0,
+          parseFloat(body.significance_score) || 0,
+          parseFloat(body.team_score) || 0,
+          parseFloat(body.budget_score) || 0,
+          body.strengths || '',
+          body.weaknesses || '',
+          body.recommendation || null,
+          body.comments || '',
+          body.suggestions || '',
+          body.is_confidential ? 1 : 0,
+          body.status || 'draft',
+          body.status === 'submitted' ? new Date().toISOString() : null
+        ];
+        
+        console.log('📝 执行创建评审SQL:', sql);
+        console.log('📝 参数:', params);
+        
+        await pool.query(sql, params);
+        
+        // 如果是提交评审，更新项目状态
+        if (body.status === 'submitted') {
+          await updateProjectReviewStatus(body.project_id);
+          
+          // 创建通知
+          await createReviewNotification(body.project_id, user.id, reviewId, 'submitted', project.title);
+        } else if (body.status === 'draft') {
+          // 创建草稿保存通知
+          await createReviewNotification(body.project_id, user.id, reviewId, 'draft_saved', project.title);
+        }
+        
+        sendResponse(res, 201, {
+          success: true,
+          message: body.status === 'submitted' ? '评审创建并提交成功' : '评审创建成功',
+          review_id: reviewId
+        });
+        
+      } catch (error) {
+        console.error('创建评审失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '创建评审失败',
+          message: error.message,
+          sqlMessage: error.sqlMessage
+        });
+      }
+      return;
+    }
+
+    // 4. 更新评审记录
+    if (pathname.startsWith('/api/reviewer/viewreview/') && req.method === 'PUT') {
+      console.log('8');
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      // 检查是否是评审专家
+      const isReviewer = user.role === 'reviewer' || user.role === 'admin';
+      if (!isReviewer) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限更新评审'
+        });
+        return;
+      }
+      
+      const reviewId = pathname.replace('/api/reviewer/review', '');
+      
+      console.log('🔄 更新评审请求，评审ID:', reviewId, '专家ID:', user.id);
+      
+      try {
+        const body = await parseRequestBody(req);
+        
+        console.log('📝 更新数据:', body);
+        
+        // ========== 处理日期格式 ==========
+        if (body.review_date) {
+          body.review_date = formatDateForMySQL(body.review_date);
+        }
+        // ==================================
+        
+        // ========== 验证 recommendation 字段 ==========
+        // 确保 recommendation 是有效的四个值之一或 null
+        const validRecommendations = ['approve', 'approve_with_revision', 'reject', 'resubmit', null];
+        if (body.recommendation !== undefined && body.recommendation !== null) {
+          // 如果是空字符串，转为 null
+          if (typeof body.recommendation === 'string' && body.recommendation.trim() === '') {
+            body.recommendation = null;
+          } else if (!validRecommendations.includes(body.recommendation)) {
+            sendResponse(res, 400, {
+              success: false,
+              error: '评审结论必须是以下值之一：approve, approve_with_revision, reject, resubmit',
+              received_value: body.recommendation
+            });
+            return;
+          }
+        }
+        // ==============================================
+        
+        // 检查评审是否存在且属于该专家
+        const [existingReviews] = await pool.query(
+          'SELECT id, project_id, status, submitted_at FROM `ProjectReview` WHERE id = ? AND reviewer_id = ?',
+          [reviewId, user.id]
+        );
+        
+        if (existingReviews.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '评审记录不存在或没有权限'
+          });
+          return;
+        }
+        
+        const existingReview = existingReviews[0];
+        
+        // 检查状态：已提交的评审不能修改（管理员除外）
+        if (existingReview.status === 'submitted' && !checkPermission(user.role, 'admin')) {
+          sendResponse(res, 409, {
+            success: false,
+            error: '已提交的评审不能修改',
+            current_status: existingReview.status
+          });
+          return;
+        }
+        
+        // 如果是提交评审，验证必填字段
+        if (body.status === 'submitted') {
+          if (!body.comments || body.comments.trim() === '') {
+            sendResponse(res, 400, {
+              success: false,
+              error: '评审意见不能为空'
+            });
+            return;
+          }
+          
+          if (!body.recommendation) {
+            sendResponse(res, 400, {
+              success: false,
+              error: '请选择评审结论'
+            });
+            return;
+          }
+          
+          // 检查是否至少有一个评分
+          const hasScore = body.innovation_score || body.feasibility_score || 
+                          body.significance_score || body.team_score || body.budget_score;
+          if (!hasScore) {
+            sendResponse(res, 400, {
+              success: false,
+              error: '请至少完成一项评分'
+            });
+            return;
+          }
+        }
+        
+        // 构建更新字段
+        const updateFields = [];
+        const updateValues = [];
+        
+        // 允许更新的字段 - 不要包含 total_score 和 updated_at
+        const allowedFields = [
+          'innovation_score', 'feasibility_score', 'significance_score',
+          'team_score', 'budget_score',
+          'strengths', 'weaknesses', 'recommendation',
+          'comments', 'suggestions', 'is_confidential',
+          'status', 'review_date', 'review_type'
+        ];
+        
+        allowedFields.forEach(field => {
+          if (body[field] !== undefined) {
+            updateFields.push(`${field} = ?`);
+            if (field.includes('_score')) {
+              updateValues.push(parseFloat(body[field]) || 0);
+            } else if (field === 'is_confidential') {
+              updateValues.push(body[field] ? 1 : 0);
+            } else {
+              updateValues.push(body[field]);
+            }
+          }
+        });
+        
+        // 如果是提交评审，设置提交时间
+        if (body.status === 'submitted') {
+          updateFields.push('submitted_at = ?');
+          updateValues.push(new Date().toISOString());
+        }
+        
+        if (updateFields.length === 0) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '没有提供更新数据'
+          });
+          return;
+        }
+        
+        updateValues.push(reviewId);
+        
+        const updateSql = `UPDATE \`ProjectReview\` SET ${updateFields.join(', ')} WHERE id = ?`;
+        
+        console.log('📝 执行更新SQL:', updateSql);
+        console.log('📝 参数:', updateValues);
+        
+        const [result] = await pool.query(updateSql, updateValues);
+        
+        console.log('✅ 更新评审成功，影响行数:', result.affectedRows);
+        
+        if (result.affectedRows === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '评审记录不存在'
+          });
+          return;
+        }
+        
+        // 如果是提交评审，更新项目状态
+        if (body.status === 'submitted') {
+          await updateProjectReviewStatus(existingReview.project_id);
+          
+          // 创建通知
+          const [project] = await pool.query('SELECT title FROM `Project` WHERE id = ?', [existingReview.project_id]);
+          await createReviewNotification(existingReview.project_id, user.id, reviewId, 'submitted', project[0]?.title || '项目');
+        }
+        
+        sendResponse(res, 200, {
+          success: true,
+          message: body.status === 'submitted' ? '评审已提交' : '评审已保存',
+          review_id: reviewId,
+          affected_rows: result.affectedRows
+        });
+        
+      } catch (error) {
+        console.error('更新评审失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '更新评审失败',
+          message: error.message,
+          sqlMessage: error.sqlMessage
+        });
+      }
+      return;
+    }
+
+    // 5. 提交评审
+    if (pathname.startsWith('/api/reviewer/viewreview/') && pathname.endsWith('/submit') && req.method === 'POST') {
+      console.log('8');
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      // 只有评审专家可以审核
+      const isReviewer = user.role === 'reviewer' || user.role === 'admin';
+      if (!isReviewer) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限提交评审'
+        });
+        return;
+      }
+      
+      const reviewId = pathname.replace('/api/reviewer/review', '').replace('/submit', '');
+      
+      console.log('📤 提交评审请求，评审ID:', reviewId, '专家ID:', user.id);
+      
+      try {
+        const body = await parseRequestBody(req);
+        
+        console.log('📝 提交数据:', body);
+        
+        // ========== 验证必填字段 ==========
+        // 提交时 recommendation 不能为空
+        if (!body.recommendation) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '请选择评审结论（approve、approve_with_revision、reject、resubmit）'
+          });
+          return;
+        }
+        
+        // 验证 recommendation 的有效性
+        const validRecommendations = ['approve', 'approve_with_revision', 'reject', 'resubmit'];
+        if (!validRecommendations.includes(body.recommendation)) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '评审结论必须是以下值之一：approve, approve_with_revision, reject, resubmit',
+            received_value: body.recommendation
+          });
+          return;
+        }
+        
+        // comments 不能为空
+        if (!body.comments || body.comments.trim() === '') {
+          sendResponse(res, 400, {
+            success: false,
+            error: '评审意见不能为空'
+          });
+          return;
+        }
+        
+        // 检查是否至少有一个评分
+        const hasScore = body.innovation_score || body.feasibility_score || 
+                        body.significance_score || body.team_score || body.budget_score;
+        if (!hasScore) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '请至少完成一项评分'
+          });
+          return;
+        }
+        // ==================================
+        
+        // ========== 处理日期格式 ==========
+        if (body.review_date) {
+          body.review_date = formatDateForMySQL(body.review_date);
+        } else {
+          body.review_date = new Date().toISOString().split('T')[0];
+        }
+        // ==================================
+        
+        // 检查评审是否存在
+        const [existingReviews] = await pool.query(
+          'SELECT id, project_id, status, submitted_at FROM `ProjectReview` WHERE id = ? AND reviewer_id = ?',
+          [reviewId, user.id]
+        );
+        
+        if (existingReviews.length === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '评审记录不存在或没有权限'
+          });
+          return;
+        }
+        
+        const existingReview = existingReviews[0];
+        
+        // 检查是否已提交
+        if (existingReview.status === 'submitted') {
+          sendResponse(res, 409, {
+            success: false,
+            error: '评审已提交，不能重复提交'
+          });
+          return;
+        }
+        
+        console.log('🔍 检查评审是否存在:')
+        console.log('  评审ID:', reviewId)
+        console.log('  专家ID:', user.id)
+        console.log('  当前状态:', existingReview.status)
+        
+        // 更新评审状态为已提交 - 不要包含 total_score 和 updated_at
+        const updateSql = `
+          UPDATE \`ProjectReview\` 
+          SET 
+            status = 'submitted',
+            submitted_at = NOW(),
+            comments = ?,
+            recommendation = ?,
+            innovation_score = ?,
+            feasibility_score = ?,
+            significance_score = ?,
+            team_score = ?,
+            budget_score = ?,
+            strengths = ?,
+            weaknesses = ?,
+            suggestions = ?,
+            is_confidential = ?,
+            review_date = ?,
+            review_type = ?
+          WHERE id = ? AND reviewer_id = ?
+        `;
+        
+        const params = [
+          body.comments,
+          body.recommendation,
+          parseFloat(body.innovation_score) || 0,
+          parseFloat(body.feasibility_score) || 0,
+          parseFloat(body.significance_score) || 0,
+          parseFloat(body.team_score) || 0,
+          parseFloat(body.budget_score) || 0,
+          body.strengths || '',
+          body.weaknesses || '',
+          body.suggestions || '',
+          body.is_confidential ? 1 : 0,
+          body.review_date,
+          body.review_type || 'initial',
+          reviewId,
+          user.id
+        ];
+        
+        console.log('📝 执行提交评审SQL:', updateSql);
+        console.log('📝 参数:', params);
+        
+        const [result] = await pool.query(updateSql, params);
+        
+        console.log('✅ 提交评审成功，影响行数:', result.affectedRows);
+        
+        if (result.affectedRows === 0) {
+          sendResponse(res, 404, {
+            success: false,
+            error: '评审记录不存在或没有权限'
+          });
+          return;
+        }
+        
+        // 更新项目评审状态
+        await updateProjectReviewStatus(existingReview.project_id);
+        
+        // 创建通知
+        const [project] = await pool.query('SELECT title FROM `Project` WHERE id = ?', [existingReview.project_id]);
+        await createReviewNotification(existingReview.project_id, user.id, reviewId, 'submitted', project[0]?.title || '项目');
+        
+        sendResponse(res, 200, {
+          success: true,
+          message: '评审提交成功',
+          review_id: reviewId,
+          affected_rows: result.affectedRows
+        });
+        
+      } catch (error) {
+        console.error('提交评审失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '提交评审失败',
+          message: error.message,
+          sqlMessage: error.sqlMessage
+        });
+      }
+      return;
+    }
+
+    // 7. 获取最近评审记录（用于工作台）
+    if (pathname === '/api/reviewer/recent-reviews' && req.method === 'GET') {
+      console.log('10');
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      
+      if (!user) {
+        sendResponse(res, 401, {
+          success: false,
+          error: '认证失败'
+        });
+        return;
+      }
+      
+      // 检查是否是评审专家
+      const isReviewer = user.role === 'reviewer' || user.role === 'admin';
+      if (!isReviewer) {
+        sendResponse(res, 403, {
+          success: false,
+          error: '没有权限访问评审记录'
+        });
+        return;
+      }
+      
+      const { limit = 5 } = query;
+      
+      console.log('📋 获取最近评审记录，专家ID:', user.id, '数量:', limit);
+      
+      try {
+        const sql = `
+          SELECT 
+            pr.id,
+            pr.project_id,
+            pr.review_date,
+            pr.total_score,
+            pr.recommendation,
+            pr.comments,
+            pr.status,
+            p.title as project_title,
+            p.project_code
+          FROM \`ProjectReview\` pr
+          LEFT JOIN \`Project\` p ON pr.project_id = p.id
+          WHERE pr.reviewer_id = ? AND pr.status = 'submitted'
+          ORDER BY pr.review_date DESC
+          LIMIT ?
+        `;
+        
+        const [recentReviews] = await pool.query(sql, [user.id, parseInt(limit)]);
+        
+        console.log(`✅ 获取最近评审记录成功，共 ${recentReviews.length} 条`);
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: recentReviews
+        });
+        
+      } catch (error) {
+        console.error('获取最近评审记录失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取最近评审记录失败',
+          message: error.message
+        });
+      }
+      return;
+    }
+    // 辅助函数：验证管理员权限
+    async function verifyAdmin(token) {
+      if (!token || !token.startsWith('Bearer ')) {
+        console.log('❌ Token格式错误或缺失');
+        return null;
+      }
+      
+      try {
+        const tokenData = Buffer.from(token.replace('Bearer ', ''), 'base64').toString();
+        const [userId, username, timestamp] = tokenData.split(':');
+        
+        const [users] = await pool.query(
+          'SELECT id, username, email, role, name, department, status FROM `User` WHERE id = ? AND username = ?',
+          [userId, username]
+        );
+        
+        if (users.length === 0) {
+          return null;
+        }
+        
+        const user = users[0];
+        
+        // 检查是否是管理员
+        if (user.role !== 'admin' && user.role !== 'assistant') {
+          console.log('❌ 用户不是管理员，角色:', user.role);
+          return null;
+        }
+        
+        return user;
+      } catch (error) {
+        console.error('❌ 管理员验证失败:', error);
+        return null;
+      }
+    }
     // ================================管理员仪表板 API================================
     // 获取管理员仪表板数据
     if (pathname === '/api/admin/dashboard' && req.method === 'GET') {
@@ -22785,1037 +21769,6 @@ function getRoleText(role) {
       }
       return;
     }
-    // ==================== 评审专家仪表板API ====================
-
-    if (pathname === '/api/reviewer/dashboard' && req.method === 'GET') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user || user.role !== 'reviewer') {
-        sendResponse(res, 403, { success: false, error: '没有权限访问评审专家仪表板' });
-        return;
-      }
-      
-      try {
-        console.log('📊 获取评审专家仪表板数据，专家ID:', user.id);
-        
-        // 1. 获取待评审项目数量
-        // 状态为 under_review 或 batch_review，且专家尚未提交评审
-        const [pendingCountResult] = await pool.query(`
-          SELECT COUNT(DISTINCT p.id) as count
-          FROM \`Project\` p
-          INNER JOIN \`ExpertAssignment\` ea ON p.id = ea.project_id
-          WHERE p.status IN ('under_review', 'batch_review')
-            AND ea.expert_id = ?
-            AND NOT EXISTS (
-              SELECT 1 FROM \`ProjectReview\` pr 
-              WHERE pr.project_id = p.id 
-                AND pr.expert_id = ?
-                AND pr.status = 'submitted'
-            )
-        `, [user.id, user.id]);
-        
-        // 2. 获取已评审项目数量（已提交评审的项目）
-        const [completedCountResult] = await pool.query(`
-          SELECT COUNT(*) as count
-          FROM \`ProjectReview\`
-          WHERE expert_id = ?
-            AND status = 'submitted'
-        `, [user.id]);
-        
-        // 3. 获取平均评分
-        const [averageScoreResult] = await pool.query(`
-          SELECT AVG(total_score) as avg_score
-          FROM \`ProjectReview\`
-          WHERE expert_id = ?
-            AND status = 'submitted'
-            AND total_score IS NOT NULL
-        `, [user.id]);
-        
-        // 4. 获取通过率（推荐通过的项目比例）
-        const [approvalRateResult] = await pool.query(`
-          SELECT 
-            COUNT(*) as total,
-            COUNT(CASE WHEN recommendation = 'recommend' THEN 1 END) as recommended,
-            COUNT(CASE WHEN recommendation = 'revise_and_recommend' THEN 1 END) as revise_and_recommend
-          FROM \`ProjectReview\`
-          WHERE expert_id = ?
-            AND status = 'submitted'
-            AND recommendation IS NOT NULL
-        `, [user.id]);
-        
-        const totalReviewed = approvalRateResult[0]?.total || 0;
-        const recommendedCount = (approvalRateResult[0]?.recommended || 0) + (approvalRateResult[0]?.revise_and_recommend || 0);
-        const approvalRate = totalReviewed > 0 
-          ? Math.round((recommendedCount / totalReviewed) * 100)
-          : 0;
-        
-        // 5. 获取最高评分
-        const [highestScoreResult] = await pool.query(`
-          SELECT MAX(total_score) as max_score
-          FROM \`ProjectReview\`
-          WHERE expert_id = ?
-            AND status = 'submitted'
-        `, [user.id]);
-        
-        // 6. 获取平均评审时间（天）
-        const [avgReviewTimeResult] = await pool.query(`
-          SELECT AVG(DATEDIFF(pr.submitted_at, ea.assigned_at)) as avg_days
-          FROM \`ProjectReview\` pr
-          INNER JOIN \`ExpertAssignment\` ea ON pr.assignment_id = ea.id
-          WHERE pr.expert_id = ?
-            AND pr.status = 'submitted'
-            AND ea.assigned_at IS NOT NULL
-            AND pr.submitted_at IS NOT NULL
-        `, [user.id]);
-        
-        // 7. 获取评审一致性（与平均分的偏差）
-        const [consistencyResult] = await pool.query(`
-          SELECT 
-            AVG(ABS(total_score - avg_score)) as avg_deviation
-          FROM \`ProjectReview\` pr
-          CROSS JOIN (
-            SELECT AVG(total_score) as avg_score 
-            FROM \`ProjectReview\` 
-            WHERE expert_id = ? AND status = 'submitted'
-          ) as avg_table
-          WHERE pr.expert_id = ? AND pr.status = 'submitted'
-        `, [user.id, user.id]);
-        
-        const avgDeviation = consistencyResult[0]?.avg_deviation || 0;
-        const consistencyRate = avgDeviation > 0 ? Math.max(0, 100 - Math.min(100, avgDeviation * 10)) : 100;
-        
-        // 8. 获取总评语字数
-        const [totalCommentsResult] = await pool.query(`
-          SELECT SUM(CHAR_LENGTH(comments)) as total_chars
-          FROM \`ProjectReview\`
-          WHERE expert_id = ?
-            AND status = 'submitted'
-            AND comments IS NOT NULL
-        `, [user.id]);
-        
-        // 构建统计数据
-        const stats = {
-          pendingCount: pendingCountResult[0]?.count || 0,
-          completedCount: completedCountResult[0]?.count || 0,
-          averageScore: averageScoreResult[0]?.avg_score ? parseFloat(averageScoreResult[0].avg_score).toFixed(1) : 0,
-          approvalRate: approvalRate,
-          highestScore: highestScoreResult[0]?.max_score || 0,
-          avgReviewTime: avgReviewTimeResult[0]?.avg_days ? Math.round(avgReviewTimeResult[0].avg_days) : 0,
-          consistencyRate: Math.round(consistencyRate),
-          totalComments: totalCommentsResult[0]?.total_chars || 0
-        };
-        
-        // 获取用户信息（包括专家扩展信息）
-        const [userInfoResult] = await pool.query(`
-          SELECT 
-            u.id,
-            u.username,
-            u.name,
-            u.email,
-            u.department,
-            u.title,
-            u.status,
-            ep.organization,
-            ep.expertise_description,
-            ep.is_external
-          FROM \`User\` u
-          LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.user_id
-          WHERE u.id = ?
-        `, [user.id]);
-        
-        // 获取专家的研究领域
-        let researchField = null;
-        if (userInfoResult[0]?.id) {
-          const [expertDomains] = await pool.query(`
-            SELECT GROUP_CONCAT(rd.name SEPARATOR ', ') as research_fields
-            FROM \`ExpertDomain\` ed
-            LEFT JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
-            WHERE ed.expert_id = ?
-          `, [user.id]);
-          researchField = expertDomains[0]?.research_fields || null;
-        }
-        
-        const userInfo = userInfoResult[0] || { name: '评审专家' };
-        
-        sendResponse(res, 200, {
-          success: true,
-          data: {
-            userInfo: {
-              ...userInfo,
-              research_field: researchField
-            },
-            stats: stats
-          }
-        });
-        
-      } catch (error) {
-        console.error('获取评审专家仪表板数据失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '获取仪表板数据失败',
-          message: error.message,
-          stack: error.stack
-        });
-      }
-      return;
-    }
-
-// ==================== 获取待评审项目列表API ====================
-// ==================== 获取待评审项目API ====================
-
-if (pathname === '/api/reviewer/pending-projects' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    const limit = parseInt(query.limit) || 10;
-    
-    console.log('获取待评审项目，专家ID:', user.id);
-    
-    // 获取分配给该专家的待评审项目
-    const [projects] = await pool.query(`
-      SELECT 
-        p.id,
-        p.project_code,
-        p.title,
-        rd.name as research_field,
-        p.budget_total,
-        p.submit_date,
-        u.name as applicant_name,
-        u.department as applicant_department,
-        u.title as applicant_title,
-        ea.assigned_at,
-        ea.deadline as review_deadline,
-        -- 计算优先级
-        CASE 
-          WHEN ea.deadline <= DATE_ADD(NOW(), INTERVAL 3 DAY) THEN 'urgent'
-          WHEN ea.deadline <= DATE_ADD(NOW(), INTERVAL 7 DAY) THEN 'high'
-          ELSE 'medium'
-        END as priority
-      FROM \`ExpertAssignment\` ea
-      INNER JOIN \`Project\` p ON ea.project_id = p.id
-      LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      WHERE ea.expert_id = ?
-        AND p.status IN ('under_review', 'batch_review')
-        AND NOT EXISTS (
-          SELECT 1 FROM \`ProjectReview\` pr 
-          WHERE pr.project_id = p.id 
-            AND pr.expert_id = ?
-            AND pr.status = 'submitted'
-        )
-      ORDER BY 
-        CASE 
-          WHEN ea.deadline <= DATE_ADD(NOW(), INTERVAL 3 DAY) THEN 1
-          WHEN ea.deadline <= DATE_ADD(NOW(), INTERVAL 7 DAY) THEN 2
-          ELSE 3
-        END,
-        ea.deadline ASC,
-        ea.assigned_at ASC
-      LIMIT ?
-    `, [user.id, user.id, limit]);
-    
-    console.log(`找到 ${projects.length} 个待评审项目`);
-    
-    const formattedProjects = projects.map(p => ({
-      id: p.id,
-      project_code: p.project_code,
-      title: p.title,
-      research_field: p.research_field || '未指定',
-      budget_total: p.budget_total,
-      submit_date: p.submit_date ? new Date(p.submit_date).toISOString().split('T')[0] : null,
-      applicant_name: p.applicant_name,
-      applicant_department: p.applicant_department,
-      assigned_at: p.assigned_at ? p.assigned_at.toISOString() : null,
-      review_deadline: p.review_deadline ? new Date(p.review_deadline).toISOString().split('T')[0] : null,
-      priority: p.priority || 'medium'
-    }));
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: formattedProjects
-    });
-    
-  } catch (error) {
-    console.error('获取待评审项目失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取待评审项目失败' });
-  }
-  return;
-}
-
-// 获取最近评审记录
-if (pathname === '/api/reviewer/recent-reviews' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    const limit = parseInt(query.limit) || 5;
-    
-    console.log('获取最近评审记录，专家ID:', user.id);
-    
-    const [reviews] = await pool.query(`
-      SELECT 
-        pr.id,
-        pr.project_id,
-        p.title as project_title,
-        p.project_code,
-        pr.total_score,
-        pr.recommendation,
-        pr.comments,
-        pr.submitted_at,
-        pr.created_at
-      FROM \`ProjectReview\` pr
-      INNER JOIN \`Project\` p ON pr.project_id = p.id
-      WHERE pr.expert_id = ?
-        AND pr.status = 'submitted'
-      ORDER BY pr.submitted_at DESC
-      LIMIT ?
-    `, [user.id, limit]);
-    
-    const formattedReviews = reviews.map(r => ({
-      id: r.id,
-      project_id: r.project_id,
-      project_title: r.project_title,
-      project_code: r.project_code,
-      total_score: r.total_score,
-      recommendation: r.recommendation,
-      comments: r.comments,
-      submitted_at: r.submitted_at ? r.submitted_at.toISOString() : null,
-      review_date: r.submitted_at ? r.submitted_at.toISOString() : null
-    }));
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: formattedReviews
-    });
-    
-  } catch (error) {
-    console.error('获取最近评审记录失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取评审记录失败' });
-  }
-  return;
-}
-
-// 获取评分分布统计
-if (pathname === '/api/reviewer/score-distribution' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    console.log('获取评分分布，专家ID:', user.id);
-    
-    // 统计各分数段的评审数量
-    const [distribution] = await pool.query(`
-      SELECT 
-        CASE 
-          WHEN total_score >= 9 THEN '优秀 (9-10分)'
-          WHEN total_score >= 7 AND total_score < 9 THEN '良好 (7-8.9分)'
-          WHEN total_score >= 5 AND total_score < 7 THEN '中等 (5-6.9分)'
-          WHEN total_score < 5 THEN '待改进 (5分以下)'
-          ELSE '未评分'
-        END as score_range,
-        COUNT(*) as count
-      FROM \`ProjectReview\`
-      WHERE expert_id = ?
-        AND status = 'submitted'
-        AND total_score IS NOT NULL
-      GROUP BY score_range
-    `, [user.id]);
-    
-    // 定义所有分类
-    const allCategories = [
-      { range: '优秀 (9-10分)', count: 0, color: '#52c41a' },
-      { range: '良好 (7-8.9分)', count: 0, color: '#1890ff' },
-      { range: '中等 (5-6.9分)', count: 0, color: '#faad14' },
-      { range: '待改进 (5分以下)', count: 0, color: '#ff4d4f' }
-    ];
-    
-    // 合并查询结果
-    distribution.forEach(item => {
-      const found = allCategories.find(cat => cat.range === item.score_range);
-      if (found) {
-        found.count = item.count;
-      }
-    });
-    
-    const total = allCategories.reduce((sum, item) => sum + item.count, 0);
-    
-    const result = allCategories.map(item => ({
-      range: item.range,
-      count: item.count,
-      percentage: total > 0 ? Math.round((item.count / total) * 100) : 0,
-      color: item.color
-    }));
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: result
-    });
-    
-  } catch (error) {
-    console.error('获取评分分布失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取评分分布失败' });
-  }
-  return;
-}
-
-// 获取评审历史列表
-if (pathname === '/api/reviewer/reviews' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    const page = parseInt(query.page) || 1;
-    const limit = parseInt(query.limit) || 20;
-    const offset = (page - 1) * limit;
-    const status = query.status;
-    
-    let sql = `
-      SELECT 
-        pr.id,
-        pr.project_id,
-        p.project_code,
-        p.title as project_title,
-        rd.name as research_field,
-        pr.total_score,
-        pr.recommendation,
-        pr.comments,
-        pr.suggestions,
-        pr.submitted_at,
-        pr.created_at,
-        u.name as applicant_name,
-        u.department as applicant_department
-      FROM \`ProjectReview\` pr
-      INNER JOIN \`Project\` p ON pr.project_id = p.id
-      LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      WHERE pr.expert_id = ?
-    `;
-    const params = [user.id];
-    
-    if (status) {
-      sql += ' AND pr.status = ?';
-      params.push(status);
-    } else {
-      sql += ' AND pr.status = "submitted"';
-    }
-    
-    // 获取总数
-    let countSql = `
-      SELECT COUNT(*) as total
-      FROM \`ProjectReview\` pr
-      WHERE pr.expert_id = ?
-    `;
-    const countParams = [user.id];
-    
-    if (status) {
-      countSql += ' AND pr.status = ?';
-      countParams.push(status);
-    } else {
-      countSql += ' AND pr.status = "submitted"';
-    }
-    
-    sql += ' ORDER BY pr.submitted_at DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-    
-    const [reviews] = await pool.query(sql, params);
-    const [totalResult] = await pool.query(countSql, countParams);
-    const total = totalResult[0]?.total || 0;
-    
-    const formattedReviews = reviews.map(r => ({
-      id: r.id,
-      project_id: r.project_id,
-      project_code: r.project_code,
-      project_title: r.project_title,
-      research_field: r.research_field || '未指定',
-      total_score: r.total_score,
-      recommendation: r.recommendation,
-      comments: r.comments,
-      suggestions: r.suggestions,
-      submitted_at: r.submitted_at ? r.submitted_at.toISOString() : null,
-      review_date: r.submitted_at ? r.submitted_at.toISOString() : null,
-      applicant_name: r.applicant_name,
-      applicant_department: r.applicant_department
-    }));
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: formattedReviews,
-      total: total,
-      page: page,
-      limit: limit,
-      pages: Math.ceil(total / limit)
-    });
-    
-  } catch (error) {
-    console.error('获取评审历史失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取评审历史失败' });
-  }
-  return;
-}
-
-// 获取评审专家统计数据
-if (pathname === '/api/reviewer/stats' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    // 获取待评审项目数量
-    const [pendingResult] = await pool.query(`
-      SELECT COUNT(DISTINCT p.id) as count
-      FROM \`ExpertAssignment\` ea
-      INNER JOIN \`Project\` p ON ea.project_id = p.id
-      WHERE ea.expert_id = ?
-        AND p.status IN ('under_review', 'batch_review')
-        AND NOT EXISTS (
-          SELECT 1 FROM \`ProjectReview\` pr 
-          WHERE pr.project_id = p.id 
-            AND pr.expert_id = ?
-            AND pr.status = 'submitted'
-        )
-    `, [user.id, user.id]);
-    
-    // 获取已完成评审数量
-    const [completedResult] = await pool.query(`
-      SELECT COUNT(*) as count
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted'
-    `, [user.id]);
-    
-    // 获取平均分
-    const [avgScoreResult] = await pool.query(`
-      SELECT AVG(total_score) as avg_score
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted' AND total_score IS NOT NULL
-    `, [user.id]);
-    
-    // 获取最高分
-    const [highestResult] = await pool.query(`
-      SELECT MAX(total_score) as max_score
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted'
-    `, [user.id]);
-    
-    // 获取平均评审时间
-    const [avgTimeResult] = await pool.query(`
-      SELECT AVG(DATEDIFF(pr.submitted_at, ea.assigned_at)) as avg_days
-      FROM \`ProjectReview\` pr
-      INNER JOIN \`ExpertAssignment\` ea ON pr.assignment_id = ea.id
-      WHERE pr.expert_id = ? AND pr.status = 'submitted'
-    `, [user.id]);
-    
-    // 获取评审一致性（标准差）
-    const [consistencyResult] = await pool.query(`
-      SELECT STDDEV(total_score) as stddev
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted' AND total_score IS NOT NULL
-    `, [user.id]);
-    
-    const stddev = consistencyResult[0]?.stddev || 0;
-    const consistencyRate = stddev > 0 ? Math.max(0, 100 - Math.min(100, stddev * 10)) : 100;
-    
-    // 获取总评语字数
-    const [commentsResult] = await pool.query(`
-      SELECT SUM(CHAR_LENGTH(comments)) as total_chars
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted' AND comments IS NOT NULL
-    `, [user.id]);
-    
-    // 获取通过率
-    const [approvalResult] = await pool.query(`
-      SELECT 
-        COUNT(*) as total,
-        COUNT(CASE WHEN recommendation = 'recommend' THEN 1 END) as recommended
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted'
-    `, [user.id]);
-    
-    const totalReviewed = approvalResult[0]?.total || 0;
-    const recommended = approvalResult[0]?.recommended || 0;
-    const approvalRate = totalReviewed > 0 ? Math.round((recommended / totalReviewed) * 100) : 0;
-    
-    const stats = {
-      pendingCount: pendingResult[0]?.count || 0,
-      completedCount: completedResult[0]?.count || 0,
-      averageScore: avgScoreResult[0]?.avg_score ? parseFloat(avgScoreResult[0].avg_score).toFixed(1) : 0,
-      approvalRate: approvalRate,
-      highestScore: highestResult[0]?.max_score || 0,
-      avgReviewTime: avgTimeResult[0]?.avg_days ? Math.round(avgTimeResult[0].avg_days) : 0,
-      consistencyRate: Math.round(consistencyRate),
-      totalComments: commentsResult[0]?.total_chars || 0
-    };
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: stats
-    });
-    
-  } catch (error) {
-    console.error('获取评审专家统计数据失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取评审专家统计数据失败' });
-  }
-  return;
-}
-
-// 开始评审项目（获取项目详情）
-if (pathname === '/api/reviewer/project-for-review' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const { projectId } = url.parse(req.url, true).query;
-    
-    if (!projectId) {
-      sendResponse(res, 400, { success: false, error: '项目ID不能为空' });
-      return;
-    }
-    
-    console.log('获取待评审项目详情，专家ID:', user.id, '项目ID:', projectId);
-    
-    // 获取项目基本信息
-    const [projectResult] = await pool.query(`
-      SELECT 
-        p.id,
-        p.project_code,
-        p.title,
-        rd.name as research_field,
-        p.abstract,
-        p.background,
-        p.objectives,
-        p.methodology,
-        p.expected_outcomes,
-        p.budget_total,
-        p.duration_months,
-        p.submit_date,
-        u.name as applicant_name,
-        u.department as applicant_department,
-        u.title as applicant_title,
-        u.email as applicant_email
-      FROM \`Project\` p
-      LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      WHERE p.id = ?
-    `, [projectId]);
-    
-    if (!projectResult.length) {
-      sendResponse(res, 404, { success: false, error: '项目不存在' });
-      return;
-    }
-    
-    const project = projectResult[0];
-    
-    // 获取项目成员
-    const [membersResult] = await pool.query(`
-      SELECT 
-        pm.name,
-        pm.role,
-        pm.title,
-        pm.organization,
-        pm.responsibility,
-        pm.workload_percentage
-      FROM \`ProjectMember\` pm
-      WHERE pm.project_id = ?
-      ORDER BY 
-        CASE pm.role
-          WHEN 'principal' THEN 1
-          WHEN 'co_principal' THEN 2
-          WHEN 'researcher' THEN 3
-          WHEN 'student' THEN 4
-          ELSE 5
-        END
-    `, [projectId]);
-    
-    // 获取项目预算
-    const [budgetResult] = await pool.query(`
-      SELECT *
-      FROM \`ProjectBudget\`
-      WHERE project_id = ?
-      ORDER BY sort_order ASC
-    `, [projectId]);
-    
-    // 检查是否已评审过
-    const [existingReviewResult] = await pool.query(`
-      SELECT id, status, 
-        innovation_score, feasibility_score, significance_score,
-        team_score, budget_score, 
-        recommendation, comments, suggestions
-      FROM \`ProjectReview\`
-      WHERE project_id = ? AND expert_id = ?
-    `, [projectId, user.id]);
-    
-    const existingReview = existingReviewResult[0];
-    
-    // 获取其他评审专家的评审信息
-    const [otherReviewsResult] = await pool.query(`
-      SELECT 
-        pr.id,
-        pr.expert_id,
-        pr.submitted_at as review_date,
-        pr.total_score,
-        pr.recommendation,
-        u.name as reviewer_name,
-        u.title as reviewer_title
-      FROM \`ProjectReview\` pr
-      LEFT JOIN \`User\` u ON pr.expert_id = u.id
-      WHERE pr.project_id = ?
-        AND pr.expert_id != ?
-        AND pr.status = 'submitted'
-    `, [projectId, user.id]);
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: {
-        project: {
-          ...project,
-          research_field: project.research_field || '未指定',
-          submit_date: project.submit_date ? project.submit_date.toISOString().split('T')[0] : null
-        },
-        members: membersResult,
-        budget: budgetResult,
-        existingReview: existingReview || null,
-        otherReviews: otherReviewsResult
-      }
-    });
-    
-  } catch (error) {
-    console.error('获取项目详情失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取项目详情失败' });
-  }
-  return;
-}
-
-// 提交评审结果
-if (pathname === '/api/reviewer/submit-review' && req.method === 'POST') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const {
-      project_id,
-      innovation_score,
-      feasibility_score,
-      significance_score,
-      team_score,
-      budget_score,
-      recommendation,
-      comments,
-      suggestions
-    } = body;
-    
-    if (!project_id || !comments) {
-      sendResponse(res, 400, { success: false, error: '项目和评审意见不能为空' });
-      return;
-    }
-    
-    // 检查项目是否存在且状态正确
-    const [projectResult] = await pool.query(`
-      SELECT status, title, applicant_id 
-      FROM \`Project\`
-      WHERE id = ?
-    `, [project_id]);
-    
-    if (!projectResult.length) {
-      sendResponse(res, 400, { success: false, error: '项目不存在' });
-      return;
-    }
-    
-    const project = projectResult[0];
-    if (!['under_review', 'batch_review'].includes(project.status)) {
-      sendResponse(res, 400, { success: false, error: '项目当前状态不可评审' });
-      return;
-    }
-    
-    // 计算总分
-    const scores = [innovation_score, feasibility_score, significance_score, team_score, budget_score];
-    const validScores = scores.filter(s => s !== undefined && s !== null);
-    const total_score = validScores.length > 0 
-      ? validScores.reduce((a, b) => a + b, 0) / validScores.length 
-      : null;
-    
-    // 检查是否已评审过
-    const [existingReviewResult] = await pool.query(`
-      SELECT id, status
-      FROM \`ProjectReview\`
-      WHERE project_id = ? AND expert_id = ?
-    `, [project_id, user.id]);
-    
-    let reviewId;
-    
-    if (existingReviewResult.length) {
-      // 更新现有评审
-      const existingReview = existingReviewResult[0];
-      reviewId = existingReview.id;
-      
-      await pool.query(`
-        UPDATE \`ProjectReview\`
-        SET 
-          innovation_score = ?,
-          feasibility_score = ?,
-          significance_score = ?,
-          team_score = ?,
-          budget_score = ?,
-          total_score = ?,
-          recommendation = ?,
-          comments = ?,
-          suggestions = ?,
-          status = 'submitted',
-          submitted_at = NOW()
-        WHERE id = ?
-      `, [
-        innovation_score, feasibility_score, significance_score,
-        team_score, budget_score, total_score,
-        recommendation, comments, suggestions,
-        reviewId
-      ]);
-    } else {
-      // 创建新评审
-      reviewId = generateUUID();
-      
-      await pool.query(`
-        INSERT INTO \`ProjectReview\` (
-          id, project_id, expert_id, assignment_id,
-          innovation_score, feasibility_score, significance_score,
-          team_score, budget_score, total_score,
-          recommendation, comments, suggestions,
-          status, submitted_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', NOW(), NOW())
-      `, [
-        reviewId, project_id, user.id, generateUUID(),
-        innovation_score, feasibility_score, significance_score,
-        team_score, budget_score, total_score,
-        recommendation, comments, suggestions
-      ]);
-    }
-    
-    // 发送通知给申请人
-    await createNotification(
-      project.applicant_id,
-      '评审意见已提交',
-      `您的项目"${project.title}"的评审意见已提交，请查看详细评审结果。`,
-      'review',
-      project_id
-    );
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: '评审提交成功',
-      data: { review_id: reviewId }
-    });
-    
-  } catch (error) {
-    console.error('提交评审失败:', error);
-    sendResponse(res, 500, { success: false, error: '提交评审失败' });
-  }
-  return;
-}
-
-// 保存评审草稿
-if (pathname === '/api/reviewer/save-review-draft' && req.method === 'POST') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const {
-      project_id,
-      innovation_score,
-      feasibility_score,
-      significance_score,
-      team_score,
-      budget_score,
-      recommendation,
-      comments,
-      suggestions
-    } = body;
-    
-    if (!project_id) {
-      sendResponse(res, 400, { success: false, error: '项目ID不能为空' });
-      return;
-    }
-    
-    // 检查项目是否存在
-    const [projectResult] = await pool.query(`
-      SELECT status FROM \`Project\` WHERE id = ?
-    `, [project_id]);
-    
-    if (!projectResult.length) {
-      sendResponse(res, 400, { success: false, error: '项目不存在' });
-      return;
-    }
-    
-    // 计算总分
-    const scores = [innovation_score, feasibility_score, significance_score, team_score, budget_score];
-    const validScores = scores.filter(s => s !== undefined && s !== null);
-    const total_score = validScores.length > 0 
-      ? validScores.reduce((a, b) => a + b, 0) / validScores.length 
-      : null;
-    
-    // 检查是否已存在评审
-    const [existingReviewResult] = await pool.query(`
-      SELECT id, status
-      FROM \`ProjectReview\`
-      WHERE project_id = ? AND expert_id = ?
-    `, [project_id, user.id]);
-    
-    if (existingReviewResult.length) {
-      // 更新现有评审
-      await pool.query(`
-        UPDATE \`ProjectReview\`
-        SET 
-          innovation_score = ?,
-          feasibility_score = ?,
-          significance_score = ?,
-          team_score = ?,
-          budget_score = ?,
-          total_score = ?,
-          recommendation = ?,
-          comments = ?,
-          suggestions = ?,
-          status = 'draft'
-        WHERE id = ?
-      `, [
-        innovation_score, feasibility_score, significance_score,
-        team_score, budget_score, total_score,
-        recommendation, comments, suggestions,
-        existingReviewResult[0].id
-      ]);
-    } else {
-      // 创建新评审草稿
-      const reviewId = generateUUID();
-      
-      await pool.query(`
-        INSERT INTO \`ProjectReview\` (
-          id, project_id, expert_id, assignment_id,
-          innovation_score, feasibility_score, significance_score,
-          team_score, budget_score, total_score,
-          recommendation, comments, suggestions,
-          status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', NOW())
-      `, [
-        reviewId, project_id, user.id, generateUUID(),
-        innovation_score, feasibility_score, significance_score,
-        team_score, budget_score, total_score,
-        recommendation, comments, suggestions
-      ]);
-    }
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: '草稿保存成功'
-    });
-    
-  } catch (error) {
-    console.error('保存评审草稿失败:', error);
-    sendResponse(res, 500, { success: false, error: '保存评审草稿失败' });
-  }
-  return;
-}
-
-// 获取评审详情
-if (pathname === '/api/reviewer/review-detail' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const { reviewId } = url.parse(req.url, true).query;
-    
-    if (!reviewId) {
-      sendResponse(res, 400, { success: false, error: '评审ID不能为空' });
-      return;
-    }
-    
-    console.log('获取评审详情，评审ID:', reviewId);
-    
-    const [reviewResult] = await pool.query(`
-      SELECT 
-        pr.*,
-        p.title as project_title,
-        p.project_code,
-        p.abstract,
-        u_app.name as applicant_name,
-        u_rev.name as reviewer_name,
-        u_rev.title as reviewer_title
-      FROM \`ProjectReview\` pr
-      JOIN \`Project\` p ON pr.project_id = p.id
-      JOIN \`User\` u_app ON p.applicant_id = u_app.id
-      JOIN \`User\` u_rev ON pr.expert_id = u_rev.id
-      WHERE pr.id = ?
-    `, [reviewId]);
-    
-    if (!reviewResult.length) {
-      sendResponse(res, 404, { success: false, error: '评审记录不存在' });
-      return;
-    }
-    
-    const review = reviewResult[0];
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: {
-        review: {
-          ...review,
-          submitted_at: review.submitted_at ? review.submitted_at.toISOString() : null,
-          review_date: review.submitted_at ? review.submitted_at.toISOString() : null
-        }
-      }
-    });
-    
-  } catch (error) {
-    console.error('获取评审详情失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取评审详情失败' });
-  }
-  return;
-}
 
 
     // ==================== 404处理 ====================
@@ -23870,12 +21823,12 @@ if (pathname === '/api/reviewer/review-detail' && req.method === 'GET') {
 
 // 启动服务器
 const PORT = process.env.PORT || 3002;
-server.listen(PORT,'127.0.0.1', () => {
+server.listen(PORT, () => {
   console.log('='.repeat(70));
   console.log(`✅ 研究项目管理系统API启动成功！`);
   console.log('='.repeat(70));
   console.log(`📍 API地址: http://localhost:${PORT}`);
-  console.log(`📊 数据库: research_system_new`);
+  console.log(`📊 数据库: research_system`);
   console.log(`👤 连接用户: root@localhost`);
   console.log('');
   console.log('📡 主要API端点:');
