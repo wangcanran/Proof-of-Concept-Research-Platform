@@ -589,7 +589,7 @@ onMounted(async () => {
 }
 
 .loading-indicator {
-  color: #1890ff;
+  color: #b31b1b;
   margin-left: 10px;
   font-size: 12px;
 }
@@ -647,7 +647,7 @@ onMounted(async () => {
 
 .db-toggle-btn {
   padding: 4px 12px;
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 4px;
@@ -721,7 +721,7 @@ onMounted(async () => {
   width: 50px;
   height: 50px;
   border: 3px solid #f3f3f3;
-  border-top: 3px solid #1890ff;
+  border-top: 3px solid #b31b1b;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 20px;
@@ -737,7 +737,7 @@ onMounted(async () => {
 }
 
 .loading-text {
-  color: #1890ff;
+  color: #b31b1b;
   font-weight: bold;
 }
 

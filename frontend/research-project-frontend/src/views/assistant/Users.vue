@@ -74,7 +74,7 @@
     <!-- 数据统计卡片 -->
     <div class="stats-cards">
       <div class="stat-card" @click="filterByRole('applicant')">
-        <div class="stat-icon" style="background: #1890ff20; color: #1890ff">
+        <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><User /></el-icon>
         </div>
         <div class="stat-content">
@@ -1090,7 +1090,7 @@ onMounted(() => {
 }
 
 .email-link {
-  color: #1890ff;
+  color: #b31b1b;
   text-decoration: none;
 }
 

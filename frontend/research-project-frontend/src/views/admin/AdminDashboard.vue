@@ -984,7 +984,7 @@ const loadNotificationsData = async () => {
 // 辅助函数
 const getRoleColor = (role: string) => {
   const colorMap: Record<string, string> = {
-    applicant: '#1890ff',
+    applicant: '#b31b1b',
     reviewer: '#52c41a',
     assistant: '#fa8c16',
     admin: '#722ed1',
@@ -1051,7 +1051,7 @@ const showMockData = () => {
   ]
 
   roleDistribution.value = [
-    { role: 'applicant', count: 120, percentage: 77, startAngle: 0, color: '#1890ff' },
+    { role: 'applicant', count: 120, percentage: 77, startAngle: 0, color: '#b31b1b' },
     { role: 'reviewer', count: 20, percentage: 13, startAngle: 277, color: '#52c41a' },
     { role: 'assistant', count: 10, percentage: 6, startAngle: 332, color: '#fa8c16' },
     { role: 'admin', count: 6, percentage: 4, startAngle: 356, color: '#722ed1' },
@@ -1379,7 +1379,7 @@ onMounted(() => {
 .notifications-dropdown-header button {
   background: none;
   border: none;
-  color: #1890ff;
+  color: #b31b1b;
   font-size: 12px;
   cursor: pointer;
   padding: 4px 8px;
@@ -1456,7 +1456,7 @@ onMounted(() => {
 }
 
 .notifications-dropdown-footer a {
-  color: #1890ff;
+  color: #b31b1b;
   text-decoration: none;
   font-size: 12px;
 }

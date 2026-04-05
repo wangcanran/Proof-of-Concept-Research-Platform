@@ -64,7 +64,7 @@ const expenditures = ref<ExpenditureItem[]>([
   {
     id: 1,
     category: 'equipment',
-    categoryColor: '#1890ff',
+    categoryColor: '#b31b1b',
     description: '服务器设备采购',
     applicant: '张教授',
     date: '2024-03-15',
@@ -177,7 +177,7 @@ const viewDetail = (item: ExpenditureItem) => {
 }
 
 .expenditure-item:hover {
-  background: #f0f9ff;
+  background: rgba(179,27,27,0.04);
   transform: translateX(4px);
 }
 

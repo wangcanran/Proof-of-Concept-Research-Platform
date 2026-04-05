@@ -48,7 +48,7 @@ let chartInstance: echarts.ECharts | null = null
 const getStatusColor = (status: string) => {
   const colorMap: Record<string, string> = {
     draft: '#8c8c8c',
-    submitted: '#1890ff',
+    submitted: '#b31b1b',
     under_review: '#fa8c16',
     revision: '#fa8c16',
     batch_review: '#fa8c16',
@@ -58,7 +58,7 @@ const getStatusColor = (status: string) => {
     rejected: '#ff4d4f',
     terminated: '#ff4d4f',
   }
-  return colorMap[status] || '#1890ff'
+  return colorMap[status] || '#b31b1b'
 }
 
 // 获取状态文本

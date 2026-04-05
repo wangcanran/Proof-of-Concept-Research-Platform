@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="review-history-page">
     <el-page-header @back="goBack">
       <template #content>
@@ -412,7 +412,7 @@ onMounted(() => {
 .stat-value {
   font-size: 32px;
   font-weight: bold;
-  color: #1890ff;
+  color: #b31b1b;
   margin-bottom: 8px;
 }
 

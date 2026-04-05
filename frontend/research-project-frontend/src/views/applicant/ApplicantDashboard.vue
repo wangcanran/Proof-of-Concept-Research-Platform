@@ -19,6 +19,13 @@
 
       <nav class="sidebar-nav">
         <div class="nav-section">
+          <router-link to="/" class="nav-link" active-class="active">
+            <span class="nav-icon">🌐</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">平台首页</span>
+          </router-link>
+        </div>
+
+        <div class="nav-section">
           <h4 v-if="!sidebarCollapsed" class="nav-section-title">工作台</h4>
           <router-link to="/applicant/dashboard" class="nav-link" active-class="active">
             <span class="nav-icon">🏠</span>
@@ -933,15 +940,19 @@ const loadDashboardData = async () => {
       unreadCount.value = notifications.value.filter((n: any) => !n.is_read).length
     }
 
-    // 获取经费统计
-    const fundsRes = await axios.get(
-      `http://localhost:3002/api/expenditure/statistics?applicant_id=${userId.value}`,
-      config,
-    )
-    if (fundsRes.data.success) {
-      stats.value.totalFunds = fundsRes.data.total_budget || 0
-      stats.value.usedFunds = fundsRes.data.total_used || 0
-      stats.value.remainingFunds = stats.value.totalFunds - stats.value.usedFunds || 0
+    // 获取经费统计（端点可选，失败不影响连接状态）
+    try {
+      const fundsRes = await axios.get(
+        `http://localhost:3002/api/expenditure/statistics?applicant_id=${userId.value}`,
+        config,
+      )
+      if (fundsRes.data.success) {
+        stats.value.totalFunds = fundsRes.data.total_budget || 0
+        stats.value.usedFunds = fundsRes.data.total_used || 0
+        stats.value.remainingFunds = stats.value.totalFunds - stats.value.usedFunds || 0
+      }
+    } catch {
+      // 经费统计接口暂未实现，忽略错误
     }
 
     backendConnected.value = true
@@ -984,6 +995,17 @@ document.addEventListener('click', (e) => {
 </script>
 
 <style scoped>
+/* 侧栏标题与按钮使用华文中宋 */
+.sidebar-title,
+.nav-item,
+.nav-item span,
+.sidebar-footer button,
+.sidebar-footer span,
+h1, h2, h3, h4,
+button {
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
+}
+
 .dashboard-container {
   min-height: 100vh;
   background: #f5f7fa;
@@ -1040,6 +1062,7 @@ document.addEventListener('click', (e) => {
   border-radius: 4px;
   width: 32px;
   height: 32px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1053,10 +1076,25 @@ document.addEventListener('click', (e) => {
   background: rgba(255, 255, 255, 0.25);
 }
 
+/* 折叠状态：隐藏 logo，只居中显示展开按钮 */
+.sidebar-collapsed .sidebar-header {
+  padding: 20px 10px;
+  justify-content: center;
+}
+
+.sidebar-collapsed .logo-area {
+  display: none;
+}
+
 .sidebar-nav {
   flex: 1;
   padding: 20px 0;
   overflow-y: auto;
+  scrollbar-width: none; /* Firefox */
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  display: none; /* Chrome / Safari / Edge */
 }
 
 .nav-section {
@@ -1281,7 +1319,7 @@ document.addEventListener('click', (e) => {
 .notifications-dropdown-header button {
   background: none;
   border: none;
-  color: #1890ff;
+  color: #b31b1b;
   font-size: 12px;
   cursor: pointer;
 }
@@ -1352,7 +1390,7 @@ document.addEventListener('click', (e) => {
 }
 
 .notifications-dropdown-footer a {
-  color: #1890ff;
+  color: #b31b1b;
   text-decoration: none;
   font-size: 12px;
 }
@@ -1555,8 +1593,8 @@ document.addEventListener('click', (e) => {
   color: #8c8c8c;
 }
 .project-status.submitted {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179, 27, 27, 0.06);
+  color: #b31b1b;
 }
 .project-status.reviewing {
   background: #fff7e6;
@@ -1567,8 +1605,8 @@ document.addEventListener('click', (e) => {
   color: #52c41a;
 }
 .project-status.ongoing {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179, 27, 27, 0.06);
+  color: #b31b1b;
 }
 .project-status.completed {
   background: #f6ffed;
@@ -1974,8 +2012,8 @@ document.addEventListener('click', (e) => {
 }
 
 .notification-type.project {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179, 27, 27, 0.06);
+  color: #b31b1b;
 }
 .notification-type.funding {
   background: #fff2f0;

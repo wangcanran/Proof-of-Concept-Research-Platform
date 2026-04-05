@@ -4,6 +4,7 @@
     <!-- 页面标题 -->
     <div class="page-header">
       <div class="header-left">
+        <button class="back-btn" @click="router.push('/applicant/dashboard')">← 返回仪表盘</button>
         <h1>项目管理</h1>
         <div class="header-subtitle">
           共 {{ totalProjects }} 个项目
@@ -109,7 +110,7 @@
             </div>
             <div class="meta-item">
               <span class="meta-label">所属领域：</span>
-              <span class="meta-value">{{ project.research_domains || '未指定' }}</span>
+              <span class="meta-value">{{ formatDomains(project.research_domains) }}</span>
             </div>
             <div class="meta-item">
               <span class="meta-label">研究期限：</span>
@@ -344,7 +345,7 @@ interface Project {
   updated_at: string
   applicant_id: string
   applicant_name?: string
-  research_domains?: string
+  research_domains?: any
 }
 
 // 筛选和分页
@@ -670,6 +671,28 @@ const handleSearch = () => {
   currentPage.value = 1
 }
 
+// 解析所属领域，兼容数组对象和 JSON 字符串两种格式
+const formatDomains = (domains?: any): string => {
+  if (!domains) return '未指定'
+  // 已经是数组（后端直接返回对象）
+  if (Array.isArray(domains)) {
+    return domains.map((d: any) => d.name || d).join('、') || '未指定'
+  }
+  // 是字符串，尝试 JSON 解析
+  if (typeof domains === 'string') {
+    try {
+      const parsed = JSON.parse(domains)
+      if (Array.isArray(parsed)) {
+        return parsed.map((d: any) => d.name || d).join('、') || '未指定'
+      }
+      return domains
+    } catch {
+      return domains
+    }
+  }
+  return String(domains)
+}
+
 const toggleDebugInfo = () => {
   showDebugInfo.value = !showDebugInfo.value
 }
@@ -699,6 +722,27 @@ onMounted(async () => {
   background: white;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  margin-bottom: 10px;
+  background: #f5f7fa;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #555;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.back-btn:hover {
+  background: #e8e8e8;
+  border-color: #b31b1b;
+  color: #b31b1b;
 }
 
 .header-left h1 {
@@ -1098,8 +1142,8 @@ onMounted(async () => {
   color: #fa8c16;
 }
 .project-status.submitted {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179, 27, 27, 0.06);
+  color: #b31b1b;
 }
 .project-status.reviewing {
   background: #f0f5ff;
@@ -1188,7 +1232,7 @@ onMounted(async () => {
   background: #fa8c16;
 }
 .progress-fill.submitted {
-  background: #1890ff;
+  background: #b31b1b;
 }
 .progress-fill.reviewing {
   background: #2f54eb;

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="review-detail-page">
     <el-page-header @back="goBack">
       <template #content>
@@ -470,7 +470,7 @@ onMounted(() => {
 
 .score-value {
   font-weight: bold;
-  color: #1890ff;
+  color: #b31b1b;
   min-width: 40px;
 }
 
@@ -557,7 +557,7 @@ onMounted(() => {
 
 .review-score {
   font-size: 14px;
-  color: #1890ff;
+  color: #b31b1b;
   margin-left: auto;
 }
 

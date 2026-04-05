@@ -1073,7 +1073,7 @@ const getRoleTagType = (role: string) => {
 
 const getRoleColor = (role: string) => {
   const map: Record<string, string> = {
-    applicant: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
+    applicant: 'linear-gradient(135deg, #b31b1b 0%, #8b1515 100%)',
     reviewer: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
     assistant: 'linear-gradient(135deg, #fa8c16 0%, #d46b08 100%)',
     admin: 'linear-gradient(135deg, #722ed1 0%, #531dab 100%)',
@@ -1908,7 +1908,7 @@ watch(() => resetPasswordDialog.form.newPassword, checkPasswordStrength)
 }
 
 .email-link {
-  color: #1890ff;
+  color: #b31b1b;
   text-decoration: none;
 }
 

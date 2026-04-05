@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="pending-projects-page">
     <!-- 页面头部 -->
     <div class="page-header">
@@ -633,7 +633,7 @@ onMounted(() => {
 }
 
 .stat-value.normal {
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .stat-value.expired {
@@ -677,7 +677,7 @@ onMounted(() => {
 }
 
 .project-card.medium {
-  border-left: 4px solid #1890ff;
+  border-left: 4px solid #b31b1b;
 }
 
 .project-card.low {

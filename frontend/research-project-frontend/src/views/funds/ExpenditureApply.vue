@@ -518,7 +518,7 @@ onMounted(async () => {
   align-items: flex-start;
   margin-bottom: 32px;
   padding: 24px;
-  background: linear-gradient(135deg, #1890ff 0%, #36cfc9 100%);
+  background: linear-gradient(135deg, #b31b1b 0%, #36cfc9 100%);
   border-radius: 12px;
   color: white;
 }

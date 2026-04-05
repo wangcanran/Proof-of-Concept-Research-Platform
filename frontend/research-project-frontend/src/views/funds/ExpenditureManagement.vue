@@ -25,7 +25,7 @@
         <el-row :gutter="16">
           <el-col :span="6"
             ><div class="stat-card">
-              <div class="stat-icon" style="background: #e6f7ff; color: #1890ff">💰</div>
+              <div class="stat-icon" style="background: rgba(179,27,27,0.06); color: #b31b1b">💰</div>
               <div class="stat-content">
                 <div class="stat-value">¥{{ formatAmount(stats.totalBudget) }}</div>
                 <div class="stat-label">总预算</div>
@@ -234,7 +234,7 @@ const getCategoryType = (c: string) =>
   ] || ''
 const getCategoryColor = (c: string) =>
   ({
-    设备费: '#1890ff',
+    设备费: '#b31b1b',
     材料费: '#52c41a',
     差旅费: '#fa8c16',
     会议费: '#f759ab',
@@ -341,7 +341,7 @@ const handlePrint = () => {
     let stylesHtml = ''
     styles.forEach((s) => (stylesHtml += s.outerHTML))
     win.document.write(
-      `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>预算支出报告</title>${stylesHtml}<style>@media print{.no-print,.el-button,.header-actions,.filter-section,.pagination-section{display:none!important}.print-header{display:block!important;text-align:center;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #1890ff}.stats-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}.stat-card{break-inside:avoid}.expenditure-table{break-inside:avoid}} .print-header{display:none}</style></head><body>${content.outerHTML}</body></html>`,
+      `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>预算支出报告</title>${stylesHtml}<style>@media print{.no-print,.el-button,.header-actions,.filter-section,.pagination-section{display:none!important}.print-header{display:block!important;text-align:center;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #b31b1b}.stats-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}.stat-card{break-inside:avoid}.expenditure-table{break-inside:avoid}} .print-header{display:none}</style></head><body>${content.outerHTML}</body></html>`,
     )
     win.document.close()
     win.onload = () => {
@@ -445,7 +445,7 @@ onMounted(() => {
 }
 .stat-percent {
   font-size: 12px;
-  color: #1890ff;
+  color: #b31b1b;
   margin-top: 4px;
 }
 .category-stats {

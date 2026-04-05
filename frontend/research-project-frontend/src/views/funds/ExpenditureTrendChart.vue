@@ -50,7 +50,7 @@
             <path
               :d="linePath"
               fill="none"
-              stroke="#1890ff"
+              stroke="#b31b1b"
               stroke-width="2"
               stroke-linecap="round"
             />
@@ -184,7 +184,7 @@ const formatCurrency = (amount: number) => {
   position: absolute;
   width: 8px;
   height: 8px;
-  background: #1890ff;
+  background: #b31b1b;
   border: 2px solid white;
   border-radius: 50%;
   transform: translate(-50%, 50%);

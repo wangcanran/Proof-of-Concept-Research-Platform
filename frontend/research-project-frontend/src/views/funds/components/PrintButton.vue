@@ -65,7 +65,7 @@ const handlePrint = async () => {
             text-align: center;
             margin-bottom: 30px;
             padding-bottom: 20px;
-            border-bottom: 2px solid #1890ff;
+            border-bottom: 2px solid #b31b1b;
           }
           .print-header h1 {
             font-size: 24px;
@@ -91,7 +91,7 @@ const handlePrint = async () => {
           .stat-value {
             font-size: 24px;
             font-weight: bold;
-            color: #1890ff;
+            color: #b31b1b;
             margin-bottom: 4px;
           }
           .stat-label {

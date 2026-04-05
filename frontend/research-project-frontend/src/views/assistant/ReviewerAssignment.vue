@@ -20,7 +20,7 @@
     <div class="stats-cards">
       <el-card shadow="hover" class="stat-card">
         <div class="stat-content">
-          <div class="stat-icon" style="background: #e6f7ff">
+          <div class="stat-icon" style="background: rgba(179,27,27,0.06)">
             <el-icon><Document /></el-icon>
           </div>
           <div class="stat-details">
@@ -863,7 +863,7 @@ onMounted(() => {
 
 .stat-icon .el-icon {
   font-size: 24px;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .stat-details {
@@ -1074,12 +1074,12 @@ onMounted(() => {
 }
 
 .reviewer-select-item:hover {
-  border-color: #1890ff;
-  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.1);
+  border-color: #b31b1b;
+  box-shadow: 0 4px 12px rgba(179, 27, 27, 0.1);
 }
 
 .reviewer-select-item.selected {
-  border-color: #1890ff;
+  border-color: #b31b1b;
   background: #f0f7ff;
 }
 
@@ -1133,7 +1133,7 @@ onMounted(() => {
 
 .selected-count {
   font-weight: 500;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .empty-reviewers {

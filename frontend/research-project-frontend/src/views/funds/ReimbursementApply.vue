@@ -1028,7 +1028,7 @@ onMounted(() => {
 }
 
 .budget-details strong {
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .warning-balance {
@@ -1070,7 +1070,7 @@ onMounted(() => {
 .expense-summary {
   margin-top: 16px;
   padding: 12px 16px;
-  background: #e6f7ff;
+  background: rgba(179,27,27,0.06);
   border-radius: 4px;
   text-align: right;
   font-size: 16px;
@@ -1078,7 +1078,7 @@ onMounted(() => {
 }
 
 .total-amount {
-  color: #1890ff;
+  color: #b31b1b;
   font-size: 18px;
   margin-left: 8px;
 }
@@ -1143,7 +1143,7 @@ onMounted(() => {
 }
 
 .preview-total span {
-  color: #1890ff;
+  color: #b31b1b;
   font-size: 18px;
   margin-left: 8px;
 }
@@ -1165,7 +1165,7 @@ onMounted(() => {
 
 .preview-file .el-icon {
   margin-right: 8px;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .file-name {

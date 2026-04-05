@@ -17,7 +17,7 @@ const pool = mysql.createPool({
   host: "localhost",
   port: 3306,
   user: "root",
-  password: "f2971404639", // <-- 改成你的密码
+  password: "051005", // <-- 改成你的密码
   database: "research_system",
   waitForConnections: true,
   connectionLimit: 10,
@@ -27,8 +27,8 @@ const pool = mysql.createPool({
 
 // 健康检查端点
 app.get("/api/health", (req, res) => {
-  res.json({ 
-    status: "OK", 
+  res.json({
+    status: "OK",
     timestamp: new Date().toISOString(),
     service: "科研管理系统 API",
     database: "research_system", // 直接写死
@@ -41,14 +41,14 @@ app.get("/api/db/test", async (req, res) => {
   try {
     const connection = await pool.getConnection();
     const [rows] = await connection.query("SELECT 1 + 1 AS result");
-    
+
     // 获取数据库信息
     const [dbInfo] = await pool.query("SELECT DATABASE() as db_name, USER() as db_user");
-    
+
     connection.release();
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: "数据库连接成功！",
       result: rows[0].result,
       database: dbInfo[0].db_name,
@@ -57,8 +57,8 @@ app.get("/api/db/test", async (req, res) => {
     });
   } catch (error) {
     console.error('数据库连接错误:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: error.message,
       message: "数据库连接失败"
     });
@@ -77,17 +77,17 @@ app.get("/api/tables", async (req, res) => {
       WHERE TABLE_SCHEMA = 'research_system'
       ORDER BY TABLE_NAME
     `);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       database: "research_system",
       tables: rows,
       count: rows.length
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
@@ -108,17 +108,17 @@ app.get("/api/tables/:tableName/structure", async (req, res) => {
       WHERE TABLE_SCHEMA = 'research_system' AND TABLE_NAME = ?
       ORDER BY ORDINAL_POSITION
     `, [tableName]);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       table: tableName,
       columns: rows,
       count: rows.length
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
@@ -131,27 +131,27 @@ app.get("/api/tables/:tableName/preview", async (req, res) => {
       `SELECT * FROM ?? LIMIT 5`,
       [tableName]
     );
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       table: tableName,
       count: rows.length,
-      data: rows 
+      data: rows
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
 
 // 404 处理
 app.use((req, res) => {
-  res.status(404).json({ 
-    success: false, 
+  res.status(404).json({
+    success: false,
     error: "API 端点不存在",
-    path: req.originalUrl 
+    path: req.originalUrl
   });
 });
 

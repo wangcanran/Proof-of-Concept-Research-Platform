@@ -37,15 +37,15 @@ const handleClick = () => {
 }
 
 .quick-action:hover {
-  border-color: #1890ff;
-  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.2);
+  border-color: #b31b1b;
+  box-shadow: 0 4px 12px rgba(179, 27, 27, 0.2);
   transform: translateY(-2px);
 }
 
 .action-icon {
   width: 48px;
   height: 48px;
-  background: linear-gradient(135deg, #e6f7ff 0%, #bae7ff 100%);
+  background: linear-gradient(135deg, rgba(179,27,27,0.06) 0%, #bae7ff 100%);
   border-radius: 50%;
   display: flex;
   align-items: center;

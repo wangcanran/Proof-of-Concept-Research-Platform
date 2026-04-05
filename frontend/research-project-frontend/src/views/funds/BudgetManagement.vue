@@ -28,7 +28,7 @@
         <el-row :gutter="16">
           <el-col :span="6"
             ><div class="stat-card">
-              <div class="stat-icon" style="background: #e6f7ff; color: #1890ff">💰</div>
+              <div class="stat-icon" style="background: rgba(179,27,27,0.06); color: #b31b1b">💰</div>
               <div class="stat-content">
                 <div class="stat-value">¥{{ formatAmount(stats.totalBudget) }}</div>
                 <div class="stat-label">总预算</div>
@@ -349,7 +349,7 @@ const handlePrint = () => {
     let stylesHtml = ''
     styles.forEach((s) => (stylesHtml += s.outerHTML))
     win.document.write(
-      `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>预算管理报告</title>${stylesHtml}<style>@media print{.no-print,.el-button,.header-actions,.filter-section,.pagination-section{display:none!important}.print-header{display:block!important;text-align:center;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #1890ff}.stats-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}.stat-card{break-inside:avoid}.budget-table{break-inside:avoid}} .print-header{display:none}</style></head><body>${content.outerHTML}</body></html>`,
+      `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>预算管理报告</title>${stylesHtml}<style>@media print{.no-print,.el-button,.header-actions,.filter-section,.pagination-section{display:none!important}.print-header{display:block!important;text-align:center;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #b31b1b}.stats-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}.stat-card{break-inside:avoid}.budget-table{break-inside:avoid}} .print-header{display:none}</style></head><body>${content.outerHTML}</body></html>`,
     )
     win.document.close()
     win.onload = () => {

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="all-projects-page">
     <el-page-header @back="goBack">
       <template #content>
@@ -396,7 +396,7 @@ onMounted(() => {
 }
 
 .stat-item.active {
-  border-color: #1890ff;
+  border-color: #b31b1b;
 }
 
 .stat-content {
@@ -407,7 +407,7 @@ onMounted(() => {
 .stat-value {
   font-size: 24px;
   font-weight: bold;
-  color: #1890ff;
+  color: #b31b1b;
   margin-bottom: 4px;
 }
 

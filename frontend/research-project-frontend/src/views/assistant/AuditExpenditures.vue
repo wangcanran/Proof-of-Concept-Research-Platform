@@ -1097,7 +1097,7 @@ onMounted(() => {
 }
 
 .stat-card.reviewing {
-  background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%);
+  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
 }
 
 .stat-card.approved {
@@ -1293,7 +1293,7 @@ onMounted(() => {
 }
 
 .doc-card:hover {
-  border-color: #1890ff;
+  border-color: #b31b1b;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
@@ -1306,7 +1306,7 @@ onMounted(() => {
 }
 
 .doc-preview .el-icon {
-  color: #1890ff;
+  color: #b31b1b;
   margin-bottom: 8px;
 }
 

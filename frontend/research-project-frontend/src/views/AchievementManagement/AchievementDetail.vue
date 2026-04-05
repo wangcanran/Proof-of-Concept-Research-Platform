@@ -1167,8 +1167,8 @@ onMounted(() => {
 }
 
 .type-badge.paper {
-  background: #e8f4ff;
-  color: #1890ff;
+  background: rgba(179, 27, 27, 0.06);
+  color: #b31b1b;
 }
 
 .type-badge.patent {
@@ -1192,7 +1192,7 @@ onMounted(() => {
 }
 
 .type-badge.report {
-  background: #e6f7ff;
+  background: #e6fffb;
   color: #13c2c2;
 }
 
@@ -1324,7 +1324,7 @@ onMounted(() => {
 }
 
 .link-item:hover {
-  background-color: #e6f7ff;
+  background-color: rgba(179, 27, 27, 0.06);
 }
 
 .link-item .el-link {

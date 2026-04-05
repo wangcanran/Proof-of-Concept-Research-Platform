@@ -126,7 +126,7 @@
     <!-- 统计卡片 -->
     <div class="stats-cards">
       <div class="stat-card" @click="filterByAction('login')">
-        <div class="stat-icon" style="background: #1890ff20; color: #1890ff">
+        <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><User /></el-icon>
         </div>
         <div class="stat-content">
@@ -1205,11 +1205,11 @@ onMounted(() => {
 }
 
 .timeline-dot.dot-info {
-  background: #1890ff;
+  background: #b31b1b;
 }
 
 .timeline-dot.dot-primary {
-  background: #1890ff;
+  background: #b31b1b;
 }
 
 .timeline-dot.dot-warning {

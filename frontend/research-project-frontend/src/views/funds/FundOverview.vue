@@ -407,12 +407,12 @@ const handlePrint = () => {
             .no-print, .el-button, .header-actions, .quick-actions, .chart-header .el-select {
               display: none !important;
             }
-            .print-header { display: block !important; text-align: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 2px solid #1890ff; }
+            .print-header { display: block !important; text-align: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 2px solid #b31b1b; }
             .print-header h1 { font-size: 24px; margin-bottom: 10px; }
             .print-header p { color: #666; font-size: 12px; }
             .stats-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
             .stat-card { background: #f5f7fa; border-radius: 8px; padding: 16px; text-align: center; break-inside: avoid; }
-            .stat-value { font-size: 24px; font-weight: bold; color: #1890ff; }
+            .stat-value { font-size: 24px; font-weight: bold; color: #b31b1b; }
             .chart-section { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px; break-inside: avoid; }
             .budget-execution, .recent-projects { break-inside: avoid; margin-bottom: 24px; }
             table { width: 100%; border-collapse: collapse; margin: 16px 0; }
@@ -488,7 +488,7 @@ onMounted(() => {
   width: 48px;
   height: 48px;
   border-radius: 8px;
-  background: #e6f7ff;
+  background: rgba(179,27,27,0.06);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -524,7 +524,7 @@ onMounted(() => {
 }
 .stat-percent {
   font-size: 12px;
-  color: #1890ff;
+  color: #b31b1b;
 }
 .chart-section {
   display: grid;

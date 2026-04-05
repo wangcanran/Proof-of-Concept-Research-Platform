@@ -834,8 +834,8 @@ onMounted(() => {
 }
 
 .status-value.submitted {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
 }
 
 .status-value.reviewing {
@@ -849,8 +849,8 @@ onMounted(() => {
 }
 
 .status-value.incubating {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
 }
 
 .status-value.completed {
@@ -919,7 +919,7 @@ onMounted(() => {
 }
 
 .timeline-step.current .marker-icon {
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
   animation: pulse 2s infinite;
 }
@@ -972,8 +972,8 @@ onMounted(() => {
 }
 
 .timeline-step.current .step-status {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
 }
 
 .timeline-step.pending .step-status {
@@ -1043,7 +1043,7 @@ onMounted(() => {
 }
 
 .budget-amount {
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .used-amount {
@@ -1084,7 +1084,7 @@ onMounted(() => {
 
 .amount-cell {
   font-weight: 500;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .text-right {
@@ -1092,7 +1092,7 @@ onMounted(() => {
 }
 
 .total-amount {
-  color: #1890ff;
+  color: #b31b1b;
   font-weight: bold;
 }
 
@@ -1160,7 +1160,7 @@ onMounted(() => {
 }
 
 .achievement-item:hover {
-  border-color: #1890ff;
+  border-color: #b31b1b;
   background: #f5f7fa;
 }
 
@@ -1168,7 +1168,7 @@ onMounted(() => {
   font-size: 24px;
   width: 48px;
   height: 48px;
-  background: #e6f7ff;
+  background: rgba(179,27,27,0.06);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -1255,9 +1255,9 @@ onMounted(() => {
 }
 
 .record-btn.primary {
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
-  border-color: #1890ff;
+  border-color: #b31b1b;
 }
 
 .record-btn.primary:hover {
@@ -1334,7 +1334,7 @@ onMounted(() => {
 
 .reminder-btn {
   padding: 6px 16px;
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 4px;

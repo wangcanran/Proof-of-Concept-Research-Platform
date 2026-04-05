@@ -1149,7 +1149,7 @@ onMounted(() => {
 }
 
 .task-card.priority-medium {
-  border-left-color: #1890ff;
+  border-left-color: #b31b1b;
 }
 
 .task-card.priority-low {
@@ -1199,7 +1199,7 @@ onMounted(() => {
 
 .task-priority.medium {
   background: #bae7ff;
-  color: #096dd9;
+  color: #8b1515;
 }
 
 .task-priority.low {
@@ -1490,9 +1490,9 @@ onMounted(() => {
 
 .download-btn {
   padding: 6px 12px;
-  border: 1px solid #1890ff;
+  border: 1px solid #b31b1b;
   background: white;
-  color: #1890ff;
+  color: #b31b1b;
   border-radius: 4px;
   font-size: 13px;
   cursor: pointer;
@@ -1500,7 +1500,7 @@ onMounted(() => {
 }
 
 .download-btn:hover {
-  background: #e6f7ff;
+  background: rgba(179,27,27,0.06);
 }
 
 /* 弹窗底部按钮 */

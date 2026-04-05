@@ -945,7 +945,7 @@ onMounted(() => {
 }
 
 .stat-card.reviewing {
-  background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%);
+  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
 }
 
 .stat-card.approved {
@@ -1154,7 +1154,7 @@ onMounted(() => {
 
 .doc-item .el-icon {
   margin-right: 8px;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .doc-name {

@@ -1703,8 +1703,8 @@ onMounted(() => {
 }
 
 .field-tag {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 12px;
@@ -1787,8 +1787,8 @@ onMounted(() => {
 }
 
 .status-badge.submitted {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
   border: 1px solid #bae7ff;
 }
 
@@ -1817,8 +1817,8 @@ onMounted(() => {
 }
 
 .status-badge.in-progress {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
   border: 1px solid #bae7ff;
 }
 
@@ -2086,7 +2086,7 @@ onMounted(() => {
 .member-avatar {
   width: 36px;
   height: 36px;
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
   border-radius: 50%;
   display: flex;
@@ -2114,8 +2114,8 @@ onMounted(() => {
 }
 
 .member-role {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -2168,8 +2168,8 @@ onMounted(() => {
 .download-btn {
   padding: 6px 12px;
   background: white;
-  border: 1px solid #1890ff;
-  color: #1890ff;
+  border: 1px solid #b31b1b;
+  color: #b31b1b;
   border-radius: 4px;
   font-size: 13px;
   cursor: pointer;
@@ -2178,7 +2178,7 @@ onMounted(() => {
 }
 
 .download-btn:hover {
-  background: #e6f7ff;
+  background: rgba(179,27,27,0.06);
 }
 
 /* 审核记录 */
@@ -2303,7 +2303,7 @@ onMounted(() => {
 
 .result-value.resubmit {
   background: #f0f7ff;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 /* 审核表单 */

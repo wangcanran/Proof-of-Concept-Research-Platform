@@ -608,12 +608,12 @@ onMounted(() => {
 
 .back-to-home .el-button {
   padding: 0;
-  color: #1890ff;
+  color: #b31b1b;
   font-size: 14px;
 }
 
 .back-to-home .el-button:hover {
-  color: #40a9ff;
+  color: #c93030;
 }
 
 .back-to-home .el-icon {
@@ -725,11 +725,11 @@ onMounted(() => {
 }
 
 .stat-trend.neutral {
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .stat-percentage {
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .stat-alert {
@@ -818,7 +818,7 @@ onMounted(() => {
 }
 
 .action-item:hover {
-  border-color: #1890ff;
+  border-color: #b31b1b;
   background: #f5f7fa;
   transform: translateY(-2px);
 }
@@ -835,8 +835,8 @@ onMounted(() => {
 }
 
 .action-icon.primary {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
 }
 
 .action-icon.success {
@@ -873,7 +873,7 @@ onMounted(() => {
 
 .budget-item:hover,
 .category-item:hover {
-  border-color: #1890ff;
+  border-color: #b31b1b;
   background: #fafafa;
   transform: translateX(4px);
 }
@@ -907,7 +907,7 @@ onMounted(() => {
 
 .budget-text.balance,
 .category-text.balance {
-  color: #1890ff;
+  color: #b31b1b;
   font-weight: 500;
 }
 

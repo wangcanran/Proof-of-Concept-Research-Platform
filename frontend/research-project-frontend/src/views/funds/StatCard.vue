@@ -73,7 +73,7 @@ const props = withDefaults(defineProps<Props>(), {
 }
 
 .stat-icon.info {
-  background: linear-gradient(135deg, #91d5ff 0%, #1890ff 100%);
+  background: linear-gradient(135deg, rgba(179,27,27,0.3) 0%, #b31b1b 100%);
   color: white;
 }
 
@@ -104,7 +104,7 @@ const props = withDefaults(defineProps<Props>(), {
 .percentage-value {
   font-size: 14px;
   font-weight: 500;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .percentage-label {

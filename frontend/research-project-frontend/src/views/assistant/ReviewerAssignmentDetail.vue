@@ -411,7 +411,7 @@ const getReviewerStatusText = (status: string) => {
 
 const getTimelineColor = (action: string) => {
   const colorMap: Record<string, string> = {
-    assign_reviewer: '#1890ff',
+    assign_reviewer: '#b31b1b',
     remove_reviewer: '#ff4d4f',
   }
   return colorMap[action] || '#8c8c8c'
@@ -946,7 +946,7 @@ onMounted(() => {
 .stat-value {
   font-size: 14px;
   font-weight: 600;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .reviewer-actions {
@@ -1041,12 +1041,12 @@ onMounted(() => {
 }
 
 .reviewer-select-item:hover {
-  border-color: #1890ff;
+  border-color: #b31b1b;
   background: #f5f7fa;
 }
 
 .reviewer-select-item.selected {
-  border-color: #1890ff;
+  border-color: #b31b1b;
   background: #f0f7ff;
 }
 

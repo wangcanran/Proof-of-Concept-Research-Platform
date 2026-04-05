@@ -536,7 +536,7 @@ const printPage = () => {
 }
 
 .timeline-dot.dot-info {
-  background: #1890ff;
+  background: #b31b1b;
 }
 
 .timeline-dot.dot-warning {
@@ -544,7 +544,7 @@ const printPage = () => {
 }
 
 .timeline-dot.dot-primary {
-  background: #1890ff;
+  background: #b31b1b;
 }
 
 .timeline-dot.dot-success {

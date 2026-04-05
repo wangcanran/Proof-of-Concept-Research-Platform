@@ -115,7 +115,7 @@ const getUsedColor = (percentage: number) => {
 // 获取余额颜色
 const getBalanceColor = (balance: number) => {
   if (balance <= 0) return '#ff4d4f'
-  return '#1890ff'
+  return '#b31b1b'
 }
 
 // 获取进度状态

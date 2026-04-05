@@ -242,7 +242,7 @@ onMounted(() => {
 .back-btn {
   background: none;
   border: none;
-  color: #1890ff;
+  color: #b31b1b;
   font-size: 14px;
   cursor: pointer;
   padding: 8px 12px;
@@ -250,7 +250,7 @@ onMounted(() => {
 }
 
 .back-btn:hover {
-  background: #e6f7ff;
+  background: rgba(179,27,27,0.06);
 }
 
 .edit-form {
@@ -306,7 +306,7 @@ onMounted(() => {
 
 .form-group input:focus,
 .form-group select:focus {
-  border-color: #1890ff;
+  border-color: #b31b1b;
 }
 
 .readonly-field {
@@ -339,12 +339,12 @@ onMounted(() => {
 }
 
 .btn-primary {
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #40a9ff;
+  background: #c93030;
 }
 
 .btn-primary:disabled {
@@ -379,7 +379,7 @@ onMounted(() => {
   width: 50px;
   height: 50px;
   border: 3px solid #f3f3f3;
-  border-top: 3px solid #1890ff;
+  border-top: 3px solid #b31b1b;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 16px;

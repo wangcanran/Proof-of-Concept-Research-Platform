@@ -1075,7 +1075,7 @@ onMounted(() => {
 
 .type-badge.paper {
   background: #e8f4ff;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .type-badge.patent {

@@ -791,12 +791,12 @@ const loadProjectStats = async () => {
       const total = projects.length
       const statusList = [
         { status: 'draft', label: '草稿', color: '#f5f5f5' },
-        { status: 'submitted', label: '已提交', color: '#e6f7ff' },
+        { status: 'submitted', label: '已提交', color: 'rgba(179,27,27,0.06)' },
         { status: 'under_review', label: '评审中', color: '#fff7e6' },
         { status: 'revision', label: '修改中', color: '#ffe7ba' },
         { status: 'batch_review', label: '集中评审', color: '#ffd591' },
         { status: 'approved', label: '已批准', color: '#f6ffed' },
-        { status: 'incubating', label: '孵化中', color: '#1890ff' },
+        { status: 'incubating', label: '孵化中', color: '#b31b1b' },
         { status: 'completed', label: '已完成', color: '#52c41a' },
         { status: 'rejected', label: '已驳回', color: '#ff4d4f' },
         { status: 'terminated', label: '已终止', color: '#8c8c8c' },
@@ -905,7 +905,7 @@ const getActivityIcon = (action: string) => {
 
 const getActivityColor = (action: string) => {
   const colorMap: Record<string, string> = {
-    create: '#e6f7ff',
+    create: 'rgba(179,27,27,0.06)',
     update: '#fff7e6',
     delete: '#fff2f0',
     review: '#f6ffed',
@@ -958,9 +958,9 @@ const showMockData = () => {
     },
   ]
   projectStats.value = [
-    { status: 'submitted', label: '已提交', count: 8, percentage: 20, color: '#e6f7ff' },
+    { status: 'submitted', label: '已提交', count: 8, percentage: 20, color: 'rgba(179,27,27,0.06)' },
     { status: 'under_review', label: '评审中', count: 10, percentage: 25, color: '#fff7e6' },
-    { status: 'incubating', label: '孵化中', count: 15, percentage: 37.5, color: '#1890ff' },
+    { status: 'incubating', label: '孵化中', count: 15, percentage: 37.5, color: '#b31b1b' },
     { status: 'completed', label: '已完成', count: 2, percentage: 5, color: '#52c41a' },
   ]
   recentUsers.value = [
@@ -1213,7 +1213,7 @@ onMounted(() => {
 .notifications-dropdown-header button {
   background: none;
   border: none;
-  color: #1890ff;
+  color: #b31b1b;
   font-size: 12px;
   cursor: pointer;
 }
@@ -1284,7 +1284,7 @@ onMounted(() => {
 }
 
 .notifications-dropdown-footer a {
-  color: #1890ff;
+  color: #b31b1b;
   text-decoration: none;
   font-size: 12px;
 }
@@ -1837,8 +1837,8 @@ onMounted(() => {
   color: #8c8c8c;
 }
 .status.submitted {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
 }
 .status.reviewing {
   background: #fff7e6;
@@ -1853,8 +1853,8 @@ onMounted(() => {
   color: #ff4d4f;
 }
 .status.in_progress {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
 }
 .status.completed {
   background: #f6ffed;

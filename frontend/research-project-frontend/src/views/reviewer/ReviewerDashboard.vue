@@ -1,19 +1,100 @@
 <!-- src/views/reviewer/ReviewerDashboard.vue -->
 <template>
-  <div class="reviewer-dashboard">
-    <!-- 顶部导航栏 -->
-    <header class="dashboard-header">
-      <div class="header-left">
-        <div class="mobile-menu-btn" @click="toggleMobileMenu">
-          <span class="icon">☰</span>
+  <div class="dashboard-container">
+    <!-- 左侧固定侧栏 -->
+    <aside class="sidebar" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+      <div class="sidebar-header">
+        <div class="logo-area">
+          <img
+            src="@/views/picture/university-logo.png"
+            alt="人大校徽"
+            class="sidebar-logo"
+            @error="handleLogoError"
+          />
+          <h3 v-if="!sidebarCollapsed" class="sidebar-title">概念验证平台</h3>
         </div>
-        <h1 class="logo">科研项目管理系统</h1>
-        <div class="breadcrumb">
-          <span class="current-page">评审专家工作台</span>
+        <button class="sidebar-toggle" @click="toggleSidebar">
+          {{ sidebarCollapsed ? '→' : '←' }}
+        </button>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <router-link to="/" class="nav-link">
+            <span class="nav-icon">🌐</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">平台首页</span>
+          </router-link>
+        </div>
+
+        <div class="nav-section">
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">工作台</h4>
+          <router-link to="/reviewer/dashboard" class="nav-link" active-class="active">
+            <span class="nav-icon">🏠</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">工作台</span>
+          </router-link>
+        </div>
+
+        <div class="nav-section">
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">评审任务</h4>
+          <router-link to="/reviewer/pending-projects" class="nav-link" active-class="active">
+            <span class="nav-icon">📋</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">待评审项目</span>
+            <span v-if="!sidebarCollapsed && stats.pendingCount > 0" class="nav-badge">
+              {{ stats.pendingCount }}
+            </span>
+          </router-link>
+          <router-link to="/reviewer/history" class="nav-link" active-class="active">
+            <span class="nav-icon">📊</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">评审历史</span>
+          </router-link>
+        </div>
+
+        <div class="nav-section">
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">项目管理</h4>
+          <router-link to="/reviewer/projects" class="nav-link" active-class="active">
+            <span class="nav-icon">📁</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">项目浏览</span>
+          </router-link>
+        </div>
+
+        <div class="nav-section">
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">个人中心</h4>
+          <router-link to="/profile" class="nav-link" active-class="active">
+            <span class="nav-icon">👤</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">个人资料</span>
+          </router-link>
+          <router-link to="/notifications" class="nav-link" active-class="active">
+            <span class="nav-icon">🔔</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">通知中心</span>
+            <span v-if="!sidebarCollapsed && unreadCount > 0" class="nav-badge">{{ unreadCount }}</span>
+          </router-link>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-info-mini">
+          <div class="user-avatar-mini">{{ userInitial }}</div>
+          <div v-if="!sidebarCollapsed" class="user-details">
+            <div class="user-name-mini">{{ userName }}</div>
+            <div class="user-role-mini">评审专家</div>
+          </div>
         </div>
       </div>
-      <div class="header-right">
-        <div class="user-menu">
+    </aside>
+
+    <!-- 右侧主体 -->
+    <div class="main-wrapper" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+      <!-- 白色顶栏 -->
+      <header class="dashboard-header">
+        <div class="header-left">
+          <div class="mobile-menu-btn" @click="toggleMobileMenu">
+            <span class="icon">☰</span>
+          </div>
+          <div class="breadcrumb">
+            <span class="current-page">评审专家工作台</span>
+          </div>
+        </div>
+        <div class="header-right">
           <div class="header-actions">
             <button class="icon-btn" @click="refreshData" title="刷新">
               <span class="icon">🔄</span>
@@ -56,86 +137,16 @@
                 </div>
               </div>
             </div>
-            <div class="user-info-mini">
-              <div class="user-avatar-mini">{{ userInitial }}</div>
-              <div class="user-details">
-                <div class="user-name-mini">{{ userName }}</div>
-                <div class="user-role-mini">评审专家</div>
-              </div>
-            </div>
             <button class="logout-btn" @click="handleLogout">
               <span class="icon">🚪</span>
               退出
             </button>
           </div>
         </div>
-      </div>
-    </header>
-
-    <div class="dashboard-content">
-      <!-- 侧边栏导航 -->
-      <aside class="sidebar" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
-        <div class="sidebar-header">
-          <h3 v-if="!sidebarCollapsed" class="sidebar-title">评审专家</h3>
-          <button class="sidebar-toggle" @click="toggleSidebar">
-            {{ sidebarCollapsed ? '→' : '←' }}
-          </button>
-        </div>
-
-        <nav class="sidebar-nav">
-          <div class="nav-section">
-            <h4 v-if="!sidebarCollapsed" class="nav-section-title">工作台</h4>
-            <router-link to="/reviewer/dashboard" class="nav-link" active-class="active">
-              <span class="nav-icon">🏠</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">仪表板</span>
-            </router-link>
-          </div>
-
-          <div class="nav-section">
-            <h4 v-if="!sidebarCollapsed" class="nav-section-title">评审任务</h4>
-            <router-link to="/reviewer/pending-projects" class="nav-link" active-class="active">
-              <span class="nav-icon">📋</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">待评审项目</span>
-              <span v-if="!sidebarCollapsed && stats.pendingCount > 0" class="nav-badge">
-                {{ stats.pendingCount }}
-              </span>
-            </router-link>
-            <router-link to="/reviewer/history" class="nav-link" active-class="active">
-              <span class="nav-icon">📊</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">评审历史</span>
-            </router-link>
-          </div>
-
-          <div class="nav-section">
-            <h4 v-if="!sidebarCollapsed" class="nav-section-title">项目管理</h4>
-            <router-link to="/reviewer/projects" class="nav-link" active-class="active">
-              <span class="nav-icon">📁</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">项目浏览</span>
-            </router-link>
-          </div>
-
-          <div class="nav-section">
-            <h4 v-if="!sidebarCollapsed" class="nav-section-title">个人中心</h4>
-            <router-link to="/profile" class="nav-link" active-class="active">
-              <span class="nav-icon">👤</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">个人资料</span>
-            </router-link>
-          </div>
-        </nav>
-
-        <div class="sidebar-footer">
-          <div class="user-info-mini">
-            <div class="user-avatar-mini">{{ userInitial }}</div>
-            <div v-if="!sidebarCollapsed" class="user-details">
-              <div class="user-name-mini">{{ userName }}</div>
-              <div class="user-role-mini">评审专家</div>
-            </div>
-          </div>
-        </div>
-      </aside>
+      </header>
 
       <!-- 主内容区域 -->
-      <main class="main-content" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+      <main class="main-content">
         <!-- 欢迎区域 -->
         <div class="welcome-section">
           <div class="welcome-card reviewer-banner">
@@ -529,7 +540,7 @@ const recentReviews = ref<any[]>([])
 const notifications = ref<any[]>([])
 const scoreDistribution = ref<any[]>([
   { range: '优秀 (9-10分)', count: 0, percentage: 0, color: '#52c41a' },
-  { range: '良好 (7-8.9分)', count: 0, percentage: 0, color: '#1890ff' },
+  { range: '良好 (7-8.9分)', count: 0, percentage: 0, color: '#b31b1b' },
   { range: '中等 (5-6.9分)', count: 0, percentage: 0, color: '#faad14' },
   { range: '待改进 (5分以下)', count: 0, percentage: 0, color: '#ff4d4f' },
 ])
@@ -732,6 +743,11 @@ const toggleTheme = () => {
   isDarkMode.value = !isDarkMode.value
   document.documentElement.setAttribute('data-theme', isDarkMode.value ? 'dark' : 'light')
   ElMessage.info(isDarkMode.value ? '已切换到深色模式' : '已切换到浅色模式')
+}
+
+const handleLogoError = (e: Event) => {
+  const img = e.target as HTMLImageElement
+  img.style.display = 'none'
 }
 
 const handleLogout = () => {
@@ -960,7 +976,7 @@ const showMockData = () => {
 
   scoreDistribution.value = [
     { range: '优秀 (9-10分)', count: 5, percentage: 25, color: '#52c41a' },
-    { range: '良好 (7-8.9分)', count: 8, percentage: 40, color: '#1890ff' },
+    { range: '良好 (7-8.9分)', count: 8, percentage: 40, color: '#b31b1b' },
     { range: '中等 (5-6.9分)', count: 5, percentage: 25, color: '#faad14' },
     { range: '待改进 (5分以下)', count: 2, percentage: 10, color: '#ff4d4f' },
   ]
@@ -1030,24 +1046,42 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 样式保持不变，与之前相同 */
-.reviewer-dashboard {
-  min-height: 100vh;
-  background: #f5f7fa;
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  display: flex;
-  flex-direction: column;
+/* 华文中宋字体 */
+h1, h2, h3, h4, button {
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
 }
 
+/* ===== 整体布局（与申请人仪表盘保持一致） ===== */
+.dashboard-container {
+  min-height: 100vh;
+  background: #f5f7fa;
+  display: flex;
+}
+
+/* 主内容包装器 */
+.main-wrapper {
+  margin-left: 260px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  transition: all 0.3s;
+}
+
+.main-wrapper.sidebar-collapsed {
+  margin-left: 70px;
+}
+
+/* ===== 白色顶栏 ===== */
 .dashboard-header {
-  background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%);
-  padding: 0 24px;
-  height: 70px;
+  background: white;
+  padding: 0 32px;
+  height: 60px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid #f0f0f0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   position: sticky;
   top: 0;
   z-index: 900;
@@ -1056,80 +1090,66 @@ onMounted(() => {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 16px;
 }
 
 .mobile-menu-btn {
   display: none;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border: none;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  background: #f5f7fa;
+  border-radius: 6px;
   cursor: pointer;
   align-items: center;
   justify-content: center;
   transition: all 0.3s;
-  color: white;
+  color: #333;
 }
 
 .mobile-menu-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.logo {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  color: white;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  background: #e8e8e8;
 }
 
 .breadcrumb {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.8);
+  font-size: 15px;
+  color: #333;
 }
 
 .current-page {
-  color: white;
-  font-weight: 500;
+  color: #2c3e50;
+  font-weight: 600;
 }
 
 .header-right {
-  flex: 1;
   display: flex;
   justify-content: flex-end;
-}
-
-.user-menu {
-  display: flex;
-  align-items: center;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .icon-btn {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border: none;
-  background: rgba(255, 255, 255, 0.1);
+  background: #f5f7fa;
   border-radius: 8px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.3s;
-  color: white;
+  color: #555;
   position: relative;
 }
 
 .icon-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  transform: translateY(-2px);
+  background: #e8e8e8;
+  transform: translateY(-1px);
 }
 
 .notification-count {
@@ -1145,59 +1165,23 @@ onMounted(() => {
   text-align: center;
 }
 
-.user-info-mini {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 16px;
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.user-avatar-mini {
-  width: 36px;
-  height: 36px;
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  font-size: 14px;
-}
-
-.user-details {
-  display: flex;
-  flex-direction: column;
-}
-
-.user-name-mini {
-  font-size: 14px;
-  font-weight: 500;
-  color: white;
-}
-
-.user-role-mini {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.8);
-}
-
 .logout-btn {
-  padding: 8px 16px;
-  background: rgba(255, 77, 79, 0.2);
-  border: 1px solid rgba(255, 77, 79, 0.3);
+  padding: 6px 14px;
+  background: #fff1f0;
+  border: 1px solid #ffccc7;
   border-radius: 6px;
-  color: #ff4d4f;
-  font-size: 14px;
+  color: #cf1322;
+  font-size: 13px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   transition: all 0.3s;
 }
 
 .logout-btn:hover {
-  background: rgba(255, 77, 79, 0.3);
+  background: #ff4d4f;
+  border-color: #ff4d4f;
   color: white;
 }
 
@@ -1231,7 +1215,7 @@ onMounted(() => {
 .notifications-dropdown-header button {
   background: none;
   border: none;
-  color: #1890ff;
+  color: #b31b1b;
   font-size: 12px;
   cursor: pointer;
 }
@@ -1302,35 +1286,48 @@ onMounted(() => {
 }
 
 .notifications-dropdown-footer a {
-  color: #1890ff;
+  color: #b31b1b;
   text-decoration: none;
   font-size: 12px;
 }
 
-.dashboard-content {
-  display: flex;
-  flex: 1;
-  min-height: calc(100vh - 70px);
-}
-
+/* ===== 侧栏（固定全高） ===== */
 .sidebar {
-  width: 250px;
-  background: white;
-  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+  width: 260px;
+  background: #b31b1b;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
   display: flex;
+  position: fixed;
+  height: 100vh;
+  top: 0;
+  left: 0;
+  z-index: 1000;
   flex-direction: column;
   transition: all 0.3s ease;
-  z-index: 1000;
-  position: relative;
 }
 
 .sidebar-collapsed {
-  width: 60px;
+  width: 70px;
+}
+
+.logo-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-logo {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .sidebar-header {
-  padding: 20px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 20px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1340,12 +1337,12 @@ onMounted(() => {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: #2c3e50;
+  color: white;
 }
 
 .sidebar-toggle {
-  background: #f5f7fa;
-  border: 1px solid #e8e8e8;
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
   border-radius: 4px;
   width: 32px;
   height: 32px;
@@ -1354,18 +1351,23 @@ onMounted(() => {
   justify-content: center;
   cursor: pointer;
   font-size: 14px;
-  color: #666;
+  color: white;
   transition: all 0.3s;
 }
 
 .sidebar-toggle:hover {
-  background: #e8e8e8;
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .sidebar-nav {
   flex: 1;
   padding: 16px 0;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-section {
@@ -1374,7 +1376,7 @@ onMounted(() => {
 
 .nav-section-title {
   font-size: 12px;
-  color: #7f8c8d;
+  color: rgba(255, 255, 255, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin: 0 0 8px 20px;
@@ -1385,21 +1387,21 @@ onMounted(() => {
   display: flex;
   align-items: center;
   padding: 12px 20px;
-  color: #2c3e50;
+  color: rgba(255, 255, 255, 0.85);
   text-decoration: none;
   transition: all 0.3s;
   position: relative;
 }
 
 .nav-link:hover {
-  background: #f5f7fa;
-  color: #1890ff;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
 }
 
 .nav-link.active {
-  background: #e6f7ff;
-  color: #1890ff;
-  border-right: 3px solid #1890ff;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border-left: 3px solid white;
 }
 
 .nav-icon {
@@ -1426,19 +1428,55 @@ onMounted(() => {
 }
 
 .sidebar-footer {
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
   padding: 16px 20px;
+}
+
+.user-info-mini {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-avatar-mini {
+  width: 36px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.user-details {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.user-name-mini {
+  font-size: 14px;
+  font-weight: 500;
+  color: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-role-mini {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .main-content {
   flex: 1;
   padding: 24px;
   overflow-y: auto;
-  background: #f8f9fa;
-}
-
-.main-content.sidebar-collapsed {
-  margin-left: 60px;
+  background: #f5f7fa;
 }
 
 .welcome-section {
@@ -1456,7 +1494,7 @@ onMounted(() => {
 }
 
 .reviewer-banner {
-  background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%);
+  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
   color: white;
 }
 
@@ -1539,7 +1577,7 @@ onMounted(() => {
   width: 60px;
   height: 60px;
   border: 4px solid #f3f3f3;
-  border-top: 4px solid #1890ff;
+  border-top: 4px solid #b31b1b;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 20px;
@@ -1603,7 +1641,7 @@ onMounted(() => {
 
 .view-all-btn {
   padding: 6px 12px;
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 6px;
@@ -1614,7 +1652,7 @@ onMounted(() => {
 }
 
 .view-all-btn:hover {
-  background: #096dd9;
+  background: #8b1515;
 }
 
 .mark-all-btn {
@@ -1659,13 +1697,13 @@ onMounted(() => {
 .project-item:hover,
 .review-item:hover,
 .notification-item:hover {
-  border-color: #1890ff;
-  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.1);
+  border-color: #b31b1b;
+  box-shadow: 0 4px 12px rgba(179, 27, 27, 0.1);
 }
 
 .notification-item.unread {
-  background: #f0f9ff;
-  border-color: #91d5ff;
+  background: rgba(179, 27, 27, 0.04);
+  border-color: rgba(179, 27, 27, 0.3);
 }
 
 .project-header {
@@ -1741,12 +1779,12 @@ onMounted(() => {
 }
 
 .action-btn.primary {
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
 }
 
 .action-btn.primary:hover {
-  background: #096dd9;
+  background: #8b1515;
 }
 
 .action-btn.secondary {
@@ -1852,7 +1890,7 @@ onMounted(() => {
 .unread-dot {
   width: 8px;
   height: 8px;
-  background: #1890ff;
+  background: #b31b1b;
   border-radius: 50%;
   margin-left: 8px;
   flex-shrink: 0;
@@ -1925,22 +1963,22 @@ onMounted(() => {
 }
 
 .action-card:hover {
-  border-color: #1890ff;
+  border-color: #b31b1b;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.1);
+  box-shadow: 0 4px 12px rgba(179, 27, 27, 0.1);
 }
 
 .action-icon {
   font-size: 24px;
   width: 48px;
   height: 48px;
-  background: #e6f7ff;
+  background: rgba(179, 27, 27, 0.08);
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .action-content h4 {
@@ -1976,12 +2014,12 @@ onMounted(() => {
   width: 40px;
   height: 40px;
   border-radius: 8px;
-  background: #e6f7ff;
+  background: rgba(179, 27, 27, 0.08);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 20px;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 .mini-stat-content {
@@ -2018,7 +2056,7 @@ onMounted(() => {
 .refresh-btn {
   margin-top: 12px;
   padding: 8px 16px;
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 6px;
@@ -2027,7 +2065,7 @@ onMounted(() => {
 }
 
 .refresh-btn:hover {
-  background: #096dd9;
+  background: #8b1515;
 }
 
 .mobile-menu-overlay {
@@ -2053,15 +2091,11 @@ onMounted(() => {
 @media (max-width: 992px) {
   .sidebar {
     transform: translateX(-100%);
-    position: fixed;
-    height: 100vh;
-    top: 0;
-    left: 0;
   }
   .sidebar.show {
     transform: translateX(0);
   }
-  .main-content {
+  .main-wrapper {
     margin-left: 0 !important;
   }
   .mobile-menu-btn {

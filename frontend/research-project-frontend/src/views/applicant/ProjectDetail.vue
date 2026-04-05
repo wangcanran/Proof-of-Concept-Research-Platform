@@ -1201,7 +1201,7 @@ const printAllPages = () => {
             font-size: 12px;
           }
           .role-badge.principal { background: #f6ffed; color: #52c41a; }
-          .role-badge.contact { background: #e6f7ff; color: #1890ff; }
+          .role-badge.contact { background: rgba(179,27,27,0.06); color: #b31b1b; }
           .role-badge.other { background: #f5f5f5; color: #666; }
           .progress-container {
             padding: 20px;
@@ -1625,8 +1625,8 @@ onMounted(async () => {
   color: #fa8c16;
 }
 .status-badge.submitted {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
 }
 .status-badge.reviewing {
   background: #fde8e8;
@@ -1787,8 +1787,8 @@ onMounted(async () => {
 
 .transform-tag,
 .poc-tag {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
   padding: 4px 12px;
   border-radius: 4px;
   font-size: 13px;
@@ -1917,8 +1917,8 @@ onMounted(async () => {
   color: #52c41a;
 }
 .role-badge.contact {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
 }
 .role-badge.other {
   background: #f5f5f5;
@@ -2089,7 +2089,7 @@ onMounted(async () => {
   background: #fa8c16;
 }
 .progress-fill-large.submitted {
-  background: #1890ff;
+  background: #b31b1b;
 }
 .progress-fill-large.reviewing {
   background: #b31b1b;

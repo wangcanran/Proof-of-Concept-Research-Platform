@@ -1680,7 +1680,7 @@ onMounted(() => {
 
 /* 状态颜色 */
 .application-card.status-submitted {
-  border-left-color: #1890ff;
+  border-left-color: #b31b1b;
 }
 
 .application-card.status-under_review {
@@ -1734,8 +1734,8 @@ onMounted(() => {
 }
 
 .status-badge.submitted {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
   border: 1px solid #bae7ff;
 }
 
@@ -1837,8 +1837,8 @@ onMounted(() => {
 }
 
 .category-tag {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 12px;
@@ -1950,8 +1950,8 @@ onMounted(() => {
 }
 
 .status-value.submitted {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
 }
 
 .status-value.under_review {
@@ -2204,7 +2204,7 @@ onMounted(() => {
 .member-avatar {
   width: 40px;
   height: 40px;
-  background: #1890ff;
+  background: #b31b1b;
   color: white;
   border-radius: 50%;
   display: flex;
@@ -2233,8 +2233,8 @@ onMounted(() => {
 }
 
 .member-role {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: rgba(179,27,27,0.06);
+  color: #b31b1b;
   padding: 2px 8px;
   border-radius: 4px;
 }
@@ -2293,8 +2293,8 @@ onMounted(() => {
 .download-btn {
   padding: 8px 16px;
   background: white;
-  border: 1px solid #1890ff;
-  color: #1890ff;
+  border: 1px solid #b31b1b;
+  color: #b31b1b;
   border-radius: 6px;
   font-size: 14px;
   cursor: pointer;
@@ -2306,7 +2306,7 @@ onMounted(() => {
 }
 
 .download-btn:hover {
-  background: #e6f7ff;
+  background: rgba(179,27,27,0.06);
 }
 
 /* 审核记录 */
@@ -2461,7 +2461,7 @@ onMounted(() => {
 
 .result-value.resubmit {
   background: #f0f7ff;
-  color: #1890ff;
+  color: #b31b1b;
 }
 
 /* 弹窗表单样式 */

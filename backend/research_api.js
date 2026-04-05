@@ -9,10 +9,10 @@ const path = require('path');
 const fs = require('fs');
 // MySQL配置
 const DB_CONFIG = {
-  host: '172.25.160.1',
+  host: 'localhost',
   port: 3306,
   user: 'root',
-  password: 'f2971404639',
+  password: '051005',
   database: 'research_system',
   waitForConnections: true,
   connectionLimit: 10,
