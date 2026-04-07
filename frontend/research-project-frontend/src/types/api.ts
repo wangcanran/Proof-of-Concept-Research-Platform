@@ -4,7 +4,7 @@ export interface User {
   username: string
   name: string
   email: string
-  role: 'applicant' | 'reviewer' | 'assistant' | 'admin'
+  role: 'applicant' | 'reviewer' | 'project_manager' | 'admin'
   department?: string
   title?: string
   research_field?: string

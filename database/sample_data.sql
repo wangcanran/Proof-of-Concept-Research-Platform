@@ -18,24 +18,25 @@ INSERT INTO `ResearchDomain` (`id`, `name`, `code`, `sort_order`, `enabled`) VAL
 ('dom-006', '现代农业', 'AGRICULTURE', 6, TRUE),
 ('dom-007', '信息技术与软件', 'IT_SOFTWARE', 7, TRUE),
 ('dom-008', '其他', 'OTHER', 99, TRUE);
+-- 非平台标准方向不新增 ResearchDomain 行；项目选「其他」后在 Project.project_domain_other_text 填写说明（见库表注释）。
 
 -- 2. 用户数据（密码使用 bcrypt 加密后的 '123456'，实际使用时需替换）
 INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `phone`, `status`, `last_login`) VALUES
 -- 管理员
-('usr-admin', 'admin', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '系统管理员', 'admin@research.cn', 'admin', '科研管理处', '高级工程师', '13800000000', 'active', NOW()),
+('usr-admin', 'admin', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '系统管理员', 'admin@research.cn', 'admin', '科研管理处', '高级工程师', '13800000000', 'active', NOW()),
 -- 项目经理
-('usr-pm1', 'zhangwei', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '张伟', 'zhangwei@research.cn', 'project_manager', '科研管理处', '项目主管', '13800000001', 'active', NOW()),
-('usr-pm2', 'lihua', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '李华', 'lihua@research.cn', 'project_manager', '技术转移中心', '高级项目经理', '13800000002', 'active', NULL),
+('usr-pm1', 'zhangwei', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '张伟', 'zhangwei@research.cn', 'project_manager', '科研管理处', '项目主管', '13800000001', 'active', NOW()),
+('usr-pm2', 'lihua', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '李华', 'lihua@research.cn', 'project_manager', '技术转移中心', '高级项目经理', '13800000002', 'active', NULL),
 -- 申请人
-('usr-app1', 'wangqiang', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '王强', 'wangqiang@lab.cn', 'applicant', '人工智能研究院', '教授', '13900000001', 'active', NOW()),
-('usr-app2', 'chenjing', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '陈静', 'chenjing@lab.cn', 'applicant', '生物医学工程学院', '副教授', '13900000002', 'active', NULL),
-('usr-app3', 'liuming', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '刘明', 'liuming@lab.cn', 'applicant', '材料科学与工程学院', '研究员', '13900000003', 'active', NULL),
-('usr-app4', 'zhaoyan', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '赵燕', 'zhaoyan@lab.cn', 'applicant', '新能源研究院', '教授', '13900000004', 'inactive', NULL),
+('usr-app1', 'wangqiang', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '王强', 'wangqiang@lab.cn', 'applicant', '人工智能研究院', '教授', '13900000001', 'active', NOW()),
+('usr-app2', 'chenjing', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '陈静', 'chenjing@lab.cn', 'applicant', '生物医学工程学院', '副教授', '13900000002', 'active', NULL),
+('usr-app3', 'liuming', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '刘明', 'liuming@lab.cn', 'applicant', '材料科学与工程学院', '研究员', '13900000003', 'active', NULL),
+('usr-app4', 'zhaoyan', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '赵燕', 'zhaoyan@lab.cn', 'applicant', '新能源研究院', '教授', '13900000004', 'inactive', NULL),
 -- 评审专家
-('usr-exp1', 'liuyang', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '刘洋', 'liuyang@expert.cn', 'reviewer', '计算机学院', '教授', '13700000001', 'active', NOW()),
-('usr-exp2', 'zhoujie', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '周杰', 'zhoujie@expert.cn', 'reviewer', '生命科学学院', '研究员', '13700000002', 'active', NULL),
-('usr-exp3', 'wumin', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '吴敏', 'wumin@expert.cn', 'reviewer', '材料学院', '教授', '13700000003', 'active', NULL),
-('usr-exp4', 'zhenghao', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '郑浩', 'zhenghao@expert.cn', 'reviewer', '机械工程学院', '副教授', '13700000004', 'active', NULL);
+('usr-exp1', 'liuyang', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '刘洋', 'liuyang@expert.cn', 'reviewer', '计算机学院', '教授', '13700000001', 'active', NOW()),
+('usr-exp2', 'zhoujie', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '周杰', 'zhoujie@expert.cn', 'reviewer', '生命科学学院', '研究员', '13700000002', 'active', NULL),
+('usr-exp3', 'wumin', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '吴敏', 'wumin@expert.cn', 'reviewer', '材料学院', '教授', '13700000003', 'active', NULL),
+('usr-exp4', 'zhenghao', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '郑浩', 'zhenghao@expert.cn', 'reviewer', '机械工程学院', '副教授', '13700000004', 'active', NULL);
 
 -- 3. 专家扩展信息
 INSERT INTO `ExpertProfile` (`id`, `expertise_description`) VALUES
@@ -266,33 +267,28 @@ INSERT INTO `ExpenditureRecord` (`id`, `project_id`, `budget_id`, `expense_no`, 
 use research_system;
 -- 孙殿森（校外用户）
 INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `phone`, `status`, `created_at`) VALUES
-('usr-sundiansen', 'sundiansen', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '孙殿森', 'diansensun@gmail.com', 'applicant', 'CodeNexus.AI', 'CEO', '13693675505', 'active', NOW());
+('usr-sundiansen', 'sundiansen', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '孙殿森', 'diansensun@gmail.com', 'applicant', 'CodeNexus.AI', 'CEO', '13693675505', 'active', NOW());
 
 -- 王元淳（人大博士生）
 INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `phone`, `status`, `created_at`) VALUES
-('usr-wangyuanchun', 'wangyuanchun', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '王元淳', 'wangyuanchun@ruc.edu.cn', 'applicant', '中国人民大学', '博士生', '15303293784', 'active', NOW());
+('usr-wangyuanchun', 'wangyuanchun', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '王元淳', 'wangyuanchun@ruc.edu.cn', 'applicant', '中国人民大学', '博士生', '15303293784', 'active', NOW());
 
 -- 杨畅（独立团队）
 INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `phone`, `status`, `created_at`) VALUES
-('usr-yangchang', 'yangchang', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '杨畅', 'yc0131@qq.com', 'applicant', '中国人民大学未来人类联合研究院Sonusync X桥音工作室', '团队负责人', '13599913167', 'active', NOW());
+('usr-yangchang', 'yangchang', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '杨畅', 'yc0131@qq.com', 'applicant', '中国人民大学未来人类联合研究院Sonusync X桥音工作室', '团队负责人', '13599913167', 'active', NOW());
 
 -- 程絮森（人大教授）
 INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `phone`, `status`, `created_at`) VALUES
-('usr-chengxusen', 'chengxusen', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '程絮森', 'xusen.cheng@ruc.edu.cn', 'applicant', '中国人民大学首都发展与战略研究院', '副院长/副总工程师', '18611385243', 'active', NOW());
+('usr-chengxusen', 'chengxusen', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '程絮森', 'xusen.cheng@ruc.edu.cn', 'applicant', '中国人民大学首都发展与战略研究院', '副院长/副总工程师', '18611385243', 'active', NOW());
 
 -- 添加核心成员作为普通用户（可选）
 INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `status`, `created_at`) VALUES
-('usr-zhangjing', 'zhangjing', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '张静', 'zhangjing@ruc.edu.cn', 'applicant', '中国人民大学', '教授', 'active', NOW()),
-('usr-leisiyu', 'leisiyu', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '雷思羽', 'leisiyu@ruc.edu.cn', 'applicant', '中国人民大学', '本科生', 'active', NOW()),
-('usr-qinzhenhan', 'qinzhenhan', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '秦禛涵', 'qinzhenhan@ruc.edu.cn', 'applicant', '中国人民大学', '本科生', 'active', NOW()),
-('usr-huangtianle', 'huangtianle', '$2a$10$N9qo8uLOickgx2ZMRZoMy.MrJ6QqXqH7qXqH7qXqH7qXqH7qXqH7q', '黄天乐', 'tianle.huang@qq.com', 'applicant', '中国人民大学', '博士研究生', 'active', NOW());
+('usr-zhangjing', 'zhangjing', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '张静', 'zhangjing@ruc.edu.cn', 'applicant', '中国人民大学', '教授', 'active', NOW()),
+('usr-leisiyu', 'leisiyu', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '雷思羽', 'leisiyu@ruc.edu.cn', 'applicant', '中国人民大学', '本科生', 'active', NOW()),
+('usr-qinzhenhan', 'qinzhenhan', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '秦禛涵', 'qinzhenhan@ruc.edu.cn', 'applicant', '中国人民大学', '本科生', 'active', NOW()),
+('usr-huangtianle', 'huangtianle', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '黄天乐', 'tianle.huang@qq.com', 'applicant', '中国人民大学', '博士研究生', 'active', NOW());
 
--- 补充研究领域
-INSERT INTO `ResearchDomain` (`id`, `name`, `code`, `sort_order`, `enabled`) VALUES
-('dom-009', '数字孪生与元宇宙', 'DIGITAL_TWIN_METAVERSE', 9, TRUE),
-('dom-010', '音乐科技', 'MUSIC_TECH', 10, TRUE),
-('dom-011', '体育科技', 'SPORTS_TECH', 11, TRUE)
-ON DUPLICATE KEY UPDATE id = id;
+-- 非标准细分方向不单独建 ResearchDomain，统一选「其他」(dom-008)，在项目表 project_domain_other_text 填写说明
 -- =============================================
 -- 插入项目数据
 -- =============================================
@@ -325,6 +321,7 @@ INSERT INTO `Project` (
 -- 项目2：MyCoach智练
 INSERT INTO `Project` (
     `id`, `applicant_id`, `project_code`, `title`,
+    `project_domain_other_text`,
     `tech_maturity`, `achievement_transform`, `poc_stage_requirement`,
     `implementation_plan`, `abstract`, `detailed_introduction_part1`,
     `detailed_introduction_part2`, `detailed_introduction_part3`,
@@ -334,6 +331,7 @@ INSERT INTO `Project` (
     'usr-wangyuanchun',
     'PRJ-COACH-2025-001',
     'MyCoach智练 - AI个性化训练引擎',
+    '体育科技',
     'pilot',
     'equity_investment',
     'commercial_verify',
@@ -350,6 +348,7 @@ INSERT INTO `Project` (
 -- 项目3：乾·乐 - 音乐理解与演奏辅助多功能智能体
 INSERT INTO `Project` (
     `id`, `applicant_id`, `project_code`, `title`,
+    `project_domain_other_text`,
     `tech_maturity`, `achievement_transform`, `poc_stage_requirement`,
     `implementation_plan`, `abstract`, `detailed_introduction_part1`,
     `detailed_introduction_part2`, `detailed_introduction_part3`,
@@ -359,6 +358,7 @@ INSERT INTO `Project` (
     'usr-yangchang',
     'PRJ-MUSIC-2025-001',
     '乾·乐 - 基于多模态大模型的音乐理解与演奏辅助多功能智能体',
+    '音乐科技',
     'rd',
     'equity_investment',
     'creative_verify,feasibility_verify',
@@ -375,6 +375,7 @@ INSERT INTO `Project` (
 -- 项目4：元宇宙智慧校园
 INSERT INTO `Project` (
     `id`, `applicant_id`, `manager_id`, `project_code`, `title`,
+    `project_domain_other_text`,
     `tech_maturity`, `achievement_transform`, `poc_stage_requirement`,
     `implementation_plan`, `abstract`, `detailed_introduction_part1`,
     `detailed_introduction_part2`, `detailed_introduction_part3`,
@@ -385,6 +386,7 @@ INSERT INTO `Project` (
     NULL,
     'PRJ-META-2025-001',
     '中国人民大学元宇宙智慧校园',
+    '数字孪生与元宇宙',
     'pilot',
     'joint_dev',
     'feasibility_verify',
@@ -402,19 +404,19 @@ INSERT INTO `ProjectResearchDomain` (`project_id`, `research_domain_id`) VALUES
 ('prj-code-001', 'dom-001'),  -- 人工智能与机器学习
 ('prj-code-001', 'dom-007');  -- 信息技术与软件
 
--- 项目2关联领域
+-- 项目2关联领域（体育科技等非标准方向 → 其他 + project_domain_other_text）
 INSERT INTO `ProjectResearchDomain` (`project_id`, `research_domain_id`) VALUES
-('prj-coach-001', 'dom-001'),  -- 人工智能与机器学习
-('prj-coach-001', 'dom-011');  -- 体育科技
+('prj-coach-001', 'dom-001'),
+('prj-coach-001', 'dom-008');
 
 -- 项目3关联领域
 INSERT INTO `ProjectResearchDomain` (`project_id`, `research_domain_id`) VALUES
-('prj-music-001', 'dom-001'),  -- 人工智能与机器学习
-('prj-music-001', 'dom-010');  -- 音乐科技
+('prj-music-001', 'dom-001'),
+('prj-music-001', 'dom-008');
 
 -- 项目4关联领域
 INSERT INTO `ProjectResearchDomain` (`project_id`, `research_domain_id`) VALUES
-('prj-metaverse-001', 'dom-009');  -- 数字孪生与元宇宙
+('prj-metaverse-001', 'dom-008');
 -- 项目1成员
 INSERT INTO `ProjectMember` (`id`, `project_id`, `name`, `user_id`, `role`, `title`, `organization`, `email`, `sort_order`) VALUES
 ('mem-code-001', 'prj-code-001', '孙殿森', 'usr-sundiansen', 'principal', 'CEO', 'CodeNexus.AI', 'diansensun@gmail.com', 1);

@@ -1,6 +1,6 @@
 <!-- src/views/assistant/Activities.vue -->
 <template>
-  <div class="activities-management">
+  <div class="activities-management assistant-ruc-theme">
     <!-- 页面标题 -->
     <div class="page-header">
       <div class="header-left">
@@ -136,7 +136,7 @@
       </div>
 
       <div class="stat-card" @click="filterByAction('project')">
-        <div class="stat-icon" style="background: #52c41a20; color: #52c41a">
+        <div class="stat-icon" style="background: rgba(179, 27, 27, 0.12); color: #b31b1b">
           <el-icon><Folder /></el-icon>
         </div>
         <div class="stat-content">
@@ -146,7 +146,7 @@
       </div>
 
       <div class="stat-card" @click="filterByAction('funding')">
-        <div class="stat-icon" style="background: #fa8c1620; color: #fa8c16">
+        <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><Money /></el-icon>
         </div>
         <div class="stat-content">
@@ -156,7 +156,7 @@
       </div>
 
       <div class="stat-card" @click="filterByAction('achievement')">
-        <div class="stat-icon" style="background: #722ed120; color: #722ed1">
+        <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><Trophy /></el-icon>
         </div>
         <div class="stat-content">
@@ -166,7 +166,7 @@
       </div>
 
       <div class="stat-card" @click="filterByTime('today')">
-        <div class="stat-icon" style="background: #13c2c220; color: #13c2c2">
+        <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><Clock /></el-icon>
         </div>
         <div class="stat-content">
@@ -551,7 +551,7 @@ const getRoleText = (role: string) => {
   const map: Record<string, string> = {
     applicant: '申请人',
     reviewer: '评审专家',
-    assistant: '科研助理',
+    project_manager: '科研助理',
     admin: '管理员',
   }
   return map[role] || role
@@ -1077,7 +1077,7 @@ onMounted(() => {
 .user-avatar-small {
   width: 32px;
   height: 32px;
-  background: linear-gradient(135deg, #fa8c16 0%, #fa541c 100%);
+  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
   color: white;
   border-radius: 50%;
   display: flex;
@@ -1201,7 +1201,7 @@ onMounted(() => {
 }
 
 .timeline-dot.dot-success {
-  background: #52c41a;
+  background: #b31b1b;
 }
 
 .timeline-dot.dot-info {
@@ -1213,7 +1213,7 @@ onMounted(() => {
 }
 
 .timeline-dot.dot-warning {
-  background: #fa8c16;
+  background: #b31b1b;
 }
 
 .timeline-dot.dot-danger {
@@ -1248,7 +1248,7 @@ onMounted(() => {
 .user-avatar-mini {
   width: 20px;
   height: 20px;
-  background: linear-gradient(135deg, #fa8c16 0%, #fa541c 100%);
+  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
   color: white;
   border-radius: 50%;
   display: flex;

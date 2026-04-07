@@ -435,7 +435,7 @@ const roles = ref([
   },
   { value: 'reviewer', label: '评审专家', icon: '👨‍⚖️', description: '负责项目的专业评审和技术指导' },
   {
-    value: 'assistant',
+    value: 'project_manager',
     label: '科研助理',
     icon: '👨‍🔬',
     description: '负责项目的日常管理和审核工作',
@@ -509,7 +509,7 @@ const getRoleText = (role: string) => {
   const roleMap: Record<string, string> = {
     applicant: '项目申请人',
     reviewer: '评审专家',
-    assistant: '科研助理',
+    project_manager: '科研助理',
     admin: '系统管理员',
   }
   return roleMap[role] || role

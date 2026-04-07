@@ -3,9 +3,20 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
 
+// 统一为「主机 + 端口」，路径里自带 /api/...，避免出现 /api/api/... 导致 404
+function normalizeApiBaseUrl(raw) {
+  const fallback = 'http://localhost:3002'
+  if (!raw || typeof raw !== 'string') return fallback
+  let u = raw.trim().replace(/\/+$/, '')
+  if (u.toLowerCase().endsWith('/api')) {
+    u = u.slice(0, -4)
+  }
+  return u || fallback
+}
+
 // 创建 axios 实例
 const service = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:3002',
+  baseURL: normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL),
   timeout: 15000,
   headers: {
     'Content-Type': 'application/json',

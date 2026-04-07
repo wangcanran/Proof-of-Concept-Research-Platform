@@ -495,7 +495,7 @@ const getRoleText = (role: string) => {
   const roleMap: Record<string, string> = {
     applicant: '项目申请人',
     reviewer: '评审专家',
-    assistant: '科研助理',
+    project_manager: '科研助理',
     admin: '系统管理员',
   }
   return roleMap[role] || role
@@ -505,7 +505,7 @@ const getRoleTagType = (role: string) => {
   const typeMap: Record<string, string> = {
     applicant: 'primary',
     reviewer: 'warning',
-    assistant: 'success',
+    project_manager: 'success',
     admin: 'danger',
   }
   return typeMap[role] || 'info'

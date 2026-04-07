@@ -1,6 +1,6 @@
 <!-- src/views/assistant/AuditProjects.vue -->
 <template>
-  <div class="audit-projects-page">
+  <div class="audit-projects-page assistant-ruc-theme">
     <!-- 页面头部 -->
     <header class="page-header">
       <div class="header-main">
@@ -1352,7 +1352,7 @@ onMounted(() => {
 
 .title-icon {
   font-size: 28px;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .page-subtitle {
@@ -1385,7 +1385,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .stat-content {
@@ -1445,7 +1445,7 @@ onMounted(() => {
 
 .search-btn {
   padding: 8px 20px;
-  background: #fa8c16;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 6px;
@@ -1455,7 +1455,7 @@ onMounted(() => {
 }
 
 .search-btn:hover {
-  background: #ffa940;
+  background: #c44747;
 }
 
 .action-buttons {
@@ -1555,7 +1555,7 @@ onMounted(() => {
   width: 40px;
   height: 40px;
   border: 3px solid #f3f3f3;
-  border-top: 3px solid #fa8c16;
+  border-top: 3px solid #b31b1b;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin: 0 auto 20px;
@@ -1627,7 +1627,7 @@ onMounted(() => {
 
 .selected-info {
   font-size: 14px;
-  color: #fa8c16;
+  color: #b31b1b;
   font-weight: 500;
 }
 
@@ -1677,7 +1677,7 @@ onMounted(() => {
 .project-code .code-text {
   font-family: 'Courier New', monospace;
   font-weight: 600;
-  color: #722ed1;
+  color: #b31b1b;
   background: #f9f0ff;
   padding: 4px 8px;
   border-radius: 4px;
@@ -1712,7 +1712,7 @@ onMounted(() => {
 
 .keyword-tag {
   background: #f6ffed;
-  color: #52c41a;
+  color: #b31b1b;
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 12px;
@@ -1745,7 +1745,7 @@ onMounted(() => {
 
 .project-budget .budget-amount {
   font-weight: 600;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .project-duration .duration-text {
@@ -1794,13 +1794,13 @@ onMounted(() => {
 
 .status-badge.reviewing {
   background: #fff7e6;
-  color: #fa8c16;
+  color: #b31b1b;
   border: 1px solid #ffd591;
 }
 
 .status-badge.approved {
   background: #f6ffed;
-  color: #52c41a;
+  color: #b31b1b;
   border: 1px solid #b7eb8f;
 }
 
@@ -1812,7 +1812,7 @@ onMounted(() => {
 
 .status-badge.returned {
   background: #fff0f6;
-  color: #eb2f96;
+  color: #8b1515;
   border: 1px solid #ffadd2;
 }
 
@@ -1824,7 +1824,7 @@ onMounted(() => {
 
 .status-badge.completed {
   background: #f6ffed;
-  color: #52c41a;
+  color: #b31b1b;
   border: 1px solid #b7eb8f;
 }
 
@@ -1875,7 +1875,7 @@ onMounted(() => {
 
 .detail-icon {
   font-size: 18px;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 /* 基本信息网格 */
@@ -1910,7 +1910,7 @@ onMounted(() => {
 }
 
 .detail-value.budget {
-  color: #fa8c16;
+  color: #b31b1b;
   font-weight: 600;
 }
 
@@ -1933,7 +1933,7 @@ onMounted(() => {
 .applicant-avatar {
   width: 48px;
   height: 48px;
-  background: #fa8c16;
+  background: #b31b1b;
   color: white;
   border-radius: 50%;
   display: flex;
@@ -2042,7 +2042,7 @@ onMounted(() => {
 
 .item-amount {
   font-weight: 600;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .item-justification {
@@ -2063,7 +2063,7 @@ onMounted(() => {
 
 .total-amount {
   font-weight: 700;
-  color: #fa8c16;
+  color: #b31b1b;
   font-size: 16px;
 }
 
@@ -2244,7 +2244,7 @@ onMounted(() => {
 }
 
 .score-value.total {
-  color: #fa8c16;
+  color: #b31b1b;
   font-size: 15px;
 }
 
@@ -2288,12 +2288,12 @@ onMounted(() => {
 
 .result-value.approve {
   background: #f6ffed;
-  color: #52c41a;
+  color: #b31b1b;
 }
 
 .result-value.approve_with_revision {
   background: #fff7e6;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .result-value.reject {
@@ -2302,7 +2302,7 @@ onMounted(() => {
 }
 
 .result-value.resubmit {
-  background: #f0f7ff;
+  background: #fff5f5;
   color: #b31b1b;
 }
 
@@ -2364,7 +2364,7 @@ onMounted(() => {
 .total-value {
   font-size: 20px;
   font-weight: 700;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 /* 评审结论选项 */
@@ -2410,7 +2410,7 @@ onMounted(() => {
 }
 
 .selected-count {
-  color: #fa8c16;
+  color: #b31b1b;
   font-weight: 700;
 }
 
@@ -2435,7 +2435,7 @@ onMounted(() => {
   background: #f8f9fa;
   padding: 12px;
   border-radius: 6px;
-  border-left: 3px solid #fa8c16;
+  border-left: 3px solid #b31b1b;
 }
 
 .batch-tips p {

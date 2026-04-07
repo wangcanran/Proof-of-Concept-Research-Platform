@@ -1,12 +1,12 @@
 <!-- src/views/reviewer/ReviewerProjectDetail.vue -->
 <template>
   <div class="reviewer-project-detail">
-    <!-- 顶部导航 -->
+    <!-- ???? -->
     <header class="detail-header">
       <div class="header-content">
         <div class="back-btn" @click="goBack">
           <el-icon><ArrowLeft /></el-icon>
-          返回
+          ??
         </div>
         <div class="header-info">
           <h1 class="project-title">{{ project.title }}</h1>
@@ -29,7 +29,7 @@
             class="review-btn"
           >
             <el-icon><EditPen /></el-icon>
-            开始评�?          </el-button>
+            ?????          </el-button>
 
           <el-button
             type="success"
@@ -38,7 +38,7 @@
             class="my-review-btn"
           >
             <el-icon><View /></el-icon>
-            查看我的评审
+            ??????
           </el-button>
 
           <el-button
@@ -48,16 +48,16 @@
             class="continue-btn"
           >
             <el-icon><Edit /></el-icon>
-            继续评审
+            ????
           </el-button>
 
           <el-button @click="refreshData" class="refresh-btn">
             <el-icon><Refresh /></el-icon>
-            刷新
+            ??
           </el-button>
         </div>
 
-        <!-- 评审状态指示器 -->
+        <!-- ??????? -->
         <div class="review-status" v-if="myReview">
           <div class="status-indicator" :class="myReview.status">
             <span class="status-text">
@@ -71,71 +71,71 @@
       </div>
     </header>
 
-    <!-- 主内容区�?-->
+    <!-- ??????-->
     <div class="detail-content">
-      <!-- 左侧项目信息 -->
+      <!-- ?????? -->
       <div class="left-column">
-        <!-- 基本信息卡片 -->
+        <!-- ?????? -->
         <el-card class="info-card" shadow="hover">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><InfoFilled /></el-icon> 项目基本信息
+                <el-icon><InfoFilled /></el-icon> ??????
               </h3>
             </div>
           </template>
 
           <div class="info-grid">
             <div class="info-item">
-              <label>申请人：</label>
+              <label>????</label>
               <span class="applicant">{{ project.applicant_name }}</span>
             </div>
 
             <div class="info-item">
-              <label>所属单位：</label>
+              <label>?????</label>
               <span>{{ project.applicant_department }}</span>
             </div>
 
             <div class="info-item">
-              <label>研究领域�?/label>
+              <label>??????/label>
               <span class="research-field">{{ project.research_field }}</span>
             </div>
 
             <div class="info-item">
-              <label>总预算：</label>
+              <label>????</label>
               <span class="budget">{{ formatCurrency(project.budget_total) }}</span>
             </div>
 
             <div class="info-item">
-              <label>研究周期�?/label>
-              <span>{{ project.duration_months }}个月</span>
+              <label>??????/label>
+              <span>{{ project.duration_months }}??</span>
             </div>
 
             <div class="info-item">
-              <label>提交日期�?/label>
+              <label>??????/label>
               <span>{{ formatDate(project.submit_date) }}</span>
             </div>
 
             <div class="info-item">
-              <label>评审截止�?/label>
+              <label>??????/label>
               <span :class="getDeadlineClass(project.review_deadline)">
                 {{ formatDate(project.review_deadline) }}
               </span>
             </div>
 
             <div class="info-item">
-              <label>关键词：</label>
-              <span class="keywords">{{ project.keywords || '未设�? }}</span>
+              <label>????</label>
+              <span class="keywords">{{ project.keywords || '???? }}</span>
             </div>
           </div>
         </el-card>
 
-        <!-- 项目摘要 -->
+        <!-- ???? -->
         <el-card class="abstract-card" shadow="hover">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><Document /></el-icon> 项目摘要
+                <el-icon><Document /></el-icon> ????
               </h3>
             </div>
           </template>
@@ -145,44 +145,44 @@
           </div>
         </el-card>
 
-        <!-- 研究目标和预期成�?-->
+        <!-- ??????????-->
         <el-card class="goals-card" shadow="hover">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><Flag /></el-icon> 研究目标与预期成�?              </h3>
+                <el-icon><Flag /></el-icon> ??????????              </h3>
             </div>
           </template>
 
           <div class="goals-content">
             <div class="section" v-if="project.objectives">
-              <h4>研究目标</h4>
+              <h4>????</h4>
               <div class="content-text" v-html="formatText(project.objectives)"></div>
             </div>
 
             <div class="section" v-if="project.expected_outcomes">
-              <h4>预期成果</h4>
+              <h4>????</h4>
               <div class="content-text" v-html="formatText(project.expected_outcomes)"></div>
             </div>
 
             <div class="section" v-if="project.methodology">
-              <h4>研究方法</h4>
+              <h4>????</h4>
               <div class="content-text" v-html="formatText(project.methodology)"></div>
             </div>
           </div>
         </el-card>
       </div>
 
-      <!-- 右侧评审相关信息 -->
+      <!-- ???????? -->
       <div class="right-column">
-        <!-- 项目成员 -->
+        <!-- ???? -->
         <el-card class="members-card" shadow="hover">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><User /></el-icon> 项目团队
+                <el-icon><User /></el-icon> ????
               </h3>
-              <span class="count-badge">{{ members.length }}�?/span>
+              <span class="count-badge">{{ members.length }}??/span>
             </div>
           </template>
 
@@ -206,7 +206,7 @@
                   <span class="member-department">{{ member.department }}</span>
                 </div>
                 <div class="member-workload" v-if="member.workload_percentage">
-                  <span class="workload-label">工作量：</span>
+                  <span class="workload-label">????</span>
                   <span class="workload-value">{{ member.workload_percentage }}%</span>
                 </div>
                 <div class="member-responsibility" v-if="member.responsibility">
@@ -217,12 +217,12 @@
           </div>
         </el-card>
 
-        <!-- 项目预算 -->
+        <!-- ???? -->
         <el-card class="budget-card" shadow="hover">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><Coin /></el-icon> 项目预算
+                <el-icon><Coin /></el-icon> ????
               </h3>
               <span class="budget-total">{{ formatCurrency(totalBudget) }}</span>
             </div>
@@ -245,14 +245,14 @@
 
           <div class="budget-summary">
             <div class="summary-row">
-              <span class="summary-label">预算总计�?/span>
+              <span class="summary-label">??????/span>
               <span class="summary-value">{{ formatCurrency(totalBudget) }}</span>
             </div>
             <div
               class="summary-row"
               v-if="project.budget_total && totalBudget !== project.budget_total"
             >
-              <span class="summary-label">预算差异�?/span>
+              <span class="summary-label">??????/span>
               <span class="summary-diff" :class="getDiffClass(project.budget_total - totalBudget)">
                 {{ formatCurrency(project.budget_total - totalBudget) }}
               </span>
@@ -260,14 +260,14 @@
           </div>
         </el-card>
 
-        <!-- 已有评审意见 -->
+        <!-- ?????? -->
         <el-card class="reviews-card" shadow="hover" v-if="reviews.length > 0">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><ChatLineRound /></el-icon> 其他专家评审
+                <el-icon><ChatLineRound /></el-icon> ??????
               </h3>
-              <span class="count-badge">{{ reviews.length }}�?/span>
+              <span class="count-badge">{{ reviews.length }}??/span>
             </div>
           </template>
 
@@ -295,7 +295,7 @@
 
               <div class="review-scores">
                 <div class="score-item" v-if="review.innovation_score">
-                  <span class="score-label">创新�?/span>
+                  <span class="score-label">????/span>
                   <div class="score-bar">
                     <div
                       class="score-fill"
@@ -307,7 +307,7 @@
                 </div>
 
                 <div class="score-item" v-if="review.feasibility_score">
-                  <span class="score-label">可行�?/span>
+                  <span class="score-label">????/span>
                   <div class="score-bar">
                     <div
                       class="score-fill"
@@ -319,7 +319,7 @@
                 </div>
 
                 <div class="score-total">
-                  <span class="total-label">综合评分�?/span>
+                  <span class="total-label">??????/span>
                   <span class="total-value">{{ review.total_score.toFixed(1) }}</span>
                   <el-rate
                     v-model="review.total_score"
@@ -335,14 +335,14 @@
                 <div class="comment-text">{{ truncateText(review.comments, 150) }}</div>
                 <div class="comment-more" v-if="review.comments.length > 150">
                   <el-button type="text" size="small" @click="viewFullReview(review)">
-                    查看完整评审
+                    ??????
                   </el-button>
                 </div>
               </div>
 
               <div class="confidential-notice" v-else-if="review.is_confidential">
                 <el-alert
-                  title="此评审意见对申请人保�?
+                  title="????????????
                   type="warning"
                   :closable="false"
                   center
@@ -355,11 +355,11 @@
       </div>
     </div>
 
-    <!-- 加载状�?-->
+    <!-- ?????-->
     <div v-if="loading" class="loading-overlay">
       <div class="loading-content">
         <div class="loading-spinner"></div>
-        <div class="loading-text">正在加载项目详情...</div>
+        <div class="loading-text">????????...</div>
       </div>
     </div>
   </div>
@@ -387,7 +387,7 @@ import request from '@/utils/request'
 const router = useRouter()
 const route = useRoute()
 
-// 状态管�?const loading = ref(false)
+// ?????const loading = ref(false)
 const project = ref<any>({
   id: '',
   project_code: '',
@@ -416,11 +416,11 @@ const reviews = ref<any[]>([])
 const myReview = ref<any>(null)
 const stages = ref<any[]>([])
 
-// 计算属�?const totalBudget = computed(() => {
+// ?????const totalBudget = computed(() => {
   return budget.value.reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
 })
 
-// 方法
+// ??
 const loadProjectDetail = async () => {
   loading.value = true
   try {
@@ -437,22 +437,22 @@ const loadProjectDetail = async () => {
       myReview.value = response.data.myReview
       stages.value = response.data.stages || []
 
-      console.log('�?评审专家项目详情加载成功')
+      console.log('??????????????')
     } else {
-      ElMessage.error('加载项目详情失败')
+      ElMessage.error('????????')
     }
   } catch (error) {
-    console.error('加载项目详情失败:', error)
-    ElMessage.error('加载项目详情失败')
+    console.error('????????:', error)
+    ElMessage.error('????????')
   } finally {
     loading.value = false
   }
 }
 
 const startReview = () => {
-  ElMessageBox.confirm('开始评审此项目�?, '确认开始评�?, {
-    confirmButtonText: '开始评�?,
-    cancelButtonText: '取消',
+  ElMessageBox.confirm('?????????, '???????, {
+    confirmButtonText: '?????,
+    cancelButtonText: '??',
     type: 'info',
   }).then(() => {
     router.push({
@@ -487,14 +487,14 @@ const viewFullReview = (review: any) => {
 
 const refreshData = () => {
   loadProjectDetail()
-  ElMessage.success('数据已刷�?)
+  ElMessage.success('??????)
 }
 
 const goBack = () => {
   router.back()
 }
 
-// 辅助函数
+// ????
 const getStatusType = (status: string) => {
   const map: Record<string, string> = {
     draft: 'info',
@@ -510,22 +510,22 @@ const getStatusType = (status: string) => {
 
 const getStatusText = (status: string) => {
   const map: Record<string, string> = {
-    draft: '草稿',
-    submitted: '已提�?,
-    under_review: '审核�?,
-    approved: '已批�?,
-    in_progress: '进行�?,
-    completed: '已完�?,
-    rejected: '已拒�?,
+    draft: '??',
+    submitted: '????,
+    under_review: '????,
+    approved: '????,
+    in_progress: '????,
+    completed: '????,
+    rejected: '????,
   }
   return map[status] || status
 }
 
 const getReviewStatusText = (status: string) => {
   const map: Record<string, string> = {
-    draft: '草稿',
-    submitted: '已提�?,
-    locked: '已锁�?,
+    draft: '??',
+    submitted: '????,
+    locked: '????,
   }
   return map[status] || status
 }
@@ -543,11 +543,11 @@ const getRoleType = (role: string) => {
 
 const getRoleText = (role: string) => {
   const map: Record<string, string> = {
-    principal: '负责�?,
-    co_researcher: '合作研究�?,
-    research_assistant: '科研助理',
-    student: '学生',
-    other: '其他',
+    principal: '????,
+    co_researcher: '??????,
+    research_assistant: '????',
+    student: '??',
+    other: '??',
   }
   return map[role] || role
 }
@@ -564,10 +564,10 @@ const getConclusionType = (conclusion: string) => {
 
 const getConclusionText = (conclusion: string) => {
   const map: Record<string, string> = {
-    approve: '通过',
-    approve_with_revision: '修改后通过',
-    reject: '不通过',
-    resubmit: '重新提交',
+    approve: '??',
+    approve_with_revision: '?????',
+    reject: '???',
+    resubmit: '????',
   }
   return map[conclusion] || conclusion
 }
@@ -597,15 +597,15 @@ const getDiffClass = (diff: number) => {
 }
 
 const formatCurrency = (amount: number) => {
-  if (!amount) return '¥0'
+  if (!amount) return '?0'
   const num = Number(amount)
-  if (num >= 100000000) return '¥' + (num / 100000000).toFixed(2) + '�?
-  if (num >= 10000) return '¥' + (num / 10000).toFixed(2) + '�?
-  return '¥' + num.toFixed(2)
+  if (num >= 100000000) return '?' + (num / 100000000).toFixed(2) + '??
+  if (num >= 10000) return '?' + (num / 10000).toFixed(2) + '??
+  return '?' + num.toFixed(2)
 }
 
 const formatDate = (dateString: string) => {
-  if (!dateString) return '未设�?
+  if (!dateString) return '????
   try {
     const date = new Date(dateString)
     return date.toLocaleDateString('zh-CN')
@@ -622,10 +622,10 @@ const formatTime = (dateString: string) => {
     const diff = now.getTime() - date.getTime()
     const diffDays = Math.floor(diff / (1000 * 60 * 60 * 24))
 
-    if (diffDays === 0) return '今天'
-    if (diffDays === 1) return '昨天'
-    if (diffDays < 7) return `${diffDays}天前`
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)}周前`
+    if (diffDays === 0) return '??'
+    if (diffDays === 1) return '??'
+    if (diffDays < 7) return `${diffDays}??`
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)}??`
     return formatDate(dateString)
   } catch {
     return dateString
@@ -647,7 +647,7 @@ const getInitial = (name: string) => {
   return name.charAt(0).toUpperCase()
 }
 
-// 生命周期
+// ????
 onMounted(() => {
   loadProjectDetail()
 })
@@ -661,7 +661,7 @@ onMounted(() => {
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
-/* 顶部导航 */
+/* ???? */
 .detail-header {
   background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
   color: white;
@@ -736,15 +736,23 @@ onMounted(() => {
   gap: 12px;
 }
 
-.review-btn {
-  background: linear-gradient(135deg, #52c41a 0%, #389e0d 100%);
-  border: none;
+.review-btn.el-button--primary {
+  --el-button-bg-color: #ffffff;
+  --el-button-border-color: #ffffff;
+  --el-button-hover-bg-color: #fff5f5;
+  --el-button-hover-border-color: #ffcccc;
+  --el-button-active-bg-color: #ffe8e8;
+  --el-button-text-color: #b31b1b;
   font-weight: 500;
 }
 
-.my-review-btn {
-  background: linear-gradient(135deg, #722ed1 0%, #531dab 100%);
-  border: none;
+.my-review-btn.el-button--success {
+  --el-button-bg-color: rgba(255, 255, 255, 0.22);
+  --el-button-border-color: rgba(255, 255, 255, 0.55);
+  --el-button-hover-bg-color: rgba(255, 255, 255, 0.32);
+  --el-button-hover-border-color: #ffffff;
+  --el-button-active-bg-color: rgba(255, 255, 255, 0.28);
+  --el-button-text-color: #ffffff;
   font-weight: 500;
 }
 
@@ -803,7 +811,7 @@ onMounted(() => {
   opacity: 0.8;
 }
 
-/* 主内容区�?*/
+/* ??????*/
 .detail-content {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -819,7 +827,7 @@ onMounted(() => {
   }
 }
 
-/* 卡片通用样式 */
+/* ?????? */
 .info-card,
 .abstract-card,
 .goals-card,
@@ -878,7 +886,7 @@ onMounted(() => {
   color: #b31b1b;
 }
 
-/* 基本信息网格 */
+/* ?????? */
 .info-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -943,7 +951,7 @@ onMounted(() => {
   font-weight: 500;
 }
 
-/* 摘要内容 */
+/* ???? */
 .abstract-content {
   padding: 20px;
 }
@@ -954,7 +962,7 @@ onMounted(() => {
   font-size: 14px;
 }
 
-/* 研究目标 */
+/* ???? */
 .goals-content {
   padding: 20px;
 }
@@ -976,7 +984,7 @@ onMounted(() => {
   border-bottom: 1px solid #f0f0f0;
 }
 
-/* 项目成员 */
+/* ???? */
 .members-list {
   padding: 20px;
   display: flex;
@@ -1065,7 +1073,7 @@ onMounted(() => {
   font-style: italic;
 }
 
-/* 项目预算 */
+/* ???? */
 .budget-list {
   padding: 20px;
   display: flex;
@@ -1156,7 +1164,7 @@ onMounted(() => {
   color: #7f8c8d;
 }
 
-/* 评审意见 */
+/* ???? */
 .reviews-list {
   padding: 20px;
   display: flex;
@@ -1336,7 +1344,7 @@ onMounted(() => {
   padding: 12px;
 }
 
-/* 加载状�?*/
+/* ?????*/
 .loading-overlay {
   position: fixed;
   top: 0;
@@ -1379,7 +1387,7 @@ onMounted(() => {
   font-size: 16px;
 }
 
-/* 响应式设�?*/
+/* ??????*/
 @media (max-width: 768px) {
   .detail-header {
     padding: 0 16px;

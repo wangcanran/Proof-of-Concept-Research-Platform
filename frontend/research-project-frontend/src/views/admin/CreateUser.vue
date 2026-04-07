@@ -255,7 +255,7 @@ const form = reactive({
 const roleOptions = [
   { value: 'applicant', label: '项目申请人' },
   { value: 'reviewer', label: '评审专家' },
-  { value: 'assistant', label: '科研助理' },
+  { value: 'project_manager', label: '科研助理' },
   { value: 'admin', label: '系统管理员' },
 ]
 

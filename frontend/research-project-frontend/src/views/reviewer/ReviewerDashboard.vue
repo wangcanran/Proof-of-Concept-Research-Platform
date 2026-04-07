@@ -91,7 +91,7 @@
             <span class="icon">☰</span>
           </div>
           <div class="breadcrumb">
-            <span class="current-page">评审专家工作台</span>
+            <span class="current-page">工作台</span>
           </div>
         </div>
         <div class="header-right">
@@ -149,10 +149,10 @@
       <main class="main-content">
         <!-- 欢迎区域 -->
         <div class="welcome-section">
-          <div class="welcome-card reviewer-banner">
+          <div class="welcome-card">
             <div class="welcome-content">
-              <h2 class="welcome-title">评审专家工作台</h2>
-              <p class="welcome-subtitle">欢迎回来，{{ userName }}专家！今天是 {{ currentDate }}</p>
+              <h2 class="welcome-title">欢迎回来，{{ userName }}！</h2>
+              <p class="welcome-subtitle">今天是 {{ currentDate }}，祝您工作愉快！</p>
               <div class="quick-stats">
                 <div class="stat-badge">
                   <span class="stat-value">{{ stats.pendingCount || 0 }}</span>
@@ -163,8 +163,8 @@
                   <span class="stat-label">已评审</span>
                 </div>
                 <div class="stat-badge">
-                  <span class="stat-value">{{ stats.averageScore || 0 }}</span>
-                  <span class="stat-label">平均分</span>
+                  <span class="stat-value">{{ stats.totalComments || 0 }}</span>
+                  <span class="stat-label">评语字数</span>
                 </div>
                 <div class="stat-badge">
                   <span class="stat-value">{{ stats.approvalRate || 0 }}%</span>
@@ -173,7 +173,7 @@
               </div>
             </div>
             <div class="welcome-illustration">
-              <div class="illustration-icon">⭐</div>
+              <div class="illustration-icon">📊</div>
             </div>
           </div>
         </div>
@@ -259,12 +259,12 @@
 
           <!-- 中列：评分分布和快速操作 -->
           <div class="dashboard-column">
-            <!-- 评分分布 -->
+            <!-- 分配任务状态分布（与 ExpertAssignment.status 一致） -->
             <div class="score-distribution card-section">
               <div class="section-header">
                 <h3 class="section-title">
                   <span class="section-icon">📊</span>
-                  评分分布
+                  任务状态分布
                 </h3>
               </div>
 
@@ -336,8 +336,8 @@
                 <div class="mini-stat-card">
                   <div class="mini-stat-icon">⭐</div>
                   <div class="mini-stat-content">
-                    <div class="mini-stat-value">{{ stats.highestScore || 0 }}</div>
-                    <div class="mini-stat-label">最高评分</div>
+                    <div class="mini-stat-value">{{ stats.completedCount || 0 }}</div>
+                    <div class="mini-stat-label">已完成评审</div>
                   </div>
                 </div>
 
@@ -395,13 +395,6 @@
                 >
                   <div class="review-header">
                     <h4 class="review-title">{{ review.project_title }}</h4>
-                    <el-rate
-                      v-model="review.total_score"
-                      disabled
-                      :max="10"
-                      :allow-half="true"
-                      size="small"
-                    />
                   </div>
 
                   <div class="review-info">
@@ -527,9 +520,7 @@ const userInfo = ref({
 const stats = ref({
   pendingCount: 0,
   completedCount: 0,
-  averageScore: 0,
   approvalRate: 0,
-  highestScore: 0,
   avgReviewTime: 0,
   consistencyRate: 0,
   totalComments: 0,
@@ -539,10 +530,10 @@ const pendingProjects = ref<any[]>([])
 const recentReviews = ref<any[]>([])
 const notifications = ref<any[]>([])
 const scoreDistribution = ref<any[]>([
-  { range: '优秀 (9-10分)', count: 0, percentage: 0, color: '#52c41a' },
-  { range: '良好 (7-8.9分)', count: 0, percentage: 0, color: '#b31b1b' },
-  { range: '中等 (5-6.9分)', count: 0, percentage: 0, color: '#faad14' },
-  { range: '待改进 (5分以下)', count: 0, percentage: 0, color: '#ff4d4f' },
+  { range: '已通过', count: 0, percentage: 0, color: '#52c41a' },
+  { range: '未通过', count: 0, percentage: 0, color: '#ff4d4f' },
+  { range: '待处理', count: 0, percentage: 0, color: '#faad14' },
+  { range: '其他', count: 0, percentage: 0, color: '#909399' },
 ])
 
 // 计算属性
@@ -580,6 +571,10 @@ const getDeadlineClass = (deadline: string) => {
 
 const getConclusionType = (conclusion: string) => {
   const map: Record<string, string> = {
+    approve: 'success',
+    approve_with_revision: 'warning',
+    reject: 'danger',
+    resubmit: 'info',
     recommend: 'success',
     revise_and_recommend: 'warning',
     not_recommend: 'danger',
@@ -589,6 +584,10 @@ const getConclusionType = (conclusion: string) => {
 
 const getConclusionText = (conclusion: string) => {
   const map: Record<string, string> = {
+    approve: '通过',
+    approve_with_revision: '修改后通过',
+    reject: '不通过',
+    resubmit: '重新提交',
     recommend: '推荐',
     revise_and_recommend: '修改后推荐',
     not_recommend: '不推荐',
@@ -857,16 +856,14 @@ const loadPendingProjects = async () => {
     })
     if (response.success && response.data) {
       pendingProjects.value = response.data
-      stats.value.pendingCount = pendingProjects.value.length
+      // 待评审数量以 /reviewer/stats 的 pendingCount 为准（全量）；此处仅拉 limit 条用于展示，勿用 length 覆盖
     } else {
       console.log('没有待评审项目')
       pendingProjects.value = []
-      stats.value.pendingCount = 0
     }
   } catch (error) {
     console.error('加载待评审项目失败:', error)
     pendingProjects.value = []
-    stats.value.pendingCount = 0
   }
 }
 
@@ -878,13 +875,6 @@ const loadRecentReviews = async () => {
     })
     if (response.success && response.data) {
       recentReviews.value = response.data
-      stats.value.completedCount = recentReviews.value.length
-
-      // 计算平均分
-      if (recentReviews.value.length > 0) {
-        const total = recentReviews.value.reduce((sum, r) => sum + (r.total_score || 0), 0)
-        stats.value.averageScore = (total / recentReviews.value.length).toFixed(1)
-      }
     }
   } catch (error) {
     console.error('加载最近评审记录失败:', error)
@@ -928,9 +918,7 @@ const showMockData = () => {
   stats.value = {
     pendingCount: 3,
     completedCount: 12,
-    averageScore: 8.2,
     approvalRate: 75,
-    highestScore: 9.5,
     avgReviewTime: 3,
     consistencyRate: 85,
     totalComments: 12345,
@@ -959,26 +947,24 @@ const showMockData = () => {
     {
       id: '1',
       project_title: '量子计算算法研究',
-      total_score: 9.2,
-      recommendation: 'recommend',
+      recommendation: 'approve',
       submitted_at: '2024-01-15',
       comments: '研究内容新颖，具有重要的理论和应用价值，研究方法科学合理。',
     },
     {
       id: '2',
       project_title: '生物医药分子筛选平台',
-      total_score: 7.8,
-      recommendation: 'revise_and_recommend',
+      recommendation: 'approve_with_revision',
       submitted_at: '2024-01-10',
       comments: '技术路线可行，但实验数据需要补充验证。',
     },
   ]
 
   scoreDistribution.value = [
-    { range: '优秀 (9-10分)', count: 5, percentage: 25, color: '#52c41a' },
-    { range: '良好 (7-8.9分)', count: 8, percentage: 40, color: '#b31b1b' },
-    { range: '中等 (5-6.9分)', count: 5, percentage: 25, color: '#faad14' },
-    { range: '待改进 (5分以下)', count: 2, percentage: 10, color: '#ff4d4f' },
+    { range: '已通过', count: 5, percentage: 25, color: '#52c41a' },
+    { range: '未通过', count: 2, percentage: 10, color: '#ff4d4f' },
+    { range: '待处理', count: 8, percentage: 40, color: '#faad14' },
+    { range: '其他', count: 5, percentage: 25, color: '#909399' },
   ]
 
   notifications.value = [
@@ -1017,7 +1003,7 @@ onMounted(() => {
         const rolePaths: Record<string, string> = {
           applicant: '/applicant/dashboard',
           admin: '/admin/dashboard',
-          assistant: '/assistant/dashboard',
+          project_manager: '/assistant/dashboard',
         }
         const targetPath = rolePaths[userRole?.toLowerCase() || ''] || '/login'
         router.push(targetPath)
@@ -1112,13 +1098,13 @@ h1, h2, h3, h4, button {
 }
 
 .breadcrumb {
-  font-size: 15px;
-  color: #333;
+  font-size: 14px;
+  color: #666;
 }
 
 .current-page {
-  color: #2c3e50;
-  font-weight: 600;
+  color: #b31b1b;
+  font-weight: 500;
 }
 
 .header-right {
@@ -1486,27 +1472,11 @@ h1, h2, h3, h4, button {
 .welcome-card {
   background: white;
   border-radius: 12px;
-  padding: 32px;
+  padding: 28px 32px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-}
-
-.reviewer-banner {
-  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
-  color: white;
-}
-
-.welcome-card.reviewer-banner .welcome-title,
-.welcome-card.reviewer-banner .welcome-subtitle,
-.welcome-card.reviewer-banner .stat-value,
-.welcome-card.reviewer-banner .stat-label {
-  color: white;
-}
-
-.welcome-card.reviewer-banner .stat-badge {
-  background: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
 }
 
 .welcome-content {
@@ -1514,18 +1484,20 @@ h1, h2, h3, h4, button {
 }
 
 .welcome-title {
-  font-size: 28px;
+  font-size: 24px;
+  color: #2c3e50;
   margin: 0 0 8px 0;
 }
 
 .welcome-subtitle {
-  font-size: 16px;
-  margin: 0 0 24px 0;
-  opacity: 0.9;
+  color: #7f8c8d;
+  font-size: 14px;
+  margin: 0 0 20px 0;
 }
 
 .quick-stats {
   display: flex;
+  flex-wrap: wrap;
   gap: 20px;
 }
 
@@ -1533,20 +1505,22 @@ h1, h2, h3, h4, button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 12px 20px;
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
-  min-width: 90px;
+  padding: 10px 16px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  min-width: 80px;
 }
 
 .stat-value {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
+  color: #b31b1b;
   margin-bottom: 4px;
 }
 
 .stat-label {
-  font-size: 13px;
+  font-size: 12px;
+  color: #666;
 }
 
 .welcome-illustration {
@@ -1554,7 +1528,7 @@ h1, h2, h3, h4, button {
 }
 
 .illustration-icon {
-  font-size: 72px;
+  font-size: 64px;
   opacity: 0.8;
 }
 
@@ -2130,6 +2104,20 @@ h1, h2, h3, h4, button {
   .logout-btn {
     padding: 6px 12px;
     font-size: 12px;
+  }
+  .welcome-card {
+    flex-direction: column;
+    text-align: center;
+    padding: 20px;
+  }
+  .welcome-illustration {
+    margin: 20px 0 0 0;
+  }
+  .quick-stats {
+    justify-content: center;
+  }
+  .stat-badge {
+    min-width: 0;
   }
   .section-header {
     flex-direction: column;

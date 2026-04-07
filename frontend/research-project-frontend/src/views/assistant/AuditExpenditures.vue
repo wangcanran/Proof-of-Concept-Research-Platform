@@ -1,6 +1,6 @@
 <!-- src/views/assistant/AuditExpenditures.vue -->
 <template>
-  <div class="audit-expenditures-page">
+  <div class="audit-expenditures-page assistant-ruc-theme">
     <!-- 页面标题和操作栏 -->
     <div class="page-header">
       <div class="header-left">
@@ -1049,7 +1049,7 @@ onMounted(() => {
 }
 
 .breadcrumb .current {
-  color: #722ed1;
+  color: #b31b1b;
   font-weight: 500;
 }
 
@@ -1093,7 +1093,7 @@ onMounted(() => {
 }
 
 .stat-card.pending {
-  background: linear-gradient(135deg, #ffa940 0%, #fa8c16 100%);
+  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
 }
 
 .stat-card.reviewing {
@@ -1101,7 +1101,7 @@ onMounted(() => {
 }
 
 .stat-card.approved {
-  background: linear-gradient(135deg, #52c41a 0%, #389e0d 100%);
+  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
 }
 
 .stat-card.rejected {
@@ -1109,15 +1109,15 @@ onMounted(() => {
 }
 
 .stat-card.amount {
-  background: linear-gradient(135deg, #722ed1 0%, #eb2f96 100%);
+  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
 }
 
 .stat-card.amount-pending {
-  background: linear-gradient(135deg, #ffa940 0%, #fa8c16 100%);
+  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
 }
 
 .stat-card.amount-approved {
-  background: linear-gradient(135deg, #52c41a 0%, #389e0d 100%);
+  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
 }
 
 .stat-card.amount-rejected {
@@ -1171,7 +1171,7 @@ onMounted(() => {
 .expense-no {
   font-family: monospace;
   font-weight: 600;
-  color: #722ed1;
+  color: #b31b1b;
   background: #f9f0ff;
   padding: 2px 8px;
   border-radius: 4px;
@@ -1219,7 +1219,7 @@ onMounted(() => {
 
 .amount {
   font-weight: 600;
-  color: #52c41a;
+  color: #b31b1b;
   font-size: 14px;
 }
 
@@ -1255,7 +1255,7 @@ onMounted(() => {
 .amount-large {
   font-size: 18px;
   font-weight: 700;
-  color: #52c41a;
+  color: #b31b1b;
 }
 
 .description-content {

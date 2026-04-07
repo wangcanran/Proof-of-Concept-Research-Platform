@@ -1,6 +1,6 @@
 <!-- src/views/assistant/AuditAchievements.vue -->
 <template>
-  <div class="audit-achievements-page">
+  <div class="audit-achievements-page assistant-ruc-theme">
     <!-- 页面标题和操作栏 -->
     <div class="page-header">
       <div class="header-left">
@@ -1566,7 +1566,7 @@ onMounted(() => {
 }
 
 .breadcrumb .current {
-  color: #722ed1;
+  color: #b31b1b;
   font-weight: 500;
 }
 
@@ -1610,7 +1610,7 @@ onMounted(() => {
 }
 
 .stat-card.pending {
-  background: linear-gradient(135deg, #ffa940 0%, #fa8c16 100%);
+  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
 }
 
 .stat-card.reviewing {
@@ -1618,11 +1618,11 @@ onMounted(() => {
 }
 
 .stat-card.verified {
-  background: linear-gradient(135deg, #52c41a 0%, #389e0d 100%);
+  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
 }
 
 .stat-card.published {
-  background: linear-gradient(135deg, #722ed1 0%, #eb2f96 100%);
+  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
 }
 
 .stat-card.paper {
@@ -1630,15 +1630,15 @@ onMounted(() => {
 }
 
 .stat-card.patent {
-  background: linear-gradient(135deg, #52c41a 0%, #389e0d 100%);
+  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
 }
 
 .stat-card.software {
-  background: linear-gradient(135deg, #ffa940 0%, #fa8c16 100%);
+  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
 }
 
 .stat-card.others {
-  background: linear-gradient(135deg, #722ed1 0%, #eb2f96 100%);
+  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
 }
 
 .stat-content {

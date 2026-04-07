@@ -3,7 +3,7 @@ export interface User {
   id: number
   username: string
   email: string
-  role: 'applicant' | 'reviewer' | 'admin' | 'assistant'
+  role: 'applicant' | 'reviewer' | 'admin' | 'project_manager'
   status: 'active' | 'inactive'
   created_at: string
   last_login?: string

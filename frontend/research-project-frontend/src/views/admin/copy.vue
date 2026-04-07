@@ -840,7 +840,7 @@ const getRoleText = (role: string) => {
   const roleMap: Record<string, string> = {
     applicant: '申请人',
     reviewer: '评审专家',
-    assistant: '科研助理',
+    project_manager: '科研助理',
     admin: '管理员',
   }
   return roleMap[role] || role
@@ -1336,7 +1336,7 @@ onMounted(() => {
         const rolePaths: Record<string, string> = {
           applicant: '/applicant/dashboard',
           reviewer: '/reviewer/dashboard',
-          assistant: '/assistant/dashboard',
+          project_manager: '/assistant/dashboard',
         }
         const targetPath = rolePaths[userRole?.toLowerCase() || ''] || '/login'
         router.push(targetPath)

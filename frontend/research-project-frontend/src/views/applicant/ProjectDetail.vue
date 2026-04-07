@@ -4,7 +4,10 @@
     <!-- 页面标题 -->
     <div class="page-header">
       <div class="header-left">
-        <button class="back-btn" @click="goBack">← 返回</button>
+        <button type="button" class="back-workbench-box" @click="goBack">
+          <el-icon class="back-icon"><ArrowLeft /></el-icon>
+          <span class="back-text">返回</span>
+        </button>
         <h1>项目详情</h1>
         <div class="header-subtitle" v-if="project">
           <span class="project-no">{{ project.project_code || '暂未编号' }}</span>
@@ -522,6 +525,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
 
 const router = useRouter()
@@ -1568,21 +1572,40 @@ onMounted(async () => {
   padding: 20px;
   background: white;
   border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
-.back-btn {
-  padding: 8px 16px;
-  background: #f5f7fa;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  font-size: 14px;
+.back-workbench-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border: 1px solid rgba(179, 27, 27, 0.35);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffbfb 0%, #fff5f5 100%);
+  color: #b31b1b;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
   cursor: pointer;
-  transition: all 0.3s;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
 }
 
-.back-btn:hover {
-  background: #e8e8e8;
+.back-workbench-box:hover {
+  background: #fff0f0;
+  border-color: #b31b1b;
+  box-shadow: 0 2px 8px rgba(179, 27, 27, 0.12);
+}
+
+.back-workbench-box:active {
+  background: #ffe8e8;
+}
+
+.back-workbench-box .back-icon {
+  font-size: 18px;
 }
 
 .page-header h1 {
@@ -2376,6 +2399,11 @@ onMounted(async () => {
   .header-left {
     flex-wrap: wrap;
   }
+
+  .back-workbench-box {
+    width: 100%;
+    justify-content: center;
+  }
   .info-grid {
     grid-template-columns: 1fr;
   }
@@ -2397,7 +2425,7 @@ onMounted(async () => {
 }
 
 @media print {
-  .back-btn,
+  .back-workbench-box,
   .header-actions,
   .tab-navigation,
   .action-bar,

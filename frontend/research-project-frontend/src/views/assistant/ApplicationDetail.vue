@@ -1,6 +1,6 @@
 <!-- src/views/assistant/ApplicationDetail.vue -->
 <template>
-  <div class="application-detail">
+  <div class="application-detail assistant-ruc-theme">
     <!-- 页面标题和返回按钮 -->
     <div class="page-header">
       <el-button type="text" @click="goBack" :icon="ArrowLeft"> 返回列表 </el-button>
@@ -499,7 +499,7 @@ const printPage = () => {
 .total-amount {
   font-size: 20px;
   font-weight: 700;
-  color: #fa8c16;
+  color: #b31b1b;
   margin-left: 12px;
 }
 
@@ -540,7 +540,7 @@ const printPage = () => {
 }
 
 .timeline-dot.dot-warning {
-  background: #fa8c16;
+  background: #b31b1b;
 }
 
 .timeline-dot.dot-primary {
@@ -548,7 +548,7 @@ const printPage = () => {
 }
 
 .timeline-dot.dot-success {
-  background: #52c41a;
+  background: #b31b1b;
 }
 
 .timeline-dot.dot-danger {

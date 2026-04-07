@@ -34,7 +34,7 @@ const getDashboardPath = (userRole: string) => {
       return '/applicant/dashboard'
     case 'REVIEWER':
       return '/reviewer/dashboard'
-    case 'ASSISTANT':
+    case 'PROJECT_MANAGER':
       return '/assistant/dashboard'
     case 'ADMIN':
       return '/admin/dashboard'
@@ -312,7 +312,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '科研助理工作台',
       requiresAuth: true,
-      role: ['assistant', 'project_manager'], // 注意：这里应该小写，与数据库一致
+      role: ['project_manager'], // 注意：这里应该小写，与数据库一致
       permissions: ['view_assistant_dashboard'],
     },
   },
@@ -323,7 +323,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '项目申请管理',
       requiresAuth: true,
-      role: 'assistant',
+      role: ['project_manager'],
       permissions: ['view_applications', 'review_applications'],
     },
   },
@@ -334,7 +334,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '申请详情',
       requiresAuth: true,
-      role: 'assistant',
+      role: ['project_manager'],
       permissions: ['view_application_detail', 'review_applications'],
     },
   },
@@ -345,7 +345,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '支出审核',
       requiresAuth: true,
-      role: 'assistant',
+      role: ['project_manager'],
       permissions: ['view_expenditures', 'review_expenditures'],
     },
   },
@@ -356,7 +356,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '成果审核',
       requiresAuth: true,
-      role: 'assistant',
+      role: ['project_manager'],
       permissions: ['view_achievements', 'review_achievements'],
     },
   },
@@ -367,7 +367,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '用户管理',
       requiresAuth: true,
-      role: 'assistant',
+      role: ['project_manager'],
       permissions: ['view_users', 'manage_users'],
     },
   },
@@ -378,7 +378,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '活动日志',
       requiresAuth: true,
-      role: 'assistant',
+      role: ['project_manager'],
       permissions: ['view_activities'],
     },
   },
@@ -388,7 +388,7 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('../views/assistant/AuditTask.vue'),
     meta: {
       requiresAuth: true,
-      role: 'ASSISTANT',
+      role: ['project_manager'],
       permissions: ['view_audit_tasks'],
     },
   },
@@ -398,7 +398,7 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('../views/assistant/AuditProjects.vue'),
     meta: {
       requiresAuth: true,
-      role: 'ASSISTANT',
+      role: ['project_manager'],
       permissions: ['audit_projects'],
     },
   },
@@ -408,7 +408,7 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('../views/assistant/AuditFunding.vue'),
     meta: {
       requiresAuth: true,
-      role: 'ASSISTANT',
+      role: ['project_manager'],
       permissions: ['audit_funding'],
     },
   },
@@ -418,7 +418,7 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('../views/assistant/Achievements.vue'),
     meta: {
       requiresAuth: true,
-      role: 'ASSISTANT',
+      role: ['project_manager'],
       permissions: ['audit_achievements'],
     },
   },
@@ -428,7 +428,7 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('../views/assistant/AuditExpenditures.vue'),
     meta: {
       requiresAuth: true,
-      role: 'ASSISTANT',
+      role: ['project_manager'],
       permissions: ['audit_expenditures'],
     },
   },
@@ -439,7 +439,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '评审专家分配',
       requiresAuth: true,
-      role: 'assistant',
+      role: ['project_manager'],
       permissions: ['manage_reviewer_assignment'],
     },
   },
@@ -450,7 +450,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '分配评审专家',
       requiresAuth: true,
-      role: 'assistant',
+      role: ['project_manager'],
       permissions: ['manage_reviewer_assignment'],
     },
   },

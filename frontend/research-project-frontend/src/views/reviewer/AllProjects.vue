@@ -1,13 +1,21 @@
-﻿<template>
+<template>
   <div class="all-projects-page">
-    <el-page-header @back="goBack">
-      <template #content>
-        <div class="page-header-content">
-          <h1>项目浏览</h1>
-          <span class="subtitle">查看系统中所有科研项目</span>
+    <div class="page-header">
+      <button type="button" class="back-workbench-box" @click="goToDashboard">
+        <el-icon class="back-icon"><ArrowLeft /></el-icon>
+        <span class="back-text">返回工作台</span>
+      </button>
+
+      <div class="header-content">
+        <div class="header-main">
+          <h1>
+            <el-icon><FolderOpened /></el-icon>
+            项目浏览
+          </h1>
+          <p class="subtitle">查看系统中所有科研项目</p>
         </div>
-      </template>
-    </el-page-header>
+      </div>
+    </div>
 
     <div class="content-container">
       <!-- 筛选条件 -->
@@ -176,6 +184,8 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
+  ArrowLeft,
+  FolderOpened,
   Search,
   Refresh,
   User,
@@ -228,16 +238,26 @@ const loadAllProjects = async () => {
 
     const response = await request.get('/api/reviewer/all-projects', { params })
 
-    if (response.success) {
-      projects.value = response.data.projects || []
-      pagination.value.total = response.data.pagination?.total || 0
-      statusStats.value = response.data.stats || {}
+    if (response && response.success) {
+      const payload = response.data || {}
+      projects.value = payload.projects || []
+      pagination.value.total = payload.pagination?.total ?? 0
+      statusStats.value = payload.stats || {}
     } else {
-      ElMessage.error('加载项目列表失败')
+      const msg = (response && (response.error || response.message)) || '服务器未返回成功状态'
+      ElMessage.error(`加载项目列表失败：${msg}`)
     }
-  } catch (error) {
-    console.error('加载项目列表失败:', error)
-    ElMessage.error('加载项目列表失败')
+  } catch (error: any) {
+    console.error('加载项目列表失败:', error?.response?.data || error)
+    const status = error?.response?.status
+    const data = error?.response?.data
+    const hint =
+      status === 403
+        ? '没有权限（请用评审专家账号登录）'
+        : status === 404
+          ? '接口不存在，请确认后端已启动且为最新代码'
+          : data?.error || data?.message || error?.message || '网络或服务器错误'
+    ElMessage.error(`加载项目列表失败：${hint}`)
   } finally {
     loading.value = false
   }
@@ -294,7 +314,7 @@ const handleCurrentChange = (page: number) => {
   loadAllProjects()
 }
 
-const goBack = () => {
+const goToDashboard = () => {
   router.push('/reviewer/dashboard')
 }
 
@@ -347,24 +367,102 @@ onMounted(() => {
 <style scoped>
 .all-projects-page {
   min-height: 100vh;
-  background: #f0f2f5;
+  background: #f5f7fa;
   padding: 20px;
 }
 
-.page-header-content h1 {
-  margin: 0;
-  font-size: 24px;
-  color: #303133;
+.all-projects-page :deep(.el-button--primary) {
+  --el-button-bg-color: #b31b1b;
+  --el-button-border-color: #b31b1b;
+  --el-button-hover-bg-color: #8b1515;
+  --el-button-hover-border-color: #8b1515;
+  --el-button-active-bg-color: #8b1515;
+  --el-button-active-border-color: #8b1515;
 }
 
-.page-header-content .subtitle {
-  font-size: 14px;
+.all-projects-page :deep(.el-pagination .el-pager li.is-active) {
+  color: #b31b1b;
+  font-weight: 600;
+}
+
+.all-projects-page :deep(.el-pagination .el-pager li:hover) {
+  color: #8b1515;
+}
+
+.page-header {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+
+.back-workbench-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 10px 18px;
+  border: 1px solid rgba(179, 27, 27, 0.35);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffbfb 0%, #fff5f5 100%);
+  color: #b31b1b;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.back-workbench-box:hover {
+  background: #fff0f0;
+  border-color: #b31b1b;
+  box-shadow: 0 2px 8px rgba(179, 27, 27, 0.12);
+}
+
+.back-workbench-box:active {
+  background: #ffe8e8;
+}
+
+.back-workbench-box .back-icon {
+  font-size: 18px;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.header-main h1 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  color: #303133;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
+}
+
+.header-main .subtitle {
+  margin: 0;
   color: #909399;
-  margin-top: 4px;
+  font-size: 14px;
 }
 
 .content-container {
-  margin-top: 20px;
+  margin-top: 0;
+}
+
+@media (max-width: 768px) {
+  .back-workbench-box {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 .filter-card {
@@ -435,8 +533,8 @@ onMounted(() => {
 }
 
 .project-item:hover {
-  border-color: #409eff;
-  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.1);
+  border-color: #b31b1b;
+  box-shadow: 0 2px 12px rgba(179, 27, 27, 0.12);
 }
 
 .project-header {

@@ -17,7 +17,7 @@
         >
           <el-option label="项目申请人" value="applicant" />
           <el-option label="评审专家" value="reviewer" />
-          <el-option label="科研助理" value="assistant" />
+          <el-option label="科研助理" value="project_manager" />
           <el-option label="系统管理员" value="admin" />
         </el-select>
       </el-form-item>

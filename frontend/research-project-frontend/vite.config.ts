@@ -27,7 +27,7 @@ export default defineConfig({
     open: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001', // 改为3001端口（您的Express服务器端口）
+        target: 'http://localhost:3002', // 与 research_api.js 默认端口一致
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, '') // 如果后端API不需要/api前缀，去掉这行
       },

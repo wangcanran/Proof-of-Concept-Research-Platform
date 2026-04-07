@@ -4,7 +4,10 @@
     <!-- 页面标题 -->
     <div class="page-header">
       <div class="header-left">
-        <button class="back-btn" @click="router.push('/applicant/dashboard')">← 返回仪表盘</button>
+        <button type="button" class="back-workbench-box" @click="router.push('/applicant/dashboard')">
+          <el-icon class="back-icon"><ArrowLeft /></el-icon>
+          <span class="back-text">返回工作台</span>
+        </button>
         <h1>项目管理</h1>
         <div class="header-subtitle">
           共 {{ totalProjects }} 个项目
@@ -263,6 +266,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
 
 const router = useRouter()
@@ -721,28 +725,47 @@ onMounted(async () => {
   padding: 20px 24px;
   background: white;
   border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
-.back-btn {
+.header-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.back-workbench-box {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 14px;
-  margin-bottom: 10px;
-  background: #f5f7fa;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  font-size: 13px;
-  color: #555;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 10px 18px;
+  border: 1px solid rgba(179, 27, 27, 0.35);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffbfb 0%, #fff5f5 100%);
+  color: #b31b1b;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
 }
 
-.back-btn:hover {
-  background: #e8e8e8;
+.back-workbench-box:hover {
+  background: #fff0f0;
   border-color: #b31b1b;
-  color: #b31b1b;
+  box-shadow: 0 2px 8px rgba(179, 27, 27, 0.12);
+}
+
+.back-workbench-box:active {
+  background: #ffe8e8;
+}
+
+.back-workbench-box .back-icon {
+  font-size: 18px;
 }
 
 .header-left h1 {
@@ -1483,6 +1506,11 @@ onMounted(async () => {
     flex-direction: column;
     gap: 16px;
     align-items: stretch;
+  }
+
+  .back-workbench-box {
+    width: 100%;
+    justify-content: center;
   }
 
   .header-actions {

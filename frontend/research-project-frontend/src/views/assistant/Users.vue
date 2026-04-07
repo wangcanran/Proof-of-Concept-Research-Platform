@@ -1,6 +1,6 @@
 <!-- src/views/assistant/Users.vue -->
 <template>
-  <div class="users-management">
+  <div class="users-management assistant-ruc-theme">
     <!-- 顶部标题栏 -->
     <div class="page-header">
       <div class="header-left">
@@ -39,7 +39,7 @@
         >
           <el-option label="申请人" value="applicant" />
           <el-option label="评审专家" value="reviewer" />
-          <el-option label="科研助理" value="assistant" />
+          <el-option label="科研助理" value="project_manager" />
           <el-option label="管理员" value="admin" />
         </el-select>
 
@@ -84,7 +84,7 @@
       </div>
 
       <div class="stat-card" @click="filterByRole('reviewer')">
-        <div class="stat-icon" style="background: #52c41a20; color: #52c41a">
+        <div class="stat-icon" style="background: rgba(179, 27, 27, 0.12); color: #b31b1b">
           <el-icon><Star /></el-icon>
         </div>
         <div class="stat-content">
@@ -93,8 +93,8 @@
         </div>
       </div>
 
-      <div class="stat-card" @click="filterByRole('assistant')">
-        <div class="stat-icon" style="background: #fa8c1620; color: #fa8c16">
+      <div class="stat-card" @click="filterByRole('project_manager')">
+        <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><Setting /></el-icon>
         </div>
         <div class="stat-content">
@@ -104,7 +104,7 @@
       </div>
 
       <div class="stat-card" @click="filterByRole('admin')">
-        <div class="stat-icon" style="background: #722ed120; color: #722ed1">
+        <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><Lock /></el-icon>
         </div>
         <div class="stat-content">
@@ -114,7 +114,7 @@
       </div>
 
       <div class="stat-card" @click="filterByStatus('active')">
-        <div class="stat-icon" style="background: #13c2c220; color: #13c2c2">
+        <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><Check /></el-icon>
         </div>
         <div class="stat-content">
@@ -362,7 +362,7 @@
           <el-select v-model="dialog.form.role" placeholder="请选择角色" style="width: 100%">
             <el-option label="申请人" value="applicant" />
             <el-option label="评审专家" value="reviewer" />
-            <el-option label="科研助理" value="assistant" />
+            <el-option label="科研助理" value="project_manager" />
             <el-option label="管理员" value="admin" />
           </el-select>
         </el-form-item>
@@ -603,7 +603,7 @@ const getRoleText = (role: string) => {
   const map: Record<string, string> = {
     applicant: '申请人',
     reviewer: '评审专家',
-    assistant: '科研助理',
+    project_manager: '科研助理',
     admin: '管理员',
   }
   return map[role] || role
@@ -613,7 +613,7 @@ const getRoleTagType = (role: string) => {
   const map: Record<string, string> = {
     applicant: 'primary',
     reviewer: 'success',
-    assistant: 'warning',
+    project_manager: 'warning',
     admin: 'danger',
   }
   return map[role] || 'info'
@@ -1075,7 +1075,7 @@ onMounted(() => {
 .user-avatar-small {
   width: 32px;
   height: 32px;
-  background: #fa8c16;
+  background: #b31b1b;
   color: white;
   border-radius: 50%;
   display: flex;
@@ -1124,7 +1124,7 @@ onMounted(() => {
 }
 
 .user-card:hover {
-  border-color: #fa8c16;
+  border-color: #b31b1b;
   box-shadow: 0 4px 16px rgba(250, 140, 22, 0.1);
 }
 
@@ -1140,7 +1140,7 @@ onMounted(() => {
 .user-avatar-large {
   width: 60px;
   height: 60px;
-  background: linear-gradient(135deg, #fa8c16 0%, #fa541c 100%);
+  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
   color: white;
   border-radius: 12px;
   display: flex;
@@ -1177,7 +1177,7 @@ onMounted(() => {
 }
 
 .card-menu:hover {
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .card-content {

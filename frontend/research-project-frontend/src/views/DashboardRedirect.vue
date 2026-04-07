@@ -23,7 +23,7 @@ onMounted(() => {
   const roleRoutes: Record<string, string> = {
     applicant: '/applicant/dashboard',
     reviewer: '/reviewer/dashboard',
-    assistant: '/assistant/dashboard',
+    project_manager: '/assistant/dashboard',
     admin: '/admin/dashboard',
   }
 

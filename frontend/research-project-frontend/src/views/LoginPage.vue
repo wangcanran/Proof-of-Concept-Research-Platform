@@ -84,8 +84,10 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const authStore = useAuthStore()
 
 const loading = ref(false)
 const showPassword = ref(false)
@@ -122,6 +124,11 @@ const handleLogin = async () => {
       storage.setItem('token', token)
       localStorage.setItem('token', token)
 
+      /** Pinia auth 与全站 request 依赖 localStorage `user`，此前只写了 userInfo 导致工作台读不到 role，领取按钮不显示 */
+      localStorage.setItem('user', JSON.stringify(userData))
+      authStore.token = token
+      authStore.user = userData
+
       localStorage.setItem('userRole', userData.role)
       localStorage.setItem('userName', userData.name || userData.username)
       localStorage.setItem('userId', userData.id)
@@ -140,18 +147,27 @@ const handleLogin = async () => {
         }),
       )
 
-      router.push('/dashboard')
+      const role = (userData.role || '').toLowerCase()
+      const homeByRole: Record<string, string> = {
+        applicant: '/applicant/dashboard',
+        reviewer: '/reviewer/dashboard',
+        project_manager: '/assistant/dashboard',
+        admin: '/admin/dashboard',
+      }
+      router.push(homeByRole[role] || '/dashboard')
     } else {
       errorMessage.value = response.data.error || '登录失败'
     }
   } catch (error: any) {
     console.error('登录失败:', error)
+    const msg = error.response?.data?.error
     if (error.response?.status === 401) {
-      errorMessage.value = '用户名或密码错误'
+      errorMessage.value = msg || '用户名或密码错误'
     } else if (error.response?.status === 403) {
-      errorMessage.value = '账号未激活，请联系管理员'
+      errorMessage.value =
+        msg || '账号未激活，请联系管理员'
     } else {
-      errorMessage.value = '登录失败，请稍后重试'
+      errorMessage.value = msg || '登录失败，请稍后重试'
     }
   } finally {
     loading.value = false

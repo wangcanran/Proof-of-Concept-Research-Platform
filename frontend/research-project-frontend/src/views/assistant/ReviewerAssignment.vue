@@ -1,70 +1,27 @@
 <!-- src/views/assistant/ReviewerAssignment.vue -->
 <template>
-  <div class="reviewer-assignment">
+  <div class="reviewer-assignment assistant-ruc-theme">
     <!-- 页面头部 -->
     <div class="page-header">
-      <h1 class="page-title">📋 评审专家分配</h1>
-      <div class="header-actions">
-        <el-button type="primary" @click="refreshData">
-          <el-icon><Refresh /></el-icon>
-          刷新
-        </el-button>
-        <el-button @click="exportToExcel">
-          <el-icon><Download /></el-icon>
-          导出
+      <div class="page-back-row">
+        <el-button text type="primary" class="back-to-workbench" @click="goToWorkbench">
+          <el-icon class="back-icon"><ArrowLeft /></el-icon>
+          返回工作台
         </el-button>
       </div>
-    </div>
-
-    <!-- 统计卡片 -->
-    <div class="stats-cards">
-      <el-card shadow="hover" class="stat-card">
-        <div class="stat-content">
-          <div class="stat-icon" style="background: rgba(179,27,27,0.06)">
-            <el-icon><Document /></el-icon>
-          </div>
-          <div class="stat-details">
-            <div class="stat-value">{{ stats.total || 0 }}</div>
-            <div class="stat-label">待分配项目</div>
-          </div>
+      <div class="page-header-toolbar">
+        <h1 class="page-title">📋 评审专家分配</h1>
+        <div class="header-actions">
+          <el-button type="primary" @click="refreshData">
+            <el-icon><Refresh /></el-icon>
+            刷新
+          </el-button>
+          <el-button @click="exportToExcel">
+            <el-icon><Download /></el-icon>
+            导出
+          </el-button>
         </div>
-      </el-card>
-
-      <el-card shadow="hover" class="stat-card">
-        <div class="stat-content">
-          <div class="stat-icon" style="background: #f6ffed">
-            <el-icon><Check /></el-icon>
-          </div>
-          <div class="stat-details">
-            <div class="stat-value">{{ stats.submitted || 0 }}</div>
-            <div class="stat-label">已提交项目</div>
-          </div>
-        </div>
-      </el-card>
-
-      <el-card shadow="hover" class="stat-card">
-        <div class="stat-content">
-          <div class="stat-icon" style="background: #fff7e6">
-            <el-icon><Clock /></el-icon>
-          </div>
-          <div class="stat-details">
-            <div class="stat-value">{{ stats.under_review || 0 }}</div>
-            <div class="stat-label">评审中项目</div>
-          </div>
-        </div>
-      </el-card>
-
-      <el-card shadow="hover" class="stat-card">
-        <div class="stat-content">
-          <div class="stat-icon" style="background: #f0f7ff">
-            <el-icon><User /></el-icon>
-          </div>
-          <div class="stat-details">
-            <div class="stat-value">{{ availableReviewers || 0 }}</div>
-            <div class="stat-label">可用专家</div>
-          </div>
-        </div>
-      </el-card>
+      </div>
     </div>
 
     <!-- 搜索筛选 -->
@@ -462,17 +419,14 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  ArrowLeft,
   Refresh,
   Download,
-  Document,
-  Check,
-  Clock,
   User,
   Search,
   Close,
   Star,
   UserFilled,
-  DocumentChecked,
   OfficeBuilding,
   Loading,
   Plus,
@@ -480,6 +434,10 @@ import {
 import axios from 'axios'
 
 const router = useRouter()
+
+const goToWorkbench = () => {
+  router.push('/assistant/dashboard')
+}
 
 // API配置
 const API_BASE_URL = 'http://localhost:3002/api'
@@ -521,11 +479,6 @@ const filterForm = reactive({
 
 // 项目列表数据
 const projectList = ref<any[]>([])
-const stats = ref({
-  total: 0,
-  submitted: 0,
-  under_review: 0,
-})
 
 // 分页数据
 const pagination = reactive({
@@ -553,10 +506,6 @@ const recommendedReviewers = computed(() => {
       return bMatch - aMatch
     })
     .slice(0, 6)
-})
-
-const availableReviewers = computed(() => {
-  return availableReviewersList.value.length
 })
 
 // 获取状态文本
@@ -602,13 +551,6 @@ const loadProjectList = async () => {
         reviewers: p.reviewers || [],
       }))
       pagination.total = response.total || projects.length
-
-      // 更新统计
-      stats.value.submitted = projects.filter((p: any) => p.status === 'submitted').length
-      stats.value.under_review = projects.filter(
-        (p: any) => p.status === 'under_review' || p.status === 'batch_review',
-      ).length
-      stats.value.total = stats.value.submitted + stats.value.under_review
     }
   } catch (error) {
     console.error('加载项目列表失败:', error)
@@ -822,9 +764,32 @@ onMounted(() => {
 
 .page-header {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.page-back-row {
+  margin-bottom: 0;
+}
+
+.back-to-workbench {
+  padding-left: 0;
+  font-weight: 500;
+}
+
+.back-to-workbench .back-icon {
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.page-header-toolbar {
+  display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .page-title {
@@ -832,54 +797,6 @@ onMounted(() => {
   font-weight: 600;
   color: #1a1a1a;
   margin: 0;
-}
-
-.stats-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.stat-card {
-  border-radius: 8px;
-}
-
-.stat-content {
-  display: flex;
-  align-items: center;
-  padding: 16px;
-}
-
-.stat-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-right: 16px;
-}
-
-.stat-icon .el-icon {
-  font-size: 24px;
-  color: #b31b1b;
-}
-
-.stat-details {
-  flex: 1;
-}
-
-.stat-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: #1a1a1a;
-  margin-bottom: 4px;
-}
-
-.stat-label {
-  font-size: 14px;
-  color: #666;
 }
 
 .filter-card {
@@ -1080,7 +997,7 @@ onMounted(() => {
 
 .reviewer-select-item.selected {
   border-color: #b31b1b;
-  background: #f0f7ff;
+  background: #fff5f5;
 }
 
 .reviewer-select-avatar {
@@ -1093,7 +1010,7 @@ onMounted(() => {
   position: absolute;
   top: -8px;
   right: -8px;
-  background: #52c41a;
+  background: #b31b1b;
   color: white;
   font-size: 10px;
   padding: 2px 6px;
@@ -1186,14 +1103,9 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
-  .page-header {
+  .page-header-toolbar {
     flex-direction: column;
     align-items: flex-start;
-    gap: 12px;
-  }
-
-  .stats-cards {
-    grid-template-columns: repeat(2, 1fr);
   }
 
   .filter-form {
@@ -1212,10 +1124,6 @@ onMounted(() => {
 }
 
 @media (max-width: 480px) {
-  .stats-cards {
-    grid-template-columns: 1fr;
-  }
-
   .reviewer-grid {
     grid-template-columns: 1fr;
   }

@@ -1,101 +1,46 @@
 <!-- src/views/assistant/AssistantDashboard.vue -->
 <template>
-  <div class="assistant-dashboard">
-    <!-- 顶部导航栏 -->
-    <header class="dashboard-header">
-      <div class="header-left">
-        <div class="mobile-menu-btn" @click="toggleMobileMenu">
-          <span class="icon">☰</span>
+  <div class="dashboard-container assistant-ruc-theme">
+    <aside
+      class="sidebar"
+      :class="{ 'sidebar-collapsed': sidebarCollapsed, show: showMobileMenu }"
+    >
+      <div class="sidebar-header">
+        <div class="logo-area">
+          <img
+            src="@/views/picture/university-logo.png"
+            alt="人大校徽"
+            class="sidebar-logo"
+            @error="handleLogoError"
+          />
+          <h3 v-if="!sidebarCollapsed" class="sidebar-title">概念验证平台</h3>
         </div>
-        <h1 class="logo">科研项目管理系统</h1>
-        <div class="breadcrumb">
-          <span class="current-page">科研助理工作台</span>
-        </div>
+        <button class="sidebar-toggle" @click="toggleSidebar">
+          {{ sidebarCollapsed ? '→' : '←' }}
+        </button>
       </div>
-      <div class="header-right">
-        <div class="user-menu">
-          <div class="header-actions">
-            <button class="icon-btn" @click="refreshData" title="刷新">
-              <span class="icon">🔄</span>
-            </button>
-            <button class="icon-btn" @click="toggleTheme" title="切换主题">
-              <span class="icon">{{ isDarkMode ? '☀️' : '🌙' }}</span>
-            </button>
-            <div class="notifications-dropdown">
-              <button class="icon-btn notification-btn" @click="toggleNotifications" title="通知">
-                <span class="icon">🔔</span>
-                <span v-if="unreadCount > 0" class="notification-count">{{ unreadCount }}</span>
-              </button>
-              <div v-if="showNotificationsDropdown" class="notifications-dropdown-content">
-                <div class="notifications-dropdown-header">
-                  <h4>最新通知</h4>
-                  <button @click="markAllAsRead" v-if="unreadCount > 0">标记已读</button>
-                </div>
-                <div class="notifications-dropdown-list">
-                  <div
-                    v-for="notification in recentNotifications"
-                    :key="notification.id"
-                    class="notification-dropdown-item"
-                    @click="openNotification(notification)"
-                  >
-                    <div class="notification-dropdown-icon">{{ notification.icon }}</div>
-                    <div class="notification-dropdown-content">
-                      <div class="notification-dropdown-title">{{ notification.title }}</div>
-                      <div class="notification-dropdown-time">{{ notification.time }}</div>
-                    </div>
-                    <span class="unread-dot-small" v-if="!notification.read"></span>
-                  </div>
-                  <div v-if="recentNotifications.length === 0" class="no-notifications">
-                    暂无通知
-                  </div>
-                </div>
-                <div class="notifications-dropdown-footer">
-                  <router-link to="/notifications" @click="showNotificationsDropdown = false">
-                    查看全部
-                  </router-link>
-                </div>
-              </div>
-            </div>
-            <div class="user-info-mini">
-              <div class="user-avatar-mini">{{ userInitial }}</div>
-              <div class="user-details">
-                <div class="user-name-mini">{{ userName }}</div>
-                <div class="user-role-mini">科研助理</div>
-              </div>
-            </div>
-            <button class="logout-btn" @click="handleLogout">
-              <span class="icon">🚪</span>
-              退出
-            </button>
-          </div>
-        </div>
-      </div>
-    </header>
 
-    <div class="dashboard-content">
-      <!-- 侧边栏导航 -->
-      <aside class="sidebar" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
-        <div class="sidebar-header">
-          <h3 v-if="!sidebarCollapsed" class="sidebar-title">科研助理工作台</h3>
-          <button class="sidebar-toggle" @click="toggleSidebar">
-            {{ sidebarCollapsed ? '→' : '←' }}
-          </button>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <router-link to="/" class="nav-link">
+            <span class="nav-icon">🌐</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">平台首页</span>
+          </router-link>
         </div>
 
-        <nav class="sidebar-nav">
-          <div class="nav-section">
-            <h4 v-if="!sidebarCollapsed" class="nav-section-title">控制面板</h4>
-            <router-link to="/assistant/dashboard" class="nav-link" active-class="active">
-              <span class="nav-icon">📊</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">仪表板</span>
-            </router-link>
-          </div>
+        <div class="nav-section">
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">工作台</h4>
+          <router-link to="/assistant/dashboard" class="nav-link" active-class="active">
+            <span class="nav-icon">🏠</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">工作台</span>
+          </router-link>
+        </div>
 
           <div class="nav-section">
             <h4 v-if="!sidebarCollapsed" class="nav-section-title">项目管理</h4>
             <router-link to="/assistant/applications" class="nav-link" active-class="active">
               <span class="nav-icon">📝</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">项目审核</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">领取项目</span>
               <span v-if="!sidebarCollapsed && pendingStats.projects > 0" class="nav-badge">
                 {{ pendingStats.projects }}
               </span>
@@ -153,24 +98,84 @@
             <div class="user-avatar-mini">{{ userInitial }}</div>
             <div v-if="!sidebarCollapsed" class="user-details">
               <div class="user-name-mini">{{ userName }}</div>
-              <div class="user-role-mini">科研助理</div>
+              <div class="user-role-mini">{{ userRoleName }}</div>
             </div>
           </div>
         </div>
-      </aside>
+    </aside>
 
-      <!-- 主内容区域 -->
-      <main class="main-content" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+    <div class="main-wrapper" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+      <header class="dashboard-header">
+        <div class="header-left">
+          <div class="mobile-menu-btn" @click="toggleMobileMenu">
+            <span class="icon">☰</span>
+          </div>
+          <div class="breadcrumb">
+            <span class="current-page">工作台</span>
+          </div>
+        </div>
+        <div class="header-right">
+          <div class="header-actions">
+            <button class="icon-btn" @click="refreshData" title="刷新">
+              <span class="icon">🔄</span>
+            </button>
+            <button class="icon-btn" @click="toggleTheme" title="切换主题">
+              <span class="icon">{{ isDarkMode ? '☀️' : '🌙' }}</span>
+            </button>
+            <div class="notifications-dropdown">
+              <button class="icon-btn notification-btn" @click="toggleNotifications" title="通知">
+                <span class="icon">🔔</span>
+                <span v-if="unreadCount > 0" class="notification-count">{{ unreadCount }}</span>
+              </button>
+              <div v-if="showNotificationsDropdown" class="notifications-dropdown-content">
+                <div class="notifications-dropdown-header">
+                  <h4>最新通知</h4>
+                  <button @click="markAllAsRead" v-if="unreadCount > 0">标记已读</button>
+                </div>
+                <div class="notifications-dropdown-list">
+                  <div
+                    v-for="notification in recentNotifications"
+                    :key="notification.id"
+                    class="notification-dropdown-item"
+                    @click="openNotification(notification)"
+                  >
+                    <div class="notification-dropdown-icon">{{ notification.icon }}</div>
+                    <div class="notification-dropdown-content">
+                      <div class="notification-dropdown-title">{{ notification.title }}</div>
+                      <div class="notification-dropdown-time">{{ notification.time }}</div>
+                    </div>
+                    <span class="unread-dot-small" v-if="!notification.read"></span>
+                  </div>
+                  <div v-if="recentNotifications.length === 0" class="no-notifications">
+                    暂无通知
+                  </div>
+                </div>
+                <div class="notifications-dropdown-footer">
+                  <router-link to="/notifications" @click="showNotificationsDropdown = false">
+                    查看全部
+                  </router-link>
+                </div>
+              </div>
+            </div>
+            <button class="logout-btn" @click="handleLogout">
+              <span class="icon">🚪</span>
+              退出
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main class="main-content">
         <!-- 欢迎区域 -->
         <div class="welcome-section">
-          <div class="welcome-card assistant-banner">
+          <div class="welcome-card">
             <div class="welcome-content">
-              <h2 class="welcome-title">科研助理工作台</h2>
-              <p class="welcome-subtitle">欢迎回来，{{ userName }}！今天是 {{ currentDate }}</p>
+              <h2 class="welcome-title">欢迎回来，{{ userName }}！</h2>
+              <p class="welcome-subtitle">今天是 {{ currentDate }}，祝您工作愉快！</p>
               <div class="quick-stats">
                 <div class="stat-badge">
                   <span class="stat-value">{{ overview.pendingApplications || 0 }}</span>
-                  <span class="stat-label">待处理申请</span>
+                  <span class="stat-label">待领取申请</span>
                 </div>
                 <div class="stat-badge">
                   <span class="stat-value">{{ overview.activeProjects || 0 }}</span>
@@ -187,7 +192,7 @@
               </div>
             </div>
             <div class="welcome-illustration">
-              <div class="illustration-icon">📋</div>
+              <div class="illustration-icon">📊</div>
             </div>
           </div>
         </div>
@@ -200,16 +205,17 @@
 
         <!-- 三列布局 -->
         <div class="dashboard-layout">
-          <!-- 左列：待处理申请 -->
+          <!-- 左列：待领取（尚未分配项目经理的申请） -->
           <div class="dashboard-column">
-            <!-- 待处理申请 -->
             <div class="notifications-section card-section">
               <div class="section-header">
                 <h3 class="section-title">
                   <span class="section-icon">📝</span>
-                  待处理申请
+                  待领取申请
                 </h3>
-                <button class="view-all-btn" @click="navigateTo('applications')">查看全部 →</button>
+                <button class="view-all-btn" @click="navigateToApplicationsUnassigned">
+                  查看全部 →
+                </button>
               </div>
 
               <div class="applications-list">
@@ -239,51 +245,47 @@
 
                 <div v-if="pendingApplications.length === 0" class="empty-state">
                   <div class="empty-icon">📁</div>
-                  <p>暂无待处理申请</p>
+                  <p>暂无待领取申请</p>
                 </div>
               </div>
             </div>
 
-            <!-- 最近用户 -->
-            <div class="notifications-section card-section">
+            <!-- 我负责的项目 -->
+            <div class="notifications-section card-section my-managed-section">
               <div class="section-header">
                 <h3 class="section-title">
-                  <span class="section-icon">👥</span>
-                  最近用户
+                  <span class="section-icon">📌</span>
+                  我负责的项目
                 </h3>
-                <button class="view-all-btn" @click="navigateTo('users')">查看全部 →</button>
+                <button class="view-all-btn" @click="navigateToApplicationsMine">查看全部 →</button>
               </div>
-
-              <div class="user-list">
+              <div class="applications-list">
                 <div
-                  v-for="user in recentUsers"
-                  :key="user.id"
-                  class="user-item"
-                  @click="viewUser(user.id)"
+                  v-for="application in myManagedProjects"
+                  :key="application.id"
+                  class="application-item"
+                  @click="viewApplication(application.id)"
                 >
-                  <div class="user-avatar-small">
-                    {{ (user.name || '用户').charAt(0).toUpperCase() }}
+                  <div class="application-header">
+                    <span class="application-id">{{
+                      application.project_code || application.id.substring(0, 8)
+                    }}</span>
+                    <span class="application-time">{{ formatTime(application.updated_at || application.created_at) }}</span>
                   </div>
-                  <div class="user-content">
-                    <div class="user-header">
-                      <h4 class="user-name">{{ user.name }}</h4>
-                      <span class="user-role-tag">{{ getRoleText(user.role) }}</span>
-                    </div>
-                    <div class="user-meta">
-                      <span>{{ user.department || '未设置部门' }}</span>
-                      <span
-                        class="user-status"
-                        :class="user.status === 'active' ? 'active' : 'inactive'"
-                      >
-                        {{ user.status === 'active' ? '活跃' : '非活跃' }}
-                      </span>
-                    </div>
+                  <div class="application-title">{{ application.title }}</div>
+                  <div class="application-info">
+                    <span class="applicant">
+                      <span class="applicant-icon">👤</span>
+                      {{ application.applicant_name || '未知申请人' }}
+                    </span>
+                    <span class="status" :class="getStatusClass(application.status)">
+                      {{ getStatusText(application.status) }}
+                    </span>
                   </div>
                 </div>
-
-                <div v-if="recentUsers.length === 0" class="empty-state">
-                  <div class="empty-icon">👤</div>
-                  <p>暂无用户数据</p>
+                <div v-if="myManagedProjects.length === 0" class="empty-state">
+                  <div class="empty-icon">📋</div>
+                  <p>暂无负责的项目，可在「领取项目」中领取待受理申请</p>
                 </div>
               </div>
             </div>
@@ -298,11 +300,11 @@
                 快速操作
               </h3>
               <div class="actions-grid">
-                <button class="action-card" @click="navigateTo('review-projects')">
+                <button class="action-card" @click="navigateTo('applications')">
                   <div class="action-icon">📋</div>
                   <div class="action-content">
-                    <h4>项目审核</h4>
-                    <p>审核新提交的项目</p>
+                    <h4>领取项目</h4>
+                    <p>领取待受理申请并分配专家</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('review-funding')">
@@ -489,7 +491,7 @@ const userInfo = ref({
   id: '',
   username: '',
   name: '',
-  role: 'assistant',
+  role: 'project_manager',
   email: '',
   department: '',
   title: '',
@@ -504,10 +506,14 @@ const overview = ref({
   activeUsers: 0,
 })
 
+/** 工作台列表预览条数（待处理 / 我负责的各最多展示这么多） */
+const DASHBOARD_PREVIEW_LIMIT = 2
+
 const pendingApplications = ref([])
+/** 当前用户作为项目经理负责的项目（来自 /assistant/applications?scope=mine） */
+const myManagedProjects = ref<any[]>([])
 const projectStats = ref([])
 const recentActivities = ref([])
-const recentUsers = ref([])
 const notifications = ref([])
 
 const pendingTasks = ref({
@@ -532,6 +538,15 @@ const userInitial = computed(() => {
   return userName.value ? userName.value.charAt(0).toUpperCase() : 'A'
 })
 
+/** 科研助理与项目经理为同一岗位，界面统一为「科研助理」 */
+const userRoleName = computed(() => '科研助理')
+
+const handleLogoError = (e: Event) => {
+  const img = e.target as HTMLImageElement
+  img.src =
+    'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%23B31B1B"/%3E%3Ctext x="50" y="50" text-anchor="middle" dy=".3em" fill="white" font-size="40"%3E人大%3C/text%3E%3C/svg%3E'
+}
+
 const currentDate = computed(() => {
   const now = new Date()
   const year = now.getFullYear()
@@ -547,16 +562,6 @@ const recentNotifications = computed(() => {
 })
 
 // 工具函数
-const getRoleText = (role: string) => {
-  const roleMap: Record<string, string> = {
-    applicant: '申请人',
-    reviewer: '评审专家',
-    project_manager: '项目经理',
-    admin: '管理员',
-  }
-  return roleMap[role] || role
-}
-
 const getStatusText = (status: string) => {
   const statusMap: Record<string, string> = {
     draft: '草稿',
@@ -626,12 +631,16 @@ const navigateTo = (action: string) => {
   if (routes[action]) router.push(routes[action])
 }
 
-const viewApplication = (id: string) => {
-  router.push(`/assistant/application/${id}`)
+const navigateToApplicationsMine = () => {
+  router.push({ path: '/assistant/applications', query: { scope: 'mine' } })
 }
 
-const viewUser = (userId: string) => {
-  router.push(`/assistant/users/${userId}`)
+const navigateToApplicationsUnassigned = () => {
+  router.push({ path: '/assistant/applications', query: { scope: 'unassigned' } })
+}
+
+const viewApplication = (id: string) => {
+  router.push(`/assistant/application/${id}`)
 }
 
 // UI控制
@@ -705,7 +714,7 @@ const loadUserInfo = async () => {
         id: user.id || '',
         username: user.username || '',
         name: user.name || user.username || '科研助理',
-        role: user.role || 'assistant',
+        role: user.role || 'project_manager',
         email: user.email || '',
         department: user.department || '',
         title: user.title || '',
@@ -726,9 +735,9 @@ const loadDashboardData = async () => {
     await Promise.all([
       loadOverviewData(),
       loadPendingApplications(),
+      loadMyManagedProjects(),
       loadProjectStats(),
       loadRecentActivities(),
-      loadRecentUsers(),
       loadNotificationsData(),
       loadPendingTasksData(),
     ])
@@ -760,14 +769,21 @@ const loadOverviewData = async () => {
   }
 }
 
-// 加载待处理申请
+// 待领取：仅「已提交且未指定项目经理」，与申请页「待领取」一致（非全平台待办）
 const loadPendingApplications = async () => {
   try {
-    const response = await api.get('/projects', {
-      params: { status: 'submitted,under_review,revision', limit: 5 },
+    const response = await api.get('/assistant/applications', {
+      params: {
+        scope: 'unassigned',
+        page: 1,
+        pageSize: DASHBOARD_PREVIEW_LIMIT,
+        sortBy: 'updated_at',
+        sortOrder: 'desc',
+      },
     })
-    if (response.success && response.data) {
-      pendingApplications.value = response.data.map((app: any) => ({
+    if (response.success && response.data?.applications) {
+      const list = response.data.applications as any[]
+      pendingApplications.value = list.slice(0, DASHBOARD_PREVIEW_LIMIT).map((app: any) => ({
         ...app,
         applicant_name: app.applicant_name || '未知',
         time: formatTime(app.created_at),
@@ -775,6 +791,26 @@ const loadPendingApplications = async () => {
     }
   } catch (error) {
     console.error('加载待处理申请失败:', error)
+  }
+}
+
+const loadMyManagedProjects = async () => {
+  try {
+    const response = await api.get('/assistant/applications', {
+      params: {
+        scope: 'mine',
+        page: 1,
+        pageSize: DASHBOARD_PREVIEW_LIMIT,
+        sortBy: 'updated_at',
+        sortOrder: 'desc',
+      },
+    })
+    if (response.success && response.data?.applications) {
+      myManagedProjects.value = (response.data.applications as any[]).slice(0, DASHBOARD_PREVIEW_LIMIT)
+    }
+  } catch (error) {
+    console.error('加载我负责的项目失败:', error)
+    myManagedProjects.value = []
   }
 }
 
@@ -832,20 +868,6 @@ const loadRecentActivities = async () => {
   }
 }
 
-// 加载最近用户
-const loadRecentUsers = async () => {
-  try {
-    const response = await api.get('/users', {
-      params: { limit: 5, orderBy: 'created_at', order: 'desc' },
-    })
-    if (response.success && response.data) {
-      recentUsers.value = response.data
-    }
-  } catch (error) {
-    console.error('加载最近用户失败:', error)
-  }
-}
-
 // 加载通知数据
 const loadNotificationsData = async () => {
   try {
@@ -868,12 +890,11 @@ const loadNotificationsData = async () => {
 // 加载待处理任务统计
 const loadPendingTasksData = async () => {
   try {
-    // 获取待处理项目数
-    const projectsRes = await api.get('/projects', {
-      params: { status: 'submitted,under_review,revision' },
+    const unassignedRes = await api.get('/assistant/applications', {
+      params: { scope: 'unassigned', page: 1, pageSize: 1 },
     })
-    if (projectsRes.success && projectsRes.data) {
-      pendingTasks.value.projects = projectsRes.data.length
+    if (unassignedRes.success && unassignedRes.data?.pagination) {
+      pendingTasks.value.projects = unassignedRes.data.pagination.total ?? 0
     }
     // 获取待处理支出申请
     const expendituresRes = await api.get('/expenditures', { params: { status: 'submitted' } })
@@ -963,15 +984,6 @@ const showMockData = () => {
     { status: 'incubating', label: '孵化中', count: 15, percentage: 37.5, color: '#b31b1b' },
     { status: 'completed', label: '已完成', count: 2, percentage: 5, color: '#52c41a' },
   ]
-  recentUsers.value = [
-    {
-      id: 'user_001',
-      name: '王博士',
-      role: 'applicant',
-      department: '计算机学院',
-      status: 'active',
-    },
-  ]
   notifications.value = [
     {
       id: 'notif_001',
@@ -992,9 +1004,17 @@ onMounted(() => {
   console.log('=== 初始化科研助理工作台页面 ===')
   loadUserInfo().then(() => {
     const userRole = localStorage.getItem('userRole')
-    if (userRole?.toLowerCase() !== 'assistant') {
+    const r = userRole?.toLowerCase() || ''
+    if (r !== 'project_manager') {
       ElMessage.warning('检测到您不是科研助理，将跳转到对应工作台')
-      setTimeout(() => router.push('/dashboard'), 2000)
+      setTimeout(() => {
+        const rolePaths: Record<string, string> = {
+          applicant: '/applicant/dashboard',
+          reviewer: '/reviewer/dashboard',
+          admin: '/admin/dashboard',
+        }
+        router.push(rolePaths[r] || '/login')
+      }, 2000)
     } else {
       loadDashboardData()
     }
@@ -1012,24 +1032,42 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 样式保持不变，与之前相同 */
-.assistant-dashboard {
+h1,
+h2,
+h3,
+h4,
+button {
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
+}
+
+.dashboard-container {
   min-height: 100vh;
   background: #f5f7fa;
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  display: flex;
+}
+
+.main-wrapper {
+  margin-left: 260px;
+  flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 100vh;
+  transition: all 0.3s;
+}
+
+.main-wrapper.sidebar-collapsed {
+  margin-left: 70px;
 }
 
 .dashboard-header {
-  background: linear-gradient(135deg, #fa8c16 0%, #fa541c 100%);
-  padding: 0 24px;
-  height: 70px;
+  background: white;
+  padding: 0 32px;
+  height: 60px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid #f0f0f0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   position: sticky;
   top: 0;
   z-index: 900;
@@ -1038,80 +1076,70 @@ onMounted(() => {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 16px;
 }
 
 .mobile-menu-btn {
   display: none;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border: none;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  background: #f5f7fa;
+  border-radius: 6px;
   cursor: pointer;
   align-items: center;
   justify-content: center;
   transition: all 0.3s;
-  color: white;
+  color: #333;
 }
 
 .mobile-menu-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.logo {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  color: white;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  background: #e8e8e8;
 }
 
 .breadcrumb {
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.8);
+  color: #666;
 }
 
 .current-page {
-  color: white;
+  color: #b31b1b;
   font-weight: 500;
 }
 
 .header-right {
-  flex: 1;
   display: flex;
   justify-content: flex-end;
-}
-
-.user-menu {
-  display: flex;
-  align-items: center;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+}
+
+.notifications-dropdown {
+  position: relative;
 }
 
 .icon-btn {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border: none;
-  background: rgba(255, 255, 255, 0.1);
+  background: #f5f7fa;
   border-radius: 8px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.3s;
-  color: white;
+  color: #555;
   position: relative;
 }
 
 .icon-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  transform: translateY(-2px);
+  background: #e8e8e8;
+  transform: translateY(-1px);
 }
 
 .notification-count {
@@ -1127,59 +1155,23 @@ onMounted(() => {
   text-align: center;
 }
 
-.user-info-mini {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 16px;
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.user-avatar-mini {
-  width: 36px;
-  height: 36px;
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  font-size: 14px;
-}
-
-.user-details {
-  display: flex;
-  flex-direction: column;
-}
-
-.user-name-mini {
-  font-size: 14px;
-  font-weight: 500;
-  color: white;
-}
-
-.user-role-mini {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.8);
-}
-
 .logout-btn {
-  padding: 8px 16px;
-  background: rgba(255, 77, 79, 0.2);
-  border: 1px solid rgba(255, 77, 79, 0.3);
+  padding: 6px 14px;
+  background: #fff1f0;
+  border: 1px solid #ffccc7;
   border-radius: 6px;
-  color: #ff4d4f;
-  font-size: 14px;
+  color: #cf1322;
+  font-size: 13px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   transition: all 0.3s;
 }
 
 .logout-btn:hover {
-  background: rgba(255, 77, 79, 0.3);
+  background: #ff4d4f;
+  border-color: #ff4d4f;
   color: white;
 }
 
@@ -1289,30 +1281,42 @@ onMounted(() => {
   font-size: 12px;
 }
 
-.dashboard-content {
-  display: flex;
-  flex: 1;
-  min-height: calc(100vh - 70px);
-}
-
 .sidebar {
-  width: 250px;
-  background: white;
-  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+  width: 260px;
+  background: #b31b1b;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
   display: flex;
+  position: fixed;
+  height: 100vh;
+  top: 0;
+  left: 0;
+  z-index: 1000;
   flex-direction: column;
   transition: all 0.3s ease;
-  z-index: 1000;
-  position: relative;
 }
 
 .sidebar-collapsed {
-  width: 60px;
+  width: 70px;
+}
+
+.logo-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-logo {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .sidebar-header {
-  padding: 20px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 20px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1322,12 +1326,12 @@ onMounted(() => {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: #2c3e50;
+  color: white;
 }
 
 .sidebar-toggle {
-  background: #f5f7fa;
-  border: 1px solid #e8e8e8;
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
   border-radius: 4px;
   width: 32px;
   height: 32px;
@@ -1336,18 +1340,23 @@ onMounted(() => {
   justify-content: center;
   cursor: pointer;
   font-size: 14px;
-  color: #666;
+  color: white;
   transition: all 0.3s;
 }
 
 .sidebar-toggle:hover {
-  background: #e8e8e8;
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .sidebar-nav {
   flex: 1;
   padding: 16px 0;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-section {
@@ -1356,7 +1365,7 @@ onMounted(() => {
 
 .nav-section-title {
   font-size: 12px;
-  color: #7f8c8d;
+  color: rgba(255, 255, 255, 0.6);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin: 0 0 8px 20px;
@@ -1367,21 +1376,21 @@ onMounted(() => {
   display: flex;
   align-items: center;
   padding: 12px 20px;
-  color: #2c3e50;
+  color: rgba(255, 255, 255, 0.85);
   text-decoration: none;
   transition: all 0.3s;
   position: relative;
 }
 
 .nav-link:hover {
-  background: #f5f7fa;
-  color: #fa8c16;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
 }
 
 .nav-link.active {
-  background: #fff7e6;
-  color: #fa8c16;
-  border-right: 3px solid #fa8c16;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border-left: 3px solid white;
 }
 
 .nav-icon {
@@ -1408,19 +1417,55 @@ onMounted(() => {
 }
 
 .sidebar-footer {
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
   padding: 16px 20px;
+}
+
+.sidebar-footer .user-info-mini {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sidebar-footer .user-avatar-mini {
+  width: 36px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.sidebar-footer .user-details {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sidebar-footer .user-name-mini {
+  font-size: 14px;
+  font-weight: 500;
+  color: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-footer .user-role-mini {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .main-content {
   flex: 1;
   padding: 24px;
   overflow-y: auto;
-  background: #f8f9fa;
-}
-
-.main-content.sidebar-collapsed {
-  margin-left: 60px;
+  background: #f5f7fa;
 }
 
 .welcome-section {
@@ -1430,30 +1475,11 @@ onMounted(() => {
 .welcome-card {
   background: white;
   border-radius: 12px;
-  padding: 32px;
+  padding: 28px 32px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-}
-
-.assistant-banner {
-  background: linear-gradient(135deg, #fa8c16 0%, #fa541c 100%);
-  color: white;
-}
-
-.welcome-card.assistant-banner .welcome-title,
-.welcome-card.assistant-banner .welcome-subtitle {
-  color: white;
-}
-
-.welcome-card.assistant-banner .stat-badge {
-  background: rgba(255, 255, 255, 0.15);
-}
-
-.welcome-card.assistant-banner .stat-value,
-.welcome-card.assistant-banner .stat-label {
-  color: white;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
 }
 
 .welcome-content {
@@ -1461,18 +1487,20 @@ onMounted(() => {
 }
 
 .welcome-title {
-  font-size: 28px;
+  font-size: 24px;
+  color: #2c3e50;
   margin: 0 0 8px 0;
 }
 
 .welcome-subtitle {
-  font-size: 16px;
-  margin: 0 0 24px 0;
-  opacity: 0.9;
+  color: #7f8c8d;
+  font-size: 14px;
+  margin: 0 0 20px 0;
 }
 
 .quick-stats {
   display: flex;
+  flex-wrap: wrap;
   gap: 20px;
 }
 
@@ -1480,21 +1508,21 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 12px 20px;
+  padding: 10px 16px;
   background: #f8f9fa;
-  border-radius: 10px;
-  min-width: 90px;
+  border-radius: 8px;
+  min-width: 80px;
 }
 
 .stat-value {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
-  color: #fa8c16;
+  color: #b31b1b;
   margin-bottom: 4px;
 }
 
 .stat-label {
-  font-size: 13px;
+  font-size: 12px;
   color: #666;
 }
 
@@ -1503,13 +1531,13 @@ onMounted(() => {
 }
 
 .illustration-icon {
-  font-size: 72px;
+  font-size: 64px;
   opacity: 0.8;
 }
 
 .loading-overlay {
   position: fixed;
-  top: 70px;
+  top: 60px;
   left: 0;
   right: 0;
   bottom: 0;
@@ -1526,7 +1554,7 @@ onMounted(() => {
   width: 60px;
   height: 60px;
   border: 4px solid #f3f3f3;
-  border-top: 4px solid #fa8c16;
+  border-top: 4px solid #b31b1b;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 20px;
@@ -1590,7 +1618,7 @@ onMounted(() => {
 
 .view-all-btn {
   padding: 6px 12px;
-  background: #fa8c16;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 6px;
@@ -1601,7 +1629,7 @@ onMounted(() => {
 }
 
 .view-all-btn:hover {
-  background: #ffa940;
+  background: #8b1515;
 }
 
 .mark-all-btn {
@@ -1653,9 +1681,9 @@ onMounted(() => {
 }
 
 .action-card:hover {
-  border-color: #fa8c16;
+  border-color: #b31b1b;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(250, 140, 22, 0.1);
+  box-shadow: 0 4px 12px rgba(179, 27, 27, 0.12);
 }
 
 .action-icon {
@@ -1738,7 +1766,6 @@ onMounted(() => {
 }
 
 .applications-list,
-.user-list,
 .activities-list,
 .notifications-list {
   display: flex;
@@ -1747,7 +1774,6 @@ onMounted(() => {
 }
 
 .application-item,
-.user-item,
 .activity-item,
 .notification-item {
   padding: 12px;
@@ -1759,17 +1785,16 @@ onMounted(() => {
 }
 
 .application-item:hover,
-.user-item:hover,
 .activity-item:hover,
 .notification-item:hover {
-  border-color: #fa8c16;
-  background: #fff7e6;
+  border-color: #b31b1b;
+  background: rgba(179, 27, 27, 0.04);
   transform: translateX(4px);
 }
 
 .notification-item.unread {
-  background: #fff7e6;
-  border-color: #ffd591;
+  background: rgba(179, 27, 27, 0.06);
+  border-color: rgba(179, 27, 27, 0.2);
 }
 
 .application-header,
@@ -1782,7 +1807,7 @@ onMounted(() => {
 
 .application-id {
   font-size: 13px;
-  color: #722ed1;
+  color: #b31b1b;
   font-weight: 600;
   background: #f9f0ff;
   padding: 4px 10px;
@@ -1841,8 +1866,8 @@ onMounted(() => {
   color: #b31b1b;
 }
 .status.reviewing {
-  background: #fff7e6;
-  color: #fa8c16;
+  background: rgba(179, 27, 27, 0.06);
+  color: #b31b1b;
 }
 .status.approved {
   background: #f6ffed;
@@ -1859,69 +1884,6 @@ onMounted(() => {
 .status.completed {
   background: #f6ffed;
   color: #52c41a;
-}
-
-.user-avatar-small {
-  width: 36px;
-  height: 36px;
-  background: #fa8c16;
-  color: white;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  font-size: 14px;
-  margin-right: 12px;
-  flex-shrink: 0;
-}
-
-.user-content {
-  flex: 1;
-}
-
-.user-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.user-name {
-  font-weight: 500;
-  color: #2c3e50;
-  margin: 0;
-  font-size: 14px;
-}
-
-.user-role-tag {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  background: #fff7e6;
-  color: #fa8c16;
-}
-
-.user-meta {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: #7f8c8d;
-}
-
-.user-status {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 10px;
-}
-
-.user-status.active {
-  background: #f6ffed;
-  color: #52c41a;
-}
-.user-status.inactive {
-  background: #fff2f0;
-  color: #ff4d4f;
 }
 
 .activity-icon {
@@ -2038,7 +2000,7 @@ onMounted(() => {
   .sidebar.show {
     transform: translateX(0);
   }
-  .main-content {
+  .main-wrapper {
     margin-left: 0 !important;
   }
   .mobile-menu-btn {
@@ -2091,7 +2053,7 @@ onMounted(() => {
   .action-card {
     display: none !important;
   }
-  .main-content {
+  .main-wrapper {
     margin-left: 0 !important;
   }
   .card-section {

@@ -68,7 +68,7 @@
         >
           <el-option label="申请人" value="applicant" />
           <el-option label="评审专家" value="reviewer" />
-          <el-option label="科研助理" value="assistant" />
+          <el-option label="科研助理" value="project_manager" />
           <el-option label="管理员" value="admin" />
         </el-select>
 
@@ -563,7 +563,7 @@
               <el-select v-model="dialog.form.role" placeholder="请选择角色" style="width: 100%">
                 <el-option label="申请人" value="applicant" />
                 <el-option label="评审专家" value="reviewer" />
-                <el-option label="科研助理" value="assistant" />
+                <el-option label="科研助理" value="project_manager" />
                 <el-option label="管理员" value="admin" />
               </el-select>
             </el-form-item>
@@ -1055,7 +1055,7 @@ const getRoleText = (role: string) => {
   const map: Record<string, string> = {
     applicant: '申请人',
     reviewer: '评审专家',
-    assistant: '科研助理',
+    project_manager: '科研助理',
     admin: '管理员',
   }
   return map[role] || role
@@ -1065,7 +1065,7 @@ const getRoleTagType = (role: string) => {
   const map: Record<string, string> = {
     applicant: 'primary',
     reviewer: 'success',
-    assistant: 'warning',
+    project_manager: 'warning',
     admin: 'danger',
   }
   return map[role] || 'info'
@@ -1075,7 +1075,7 @@ const getRoleColor = (role: string) => {
   const map: Record<string, string> = {
     applicant: 'linear-gradient(135deg, #b31b1b 0%, #8b1515 100%)',
     reviewer: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
-    assistant: 'linear-gradient(135deg, #fa8c16 0%, #d46b08 100%)',
+    project_manager: 'linear-gradient(135deg, #fa8c16 0%, #d46b08 100%)',
     admin: 'linear-gradient(135deg, #722ed1 0%, #531dab 100%)',
   }
   return map[role] || '#cccccc'

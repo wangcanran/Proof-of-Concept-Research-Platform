@@ -1,19 +1,27 @@
-﻿<template>
+<template>
   <div class="review-history-page">
-    <el-page-header @back="goBack">
-      <template #content>
-        <div class="page-header-content">
-          <h1>评审历史</h1>
-          <span class="subtitle">查看您已完成的所有评审记录</span>
+    <div class="page-header">
+      <button type="button" class="back-workbench-box" @click="goToDashboard">
+        <el-icon class="back-icon"><ArrowLeft /></el-icon>
+        <span class="back-text">返回工作台</span>
+      </button>
+
+      <div class="header-content">
+        <div class="header-main">
+          <h1>
+            <el-icon><Document /></el-icon>
+            评审历史
+          </h1>
+          <p class="subtitle">查看您已完成的所有评审记录</p>
         </div>
-      </template>
-      <template #extra>
-        <el-button type="primary" @click="exportData">
-          <el-icon><Download /></el-icon>
-          导出数据
-        </el-button>
-      </template>
-    </el-page-header>
+        <div class="header-actions">
+          <el-button type="primary" @click="exportData">
+            <el-icon><Download /></el-icon>
+            导出数据
+          </el-button>
+        </div>
+      </div>
+    </div>
 
     <div class="content-container">
       <!-- 统计卡片 -->
@@ -27,8 +35,8 @@
 
         <el-card class="stat-card" shadow="hover">
           <div class="stat-content">
-            <div class="stat-value">{{ stats.avgScore }}</div>
-            <div class="stat-label">平均评分</div>
+            <div class="stat-value">{{ stats.approvedCount }}</div>
+            <div class="stat-label">通过（含修改后通过/重新提交）</div>
           </div>
         </el-card>
 
@@ -41,8 +49,8 @@
 
         <el-card class="stat-card" shadow="hover">
           <div class="stat-content">
-            <div class="stat-value">{{ stats.maxScore }}</div>
-            <div class="stat-label">最高评分</div>
+            <div class="stat-value">{{ stats.rejectedCount }}</div>
+            <div class="stat-label">不通过</div>
           </div>
         </el-card>
       </div>
@@ -113,23 +121,6 @@
               {{ formatDate(row.review_date) }}
             </template>
           </el-table-column>
-          <el-table-column label="评分" width="150">
-            <template #default="{ row }">
-              <div
-                style="display: flex; align-items: center; justify-content: flex-start; gap: 8px"
-              >
-                <!-- 确保评分显示正确 -->
-                <el-rate
-                  :model-value="getDisplayScore(row)"
-                  disabled
-                  :max="10"
-                  :allow-half="true"
-                  show-score
-                  size="small"
-                />
-              </div>
-            </template>
-          </el-table-column>
           <el-table-column prop="recommendation" label="评审结论" width="120">
             <template #default="{ row }">
               <el-tag :type="getConclusionType(row.recommendation)" size="small">
@@ -174,7 +165,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Download, Search, Refresh } from '@element-plus/icons-vue'
+import { ArrowLeft, Document, Download, Search, Refresh } from '@element-plus/icons-vue'
 import request from '@/utils/request'
 
 const router = useRouter()
@@ -184,9 +175,9 @@ const loading = ref(false)
 const reviews = ref<any[]>([])
 const stats = ref({
   total: 0,
-  avgScore: 0,
+  approvedCount: 0,
+  rejectedCount: 0,
   approvalRate: 0,
-  maxScore: 0,
 })
 const filterForm = ref({
   keyword: '',
@@ -221,22 +212,21 @@ const loadReviewHistory = async () => {
       params.endDate = filterForm.value.dateRange[1]
     }
 
-    const response = await request.get('/api/reviewer/review-history', { params })
+    const response = await request.get('/api/reviewer/reviews', { params })
 
     if (response.success) {
-      console.log('API返回数据:', response.data) // 添加这行
-      console.log('第一条记录的字段:', response.data.reviews?.[0]) // 添加这行
-      reviews.value = response.data.reviews || []
-      pagination.value.total = response.data.pagination?.total || 0
-
-      // 更新统计信息
-      if (response.data.stats) {
-        stats.value = {
-          total: response.data.stats.total || 0,
-          avgScore: response.data.stats.avgScore || 0,
-          approvalRate: response.data.stats.approvalRate || 0,
-          maxScore: response.data.stats.maxScore || 0,
-        }
+      reviews.value = response.data || []
+      pagination.value.total = response.total || 0
+      const total = Number(response.total || 0)
+      const approvedCount = reviews.value.filter((item) =>
+        ['approve', 'approve_with_revision', 'resubmit'].includes(item.recommendation),
+      ).length
+      const rejectedCount = reviews.value.filter((item) => item.recommendation === 'reject').length
+      stats.value = {
+        total,
+        approvedCount,
+        rejectedCount,
+        approvalRate: total > 0 ? Math.round((approvedCount / total) * 100) : 0,
       }
     } else {
       ElMessage.error('加载评审历史失败')
@@ -247,17 +237,6 @@ const loadReviewHistory = async () => {
   } finally {
     loading.value = false
   }
-}
-// 辅助函数
-const getDisplayScore = (row: any): number => {
-  const score = row.total_score || row.score || 0
-  const num = typeof score === 'string' ? parseFloat(score) : Number(score)
-  return isNaN(num) ? 0 : Math.min(Math.max(num, 0), 10) // 确保在0-10范围内
-}
-
-const formatScore = (score: any): string => {
-  const num = getDisplayScore({ total_score: score })
-  return num.toFixed(1)
 }
 const viewReviewDetail = (review: any) => {
   router.push(`/reviewer/reviews/${review.id}`)
@@ -299,7 +278,7 @@ const exportData = async () => {
   }
 }
 
-const goBack = () => {
+const goToDashboard = () => {
   router.push('/reviewer/dashboard')
 }
 
@@ -315,16 +294,15 @@ const formatDate = (dateString: string) => {
 }
 
 const getConclusionType = (conclusion: string) => {
-  console.log('conclusion value:', conclusion) // 调试用
   const map: Record<string, string> = {
-    approve: '通过',
-    approve_with_revision: '修改后通过',
-    reject: '不通过',
-    resubmit: '重新提交',
-    通过: '通过', // 如果API返回的是中文
-    approved: '通过', // 可能的其他值
+    approve: 'success',
+    approve_with_revision: 'warning',
+    reject: 'danger',
+    resubmit: 'info',
+    通过: 'success',
+    approved: 'success',
   }
-  return map[conclusion] || conclusion || '未知'
+  return map[conclusion] || 'info'
 }
 
 const getConclusionText = (conclusion: string) => {
@@ -372,24 +350,124 @@ onMounted(() => {
 <style scoped>
 .review-history-page {
   min-height: 100vh;
-  background: #f0f2f5;
+  background: #f5f7fa;
   padding: 20px;
 }
 
-.page-header-content h1 {
-  margin: 0;
-  font-size: 24px;
-  color: #303133;
+.review-history-page :deep(.el-button--primary) {
+  --el-button-bg-color: #b31b1b;
+  --el-button-border-color: #b31b1b;
+  --el-button-hover-bg-color: #8b1515;
+  --el-button-hover-border-color: #8b1515;
+  --el-button-active-bg-color: #8b1515;
+  --el-button-active-border-color: #8b1515;
 }
 
-.page-header-content .subtitle {
-  font-size: 14px;
+.review-history-page :deep(.el-button--primary.is-link) {
+  --el-button-text-color: #b31b1b;
+}
+
+.review-history-page :deep(.el-pagination .el-pager li.is-active) {
+  color: #b31b1b;
+  font-weight: 600;
+}
+
+.review-history-page :deep(.el-pagination .el-pager li:hover) {
+  color: #8b1515;
+}
+
+.page-header {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+
+.back-workbench-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 10px 18px;
+  border: 1px solid rgba(179, 27, 27, 0.35);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffbfb 0%, #fff5f5 100%);
+  color: #b31b1b;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.back-workbench-box:hover {
+  background: #fff0f0;
+  border-color: #b31b1b;
+  box-shadow: 0 2px 8px rgba(179, 27, 27, 0.12);
+}
+
+.back-workbench-box:active {
+  background: #ffe8e8;
+}
+
+.back-workbench-box .back-icon {
+  font-size: 18px;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.header-main h1 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  color: #303133;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
+}
+
+.header-main .subtitle {
+  margin: 0;
   color: #909399;
-  margin-top: 4px;
+  font-size: 14px;
 }
 
 .content-container {
-  margin-top: 20px;
+  margin-top: 0;
+}
+
+@media (max-width: 768px) {
+  .header-content {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .header-actions {
+    justify-content: center;
+  }
+
+  .back-workbench-box {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 .stats-cards {

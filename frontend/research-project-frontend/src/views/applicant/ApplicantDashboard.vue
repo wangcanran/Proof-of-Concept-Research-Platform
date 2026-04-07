@@ -315,9 +315,9 @@
                     </div>
                   </div>
                   <div class="stat-body">
-                    <div class="stat-value">{{ stats.submittedProjects || 0 }}</div>
+                    <div class="stat-value">{{ stats.cumulativeDeclared || 0 }}</div>
                     <div class="stat-label">已申报项目</div>
-                    <div class="stat-description">本年度累计申报项目数</div>
+                    <div class="stat-description">累计已提交项目数（不含草稿）</div>
                   </div>
                 </div>
 
@@ -546,6 +546,7 @@ const unreadCount = ref(0)
 // 数据状态
 const stats = ref({
   totalProjects: 0,
+  cumulativeDeclared: 0,
   pendingReviews: 0,
   ongoingProjects: 0,
   submittedProjects: 0,
@@ -555,6 +556,9 @@ const stats = ref({
   usedFunds: 0,
   remainingFunds: 0,
 })
+
+/** 用于状态分布图互斥计数（与 stats 汇总同源） */
+const dashboardProjects = ref<any[]>([])
 
 const recentProjects = ref([])
 const notifications = ref([])
@@ -617,14 +621,23 @@ const recentNotifications = computed(() => {
   return notifications.value.slice(0, 3)
 })
 
-// 项目状态分布数据
+// 项目状态分布（互斥：每个项目只计入一类；「已立项」仅 approved，「孵化中」仅 incubating）
 const projectStatusData = computed(() => {
+  const projects = dashboardProjects.value
   const statusCounts: Record<string, number> = {
-    孵化中: stats.value.ongoingProjects || 0,
-    评审中: stats.value.reviewingProjects || 0,
-    已立项: stats.value.approvedProjects || 0,
-    已申报: stats.value.submittedProjects || 0,
-    待处理: stats.value.pendingReviews || 0,
+    孵化中: projects.filter((p: any) => p.status === 'incubating').length,
+    评审中: projects.filter(
+      (p: any) => p.status === 'under_review' || p.status === 'batch_review',
+    ).length,
+    已立项: projects.filter((p: any) => p.status === 'approved').length,
+    已申报: projects.filter((p: any) => p.status === 'submitted').length,
+    待处理: projects.filter((p: any) => p.status === 'revision').length,
+  }
+  const other = projects.filter((p: any) =>
+    ['draft', 'rejected', 'completed', 'terminated'].includes(p.status),
+  ).length
+  if (other > 0) {
+    statusCounts['其他'] = other
   }
 
   const total = Object.values(statusCounts).reduce((sum, count) => sum + count, 0)
@@ -635,6 +648,7 @@ const projectStatusData = computed(() => {
     已立项: '#52c41a',
     已申报: '#722ed1',
     待处理: '#f5222d',
+    其他: '#8c8c8c',
   }
 
   return Object.entries(statusCounts).map(([name, count]) => ({
@@ -892,12 +906,10 @@ const loadDashboardData = async () => {
     )
     if (projectsRes.data.success) {
       const projects = projectsRes.data.data || []
+      dashboardProjects.value = projects
 
-      // 统计项目状态
-      const submitted = projects.filter(
-        (p: any) =>
-          p.status === 'submitted' || p.status === 'under_review' || p.status === 'batch_review',
-      ).length
+      const cumulativeDeclared = projects.filter((p: any) => p.status !== 'draft').length
+      const submittedOnly = projects.filter((p: any) => p.status === 'submitted').length
       const approved = projects.filter(
         (p: any) => p.status === 'approved' || p.status === 'incubating',
       ).length
@@ -905,15 +917,17 @@ const loadDashboardData = async () => {
         (p: any) => p.status === 'under_review' || p.status === 'batch_review',
       ).length
       const ongoing = projects.filter((p: any) => p.status === 'incubating').length
+      const revision = projects.filter((p: any) => p.status === 'revision').length
 
       stats.value = {
         ...stats.value,
         totalProjects: projects.length,
-        submittedProjects: submitted,
+        cumulativeDeclared,
+        submittedProjects: submittedOnly,
         approvedProjects: approved,
         reviewingProjects: reviewing,
         ongoingProjects: ongoing,
-        pendingReviews: reviewing,
+        pendingReviews: revision,
       }
 
       // 格式化项目列表
@@ -940,19 +954,41 @@ const loadDashboardData = async () => {
       unreadCount.value = notifications.value.filter((n: any) => !n.is_read).length
     }
 
-    // 获取经费统计（端点可选，失败不影响连接状态）
+    // 经费统计：与后端 /api/expenditures/stats 一致（走登录用户身份）
     try {
-      const fundsRes = await axios.get(
-        `http://localhost:3002/api/expenditure/statistics?applicant_id=${userId.value}`,
-        config,
-      )
-      if (fundsRes.data.success) {
-        stats.value.totalFunds = fundsRes.data.total_budget || 0
-        stats.value.usedFunds = fundsRes.data.total_used || 0
-        stats.value.remainingFunds = stats.value.totalFunds - stats.value.usedFunds || 0
+      const fundsRes = await axios.get(`http://localhost:3002/api/expenditures/stats`, config)
+      if (fundsRes.data.success && fundsRes.data.data) {
+        const d = fundsRes.data.data
+        let total = Number(d.total_budget) || 0
+        const used = Number(d.total_expenditure) || 0
+        // 无 ProjectBudget 行时，用已立项项目的批准预算作展示兜底
+        if (total === 0 && dashboardProjects.value.length) {
+          total = dashboardProjects.value
+            .filter((p: any) => ['approved', 'incubating', 'completed'].includes(p.status))
+            .reduce(
+              (s: number, p: any) =>
+                s + (parseFloat(p.approved_budget) || parseFloat(p.budget_total) || 0),
+              0,
+            )
+        }
+        stats.value.totalFunds = total
+        stats.value.usedFunds = used
+        stats.value.remainingFunds = Math.max(0, total - used)
       }
     } catch {
-      // 经费统计接口暂未实现，忽略错误
+      // 经费统计失败时尝试用项目上的批准预算汇总
+      const total = dashboardProjects.value
+        .filter((p: any) => ['approved', 'incubating', 'completed'].includes(p.status))
+        .reduce(
+          (s: number, p: any) =>
+            s + (parseFloat(p.approved_budget) || parseFloat(p.budget_total) || 0),
+          0,
+        )
+      if (total > 0) {
+        stats.value.totalFunds = total
+        stats.value.usedFunds = 0
+        stats.value.remainingFunds = total
+      }
     }
 
     backendConnected.value = true
@@ -1515,6 +1551,13 @@ button {
   margin-bottom: 16px;
 }
 
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .section-title {
   font-size: 16px;
   color: #2c3e50;
@@ -1529,30 +1572,35 @@ button {
   font-size: 18px;
 }
 
-.view-all-btn,
-.mark-all-btn {
-  padding: 4px 12px;
-  background: none;
-  border: none;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.3s;
-}
-
+/* 与科研助理工作台等页面一致：实心「查看全部」、灰底「标记全部已读」 */
 .view-all-btn {
-  color: #b31b1b;
+  padding: 6px 12px;
+  background: #b31b1b;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.3s;
+  white-space: nowrap;
 }
 
 .view-all-btn:hover {
-  text-decoration: underline;
+  background: #8b1515;
 }
 
 .mark-all-btn {
+  padding: 6px 12px;
+  background: #f5f5f5;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  font-size: 13px;
   color: #666;
+  cursor: pointer;
 }
 
 .mark-all-btn:hover {
-  color: #b31b1b;
+  background: #e8e8e8;
 }
 
 .projects-grid {

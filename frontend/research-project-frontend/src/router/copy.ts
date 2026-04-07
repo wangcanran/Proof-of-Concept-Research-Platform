@@ -294,7 +294,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '科研助理工作台',
       requiresAuth: true,
-      role: 'assistant', // 注意：这里应该小写，与数据库一致
+      role: 'project_manager', // 注意：这里应该小写，与数据库一致
       permissions: ['view_assistant_dashboard'],
     },
   },
@@ -305,7 +305,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '项目申请管理',
       requiresAuth: true,
-      role: 'assistant',
+      role: 'project_manager',
       permissions: ['view_applications', 'review_applications'],
     },
   },
@@ -316,7 +316,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '申请详情',
       requiresAuth: true,
-      role: 'assistant',
+      role: 'project_manager',
       permissions: ['view_application_detail', 'review_applications'],
     },
   },
@@ -327,7 +327,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '支出审核',
       requiresAuth: true,
-      role: 'assistant',
+      role: 'project_manager',
       permissions: ['view_expenditures', 'review_expenditures'],
     },
   },
@@ -338,7 +338,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '成果审核',
       requiresAuth: true,
-      role: 'assistant',
+      role: 'project_manager',
       permissions: ['view_achievements', 'review_achievements'],
     },
   },
@@ -349,7 +349,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '用户管理',
       requiresAuth: true,
-      role: 'assistant',
+      role: 'project_manager',
       permissions: ['view_users', 'manage_users'],
     },
   },
@@ -360,7 +360,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '活动日志',
       requiresAuth: true,
-      role: 'assistant',
+      role: 'project_manager',
       permissions: ['view_activities'],
     },
   },

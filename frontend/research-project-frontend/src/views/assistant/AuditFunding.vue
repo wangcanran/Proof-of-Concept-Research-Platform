@@ -1,6 +1,6 @@
 <!-- src/views/assistant/AuditFunding.vue -->
 <template>
-  <div class="audit-funding-page">
+  <div class="audit-funding-page assistant-ruc-theme">
     <!-- 页面标题和操作栏 -->
     <div class="page-header">
       <div class="header-left">
@@ -941,7 +941,7 @@ onMounted(() => {
 }
 
 .stat-card.pending {
-  background: linear-gradient(135deg, #ffa940 0%, #fa8c16 100%);
+  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
 }
 
 .stat-card.reviewing {
@@ -949,7 +949,7 @@ onMounted(() => {
 }
 
 .stat-card.approved {
-  background: linear-gradient(135deg, #52c41a 0%, #389e0d 100%);
+  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
 }
 
 .stat-card.rejected {
@@ -1003,7 +1003,7 @@ onMounted(() => {
 .application-no {
   font-family: monospace;
   font-weight: 600;
-  color: #722ed1;
+  color: #b31b1b;
   background: #f9f0ff;
   padding: 2px 8px;
   border-radius: 4px;
@@ -1044,7 +1044,7 @@ onMounted(() => {
 .applicant-avatar {
   width: 36px;
   height: 36px;
-  background: linear-gradient(135deg, #722ed1 0%, #eb2f96 100%);
+  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
   color: white;
   border-radius: 50%;
   display: flex;
@@ -1079,7 +1079,7 @@ onMounted(() => {
 
 .amount {
   font-weight: 600;
-  color: #52c41a;
+  color: #b31b1b;
   font-size: 14px;
 }
 
@@ -1106,7 +1106,7 @@ onMounted(() => {
 .amount-large {
   font-size: 18px;
   font-weight: 700;
-  color: #52c41a;
+  color: #b31b1b;
 }
 
 .purpose-content {

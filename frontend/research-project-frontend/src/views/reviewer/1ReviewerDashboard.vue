@@ -1470,7 +1470,7 @@ onMounted(() => {
       setTimeout(() => {
         const rolePaths = {
           applicant: '/applicant/dashboard',
-          assistant: '/assistant/dashboard',
+          project_manager: '/assistant/dashboard',
           admin: '/admin/dashboard',
         }
         const targetPath = rolePaths[userRole.value.toLowerCase()] || '/login'

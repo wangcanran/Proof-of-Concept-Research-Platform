@@ -1,15 +1,26 @@
 <!-- src/views/assistant/Applications.vue -->
 <template>
-  <div class="applications-page">
+  <div class="applications-page assistant-ruc-theme">
     <!-- 页面头部 -->
     <header class="page-header">
+      <div class="page-back-row">
+        <el-button text type="primary" class="back-to-workbench" @click="goToWorkbench">
+          <el-icon class="back-icon"><ArrowLeft /></el-icon>
+          返回工作台
+        </el-button>
+      </div>
       <div class="header-main">
         <div class="page-title-section">
           <h1 class="page-title">
             <span class="title-icon">📝</span>
             申请管理
           </h1>
-          <div class="page-subtitle">管理申请人提交的项目申请，进行审核和跟踪</div>
+          <div class="page-subtitle">
+            项目经理在此<strong>领取</strong>待受理申请、<strong>分配评审专家</strong>；专家提交意见后，由您<strong>确认立项</strong>。
+          </div>
+          <p class="page-hint">
+            角标<strong>待受理</strong>表示尚未指定项目经理、可点<strong>领取</strong>；若已显示负责人（如李华），数据库状态可能仍为「已提交」，角标会显示为<strong>已领取·待分配</strong>，此时不再出现领取按钮，由负责人去<strong>分配专家</strong>。
+          </p>
         </div>
 
         <div class="header-stats">
@@ -75,8 +86,8 @@
             <label class="filter-label">申请状态</label>
             <div class="filter-options">
               <el-checkbox-group v-model="filters.statuses">
-                <el-checkbox label="submitted">已提交</el-checkbox>
-                <el-checkbox label="under_review">审核中</el-checkbox>
+                <el-checkbox label="submitted">待受理（已提交）</el-checkbox>
+                <el-checkbox label="under_review">专家评审中</el-checkbox>
                 <el-checkbox label="approved">已批准</el-checkbox>
                 <el-checkbox label="rejected">已拒绝</el-checkbox>
                 <el-checkbox label="returned">已退回</el-checkbox>
@@ -173,7 +184,18 @@
             <h3>申请列表</h3>
             <span class="applications-count">{{ filteredApplications.length }} 条记录</span>
           </div>
-          <div class="applications-actions">
+          <div class="applications-actions applications-header-right">
+            <el-radio-group
+              v-if="showManagerScope"
+              v-model="listScope"
+              size="small"
+              class="scope-radios"
+              @change="onListScopeChange"
+            >
+              <el-radio-button value="all">全部</el-radio-button>
+              <el-radio-button value="mine">我负责的</el-radio-button>
+              <el-radio-button value="unassigned">待领取</el-radio-button>
+            </el-radio-group>
             <el-button size="small" @click="sortBy('created_at')"> 按提交时间 </el-button>
             <el-button size="small" @click="sortBy('budget_total')"> 按预算金额 </el-button>
           </div>
@@ -195,9 +217,14 @@
                 <span class="code-text">{{ application.project_code }}</span>
               </div>
               <div class="application-status">
-                <span class="status-badge" :class="application.status">
-                  {{ getStatusText(application.status) }}
-                </span>
+                <el-tooltip
+                  :content="pmStatusHintForCard(application)"
+                  placement="top"
+                >
+                  <span class="status-badge" :class="statusBadgeClass(application)">
+                    {{ pmStatusLabelForCard(application) }}
+                  </span>
+                </el-tooltip>
               </div>
             </div>
 
@@ -232,6 +259,19 @@
                   <span class="meta-label">周期：</span>
                   <span class="meta-value">{{ application.duration_months }}个月</span>
                 </div>
+                <div v-if="application.manager_name" class="meta-item">
+                  <span class="meta-icon">📌</span>
+                  <span class="meta-label">项目经理：</span>
+                  <span class="meta-value">{{ application.manager_name }}</span>
+                </div>
+                <div
+                  v-else-if="application.status === 'submitted'"
+                  class="meta-item"
+                >
+                  <span class="meta-icon">📌</span>
+                  <span class="meta-label">项目经理：</span>
+                  <span class="meta-value text-muted">待领取</span>
+                </div>
               </div>
 
               <div class="application-tags">
@@ -259,22 +299,31 @@
                   查看
                 </el-button>
                 <el-button
-                  v-if="application.status === 'submitted'"
+                  v-if="canClaimApplication(application)"
                   size="small"
-                  type="primary"
-                  @click.stop="startReview(application)"
+                  type="warning"
+                  @click.stop="claimApplication(application)"
                 >
-                  <span class="btn-icon">📝</span>
-                  审核
+                  <span class="btn-icon">✋</span>
+                  {{ userRole === 'admin' ? '指派负责人' : '领取' }}
                 </el-button>
                 <el-button
-                  v-if="application.status === 'under_review'"
+                  v-if="canAssignExperts(application)"
+                  size="small"
+                  type="primary"
+                  @click.stop="goAssignExperts(application)"
+                >
+                  <span class="btn-icon">📝</span>
+                  分配专家
+                </el-button>
+                <el-button
+                  v-if="application.status === 'under_review' && canOperateAsManager(application)"
                   size="small"
                   type="success"
                   @click.stop="quickApprove(application)"
                 >
                   <span class="btn-icon">✅</span>
-                  通过
+                  确认通过
                 </el-button>
               </div>
             </div>
@@ -309,29 +358,37 @@
         <div class="detail-status-bar">
           <div class="status-info">
             <span class="status-label">申请状态：</span>
-            <span class="status-value" :class="currentApplication.status">
-              {{ getStatusText(currentApplication.status) }}
+            <span class="status-value" :class="statusBadgeClass(currentApplication)">
+              {{ pmStatusLabelForCard(currentApplication) }}
             </span>
           </div>
           <div class="status-actions">
             <el-button
-              v-if="currentApplication.status === 'submitted'"
-              type="primary"
-              @click="startReview(currentApplication)"
+              v-if="canClaimApplication(currentApplication)"
+              type="warning"
+              @click="claimApplication(currentApplication)"
             >
-              <span class="btn-icon">📝</span>
-              开始审核
+              <span class="btn-icon">✋</span>
+              {{ userRole === 'admin' ? '指派项目经理' : '领取（我负责）' }}
             </el-button>
             <el-button
-              v-if="currentApplication.status === 'under_review'"
+              v-if="canAssignExperts(currentApplication)"
+              type="primary"
+              @click="goAssignExperts(currentApplication)"
+            >
+              <span class="btn-icon">📝</span>
+              分配评审专家
+            </el-button>
+            <el-button
+              v-if="currentApplication.status === 'under_review' && canOperateAsManager(currentApplication)"
               type="success"
               @click="quickApprove(currentApplication)"
             >
               <span class="btn-icon">✅</span>
-              快速通过
+              确认立项通过
             </el-button>
             <el-button
-              v-if="currentApplication.status === 'under_review'"
+              v-if="currentApplication.status === 'under_review' && canOperateAsManager(currentApplication)"
               type="warning"
               @click="showReturnDialog = true"
             >
@@ -339,7 +396,7 @@
               退回修改
             </el-button>
             <el-button
-              v-if="currentApplication.status === 'under_review'"
+              v-if="currentApplication.status === 'under_review' && canOperateAsManager(currentApplication)"
               type="danger"
               @click="showRejectDialog = true"
             >
@@ -750,12 +807,44 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import request from '@/utils/request'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const route = useRoute()
+
+const goToWorkbench = () => {
+  router.push('/assistant/dashboard')
+}
+const authStore = useAuthStore()
+const currentUserId = computed(() => authStore.user?.id)
+/** 兼容登录页曾只写 userInfo 未写 `user` 导致 role 为空：依次读 Pinia → localStorage.user → userRole */
+const userRole = computed(() => {
+  const fromStore = authStore.user?.role
+  if (fromStore) return String(fromStore).toLowerCase().trim()
+  try {
+    const raw = localStorage.getItem('user')
+    if (raw) {
+      const j = JSON.parse(raw)
+      if (j?.role) return String(j.role).toLowerCase().trim()
+    }
+  } catch {
+    /* ignore */
+  }
+  const lr = localStorage.getItem('userRole')
+  return lr ? String(lr).toLowerCase().trim() : ''
+})
+/** 与后端一致：项目经理 / 旧版科研助理 assistant 视为工作台同一角色 */
+const isProjectManagerLike = computed(() =>
+  ['project_manager', 'assistant'].includes(userRole.value),
+)
+const showManagerScope = computed(
+  () => isProjectManagerLike.value || userRole.value === 'admin',
+)
 
 // 响应式数据
 const loading = ref(false)
@@ -785,7 +874,7 @@ const reviewRecords = ref<any[]>([])
 
 // 筛选条件
 const filters = ref({
-  statuses: ['submitted', 'under_review'], // 默认显示待审核状态
+  statuses: ['submitted', 'under_review'], // 默认：待受理 + 专家评审中
   categories: [] as string[],
   dateRange: [] as string[],
   minBudget: null as number | null,
@@ -802,6 +891,60 @@ const pagination = ref({
 // 排序
 const sortField = ref('created_at')
 const sortOrder = ref('desc')
+
+/** 列表范围：全部 / 我负责的（项目经理） / 待领取 */
+const listScope = ref<'all' | 'mine' | 'unassigned'>('all')
+
+/**
+ * 与列表范围联动默认状态筛选：
+ * - 全部：默认只看待办（待受理 + 评审中），便于领取与跟进
+ * - 我负责的：不限制状态，否则已批准/孵化中等项目会被筛掉，与工作台「我负责的项目」不一致
+ * - 待领取：仅已提交
+ */
+function applyDefaultStatusesForScope(scope: 'all' | 'mine' | 'unassigned') {
+  if (scope === 'mine') {
+    filters.value.statuses = []
+  } else if (scope === 'unassigned') {
+    filters.value.statuses = ['submitted']
+  } else {
+    filters.value.statuses = ['submitted', 'under_review']
+  }
+}
+
+const onListScopeChange = () => {
+  pagination.value.currentPage = 1
+  applyDefaultStatusesForScope(listScope.value)
+  loadApplications()
+}
+
+function isManagerOf(app: any) {
+  return (
+    app.manager_id &&
+    currentUserId.value &&
+    String(app.manager_id) === String(currentUserId.value)
+  )
+}
+
+const canClaimApplication = (app: any) => {
+  if (!app || app.status !== 'submitted' || app.manager_id) return false
+  if (isProjectManagerLike.value) return true
+  /** 管理员不「自己领取」，而是指派某位项目经理为负责人（与 claim 接口 managerId 一致） */
+  if (userRole.value === 'admin') return true
+  return false
+}
+
+const canAssignExperts = (app: any) => {
+  if (!app || !['submitted', 'under_review'].includes(app.status)) return false
+  if (userRole.value === 'admin') return true
+  if (isProjectManagerLike.value) return isManagerOf(app)
+  return false
+}
+
+const canOperateAsManager = (app: any) => {
+  if (!app) return false
+  if (userRole.value === 'admin') return true
+  return isManagerOf(app)
+}
 
 // 表单数据
 const quickApproveForm = ref({
@@ -955,20 +1098,65 @@ const truncateText = (text: string, maxLength: number) => {
   return text.substring(0, maxLength) + '...'
 }
 
-const getStatusText = (status: string) => {
-  const statusMap: Record<string, string> = {
+/** 项目经理视角：与数据库枚举对应，避免「已提交/审核中」语义混淆 */
+const pmStatusLabel = (status: string) => {
+  const m: Record<string, string> = {
     draft: '草稿',
-    submitted: '已提交',
-    under_review: '审核中',
-    approved: '已批准',
+    submitted: '待受理',
+    under_review: '专家评审中',
+    revision: '修改补充中',
+    batch_review: '集中评审中',
+    approved: '已立项',
+    incubating: '孵化中',
     rejected: '已拒绝',
-    returned: '已退回', // 注意：数据库中没有returned状态，可能是rejected或修改后重新提交
-    in_progress: '进行中',
     completed: '已完成',
     terminated: '已终止',
+    returned: '已退回',
+    in_progress: '进行中',
   }
-  return statusMap[status] || status
+  return m[status] || status
 }
+
+/**
+ * 卡片角标：数据库 status 仍为 submitted 时，若已指定项目经理，则与「尚待任何人领取」区分
+ */
+const pmStatusLabelForCard = (app: any) => {
+  if (!app) return ''
+  if (app.status === 'submitted' && app.manager_id) {
+    return '已领取·待分配'
+  }
+  return pmStatusLabel(app.status)
+}
+
+const pmStatusHint = (status: string) => {
+  const h: Record<string, string> = {
+    submitted:
+      '对应数据库 submitted：申请人已提交，尚未进入专家评议，需项目经理领取并分配专家。',
+    under_review:
+      '对应数据库 under_review：已分配评审专家，正在评议中。',
+    approved: '对应数据库 approved：已通过立项。',
+    rejected: '对应数据库 rejected：申请未通过。',
+  }
+  return h[status] || `当前状态值：${status}`
+}
+
+const pmStatusHintForCard = (app: any) => {
+  if (!app) return ''
+  if (app.status === 'submitted' && app.manager_id) {
+    return '数据库状态仍为「已提交」，但已有项目经理负责人，无需再领取；请负责人点击「分配专家」。'
+  }
+  return pmStatusHint(app.status)
+}
+
+const statusBadgeClass = (app: any) => {
+  if (!app) return ''
+  if (app.status === 'submitted' && app.manager_id) {
+    return 'submitted has-manager'
+  }
+  return app.status
+}
+
+const getStatusText = (status: string) => pmStatusLabel(status)
 
 const getStatusClass = (status: string) => {
   return `status-${status}`
@@ -1018,7 +1206,11 @@ const loadApplications = async () => {
 
     if (response.success && response.data) {
       applications.value = response.data.applications || []
-      pagination.value.total = response.data.total || applications.value.length
+      const p = response.data.pagination
+      pagination.value.total =
+        (p && typeof p.total === 'number' ? p.total : null) ??
+        response.data.total ??
+        applications.value.length
       stats.value = response.data.stats || { pending: 0, approved: 0, total: 0 }
 
       console.log(`✅ 加载了 ${applications.value.length} 条申请记录`)
@@ -1036,11 +1228,11 @@ const loadApplications = async () => {
 
 const loadApplicationDetail = async (applicationId: string) => {
   try {
-    const response = await request.get(`/api/projects/${applicationId}/detail`)
+    const response: any = await request.get(`/api/assistant/applications/${applicationId}/detail`)
 
     if (response.success && response.data) {
       const data = response.data
-      currentApplication.value = data.project
+      currentApplication.value = data.application
       budgetItems.value = data.budget_items || []
       projectMembers.value = data.members || []
       attachments.value = data.attachments || []
@@ -1138,6 +1330,10 @@ const getQueryParams = () => {
     params.keyword = searchKeyword.value
   }
 
+  if (listScope.value !== 'all') {
+    params.scope = listScope.value
+  }
+
   return params
 }
 
@@ -1154,7 +1350,12 @@ const applyFilters = () => {
 
 const resetFilters = () => {
   filters.value = {
-    statuses: ['submitted', 'under_review'],
+    statuses:
+      listScope.value === 'mine'
+        ? []
+        : listScope.value === 'unassigned'
+          ? ['submitted']
+          : ['submitted', 'under_review'],
     categories: [],
     dateRange: [],
     minBudget: null,
@@ -1192,9 +1393,45 @@ const viewApplicationDetail = async (application: any) => {
   showDetailDialog.value = true
 }
 
-const startReview = (application: any) => {
-  // 跳转到项目审核页面，传递项目ID
-  router.push(`/audit/projects?projectId=${application.id}`)
+const goAssignExperts = (application: any) => {
+  router.push(`/assistant/reviewer-assignment/project/${application.id}`)
+}
+
+const claimApplication = async (application: any) => {
+  try {
+    const body: Record<string, string> = { projectId: application.id }
+    if (userRole.value === 'admin') {
+      const { value } = await ElMessageBox.prompt(
+        '请输入要负责该项目的「项目经理用户 ID」（用户管理或数据库 User 表中可查看，例如 usr-pm1）',
+        '指派项目经理负责人',
+        {
+          confirmButtonText: '确定',
+          cancelButtonText: '取消',
+          inputPlaceholder: '项目经理用户 ID',
+        },
+      )
+      const managerId = (value || '').trim()
+      if (!managerId) {
+        ElMessage.warning('未填写项目经理 ID')
+        return
+      }
+      body.managerId = managerId
+    }
+    const response: any = await request.post('/api/assistant/projects/claim', body)
+    if (response.success) {
+      ElMessage.success(response.message || '操作成功')
+      await loadApplications()
+      if (showDetailDialog.value && currentApplication.value?.id === application.id) {
+        await loadApplicationDetail(application.id)
+      }
+    } else {
+      ElMessage.error(response.error || '操作失败')
+    }
+  } catch (error: any) {
+    if (error === 'cancel' || error?.action === 'cancel') return
+    console.error('领取/指派失败:', error)
+    ElMessage.error('操作失败')
+  }
 }
 
 const quickApprove = (application: any) => {
@@ -1284,7 +1521,7 @@ const copyApplicationInfo = () => {
     `申请人: ${currentApplication.value.applicant_name}`,
     `部门: ${currentApplication.value.department}`,
     `预算: ¥${formatCurrency(currentApplication.value.budget_total)}`,
-    `状态: ${getStatusText(currentApplication.value.status)}`,
+    `状态: ${pmStatusLabelForCard(currentApplication.value)}`,
     `提交时间: ${formatDateTime(currentApplication.value.created_at)}`,
   ].join('\n')
 
@@ -1306,10 +1543,31 @@ const refreshData = () => {
   loadApplications()
 }
 
-// 初始化
+// 初始化（支持从工作台「我负责的项目」带 ?scope=mine 进入）
 onMounted(() => {
+  const s = String(route.query.scope || '').toLowerCase()
+  if (s === 'mine' || s === 'unassigned') {
+    listScope.value = s as 'mine' | 'unassigned'
+  }
+  applyDefaultStatusesForScope(listScope.value)
   loadApplications()
 })
+
+// 同页切换查询参数时同步范围与默认筛选（避免仍沿用「仅待受理+评审中」导致列表为空）
+watch(
+  () => route.query.scope,
+  () => {
+    const s = String(route.query.scope || '').toLowerCase()
+    if (s === 'mine' || s === 'unassigned') {
+      listScope.value = s as 'mine' | 'unassigned'
+    } else {
+      listScope.value = 'all'
+    }
+    applyDefaultStatusesForScope(listScope.value)
+    pagination.value.currentPage = 1
+    loadApplications()
+  },
+)
 </script>
 
 <style scoped>
@@ -1327,6 +1585,20 @@ onMounted(() => {
   padding: 24px;
   margin-bottom: 20px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.page-back-row {
+  margin-bottom: 16px;
+}
+
+.back-to-workbench {
+  padding-left: 0;
+  font-weight: 500;
+}
+
+.back-to-workbench .back-icon {
+  margin-right: 4px;
+  vertical-align: middle;
 }
 
 .header-main {
@@ -1352,12 +1624,34 @@ onMounted(() => {
 
 .title-icon {
   font-size: 28px;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .page-subtitle {
   color: #7f8c8d;
   font-size: 14px;
+  line-height: 1.5;
+}
+
+.page-subtitle strong {
+  color: #b31b1b;
+  font-weight: 600;
+}
+
+.page-hint {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #606266;
+  background: #fafafa;
+  border-left: 3px solid #b31b1b;
+  border-radius: 4px;
+  max-width: 920px;
+}
+
+.page-hint strong {
+  color: #303133;
 }
 
 /* 统计卡片 */
@@ -1385,7 +1679,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .stat-content {
@@ -1445,7 +1739,7 @@ onMounted(() => {
 
 .search-btn {
   padding: 8px 20px;
-  background: #fa8c16;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 6px;
@@ -1455,7 +1749,7 @@ onMounted(() => {
 }
 
 .search-btn:hover {
-  background: #ffa940;
+  background: #c44747;
 }
 
 .action-buttons {
@@ -1555,7 +1849,7 @@ onMounted(() => {
   width: 40px;
   height: 40px;
   border: 3px solid #f3f3f3;
-  border-top: 3px solid #fa8c16;
+  border-top: 3px solid #b31b1b;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin: 0 auto 20px;
@@ -1645,6 +1939,21 @@ onMounted(() => {
   gap: 8px;
 }
 
+.applications-actions.applications-header-right {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.applications-actions .scope-radios {
+  margin-right: 4px;
+}
+
+.meta-value.text-muted {
+  color: #909399;
+  font-size: 13px;
+}
+
 /* 申请卡片网格 */
 .applications-grid {
   display: grid;
@@ -1666,7 +1975,7 @@ onMounted(() => {
   cursor: pointer;
   transition: all 0.3s;
   border: 1px solid #f0f0f0;
-  border-left: 4px solid #fa8c16;
+  border-left: 4px solid #b31b1b;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -1675,7 +1984,7 @@ onMounted(() => {
 .application-card:hover {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   transform: translateY(-2px);
-  border-color: #fa8c16;
+  border-color: #b31b1b;
 }
 
 /* 状态颜色 */
@@ -1684,11 +1993,11 @@ onMounted(() => {
 }
 
 .application-card.status-under_review {
-  border-left-color: #fa8c16;
+  border-left-color: #b31b1b;
 }
 
 .application-card.status-approved {
-  border-left-color: #52c41a;
+  border-left-color: #b31b1b;
 }
 
 .application-card.status-rejected {
@@ -1696,7 +2005,7 @@ onMounted(() => {
 }
 
 .application-card.status-returned {
-  border-left-color: #722ed1;
+  border-left-color: #b31b1b;
 }
 
 /* 卡片头部 */
@@ -1720,7 +2029,7 @@ onMounted(() => {
 .code-text {
   font-family: 'Courier New', monospace;
   font-weight: 600;
-  color: #722ed1;
+  color: #b31b1b;
   font-size: 14px;
 }
 
@@ -1739,15 +2048,21 @@ onMounted(() => {
   border: 1px solid #bae7ff;
 }
 
+.status-badge.submitted.has-manager {
+  background: #fff7e6;
+  color: #d48806;
+  border: 1px solid #ffd591;
+}
+
 .status-badge.under_review {
   background: #fff7e6;
-  color: #fa8c16;
+  color: #b31b1b;
   border: 1px solid #ffd591;
 }
 
 .status-badge.approved {
   background: #f6ffed;
-  color: #52c41a;
+  color: #b31b1b;
   border: 1px solid #b7eb8f;
 }
 
@@ -1759,7 +2074,7 @@ onMounted(() => {
 
 .status-badge.returned {
   background: #f9f0ff;
-  color: #722ed1;
+  color: #b31b1b;
   border: 1px solid #d3adf7;
 }
 
@@ -1825,7 +2140,7 @@ onMounted(() => {
 }
 
 .meta-value.budget {
-  color: #fa8c16;
+  color: #b31b1b;
   font-weight: 600;
 }
 
@@ -1846,7 +2161,7 @@ onMounted(() => {
 
 .field-tag {
   background: #f6ffed;
-  color: #52c41a;
+  color: #b31b1b;
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 12px;
@@ -1854,7 +2169,7 @@ onMounted(() => {
 
 .keyword-tag {
   background: #fff7e6;
-  color: #fa8c16;
+  color: #b31b1b;
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 12px;
@@ -1954,14 +2269,19 @@ onMounted(() => {
   color: #b31b1b;
 }
 
+.status-value.submitted.has-manager {
+  background: #fff7e6;
+  color: #d48806;
+}
+
 .status-value.under_review {
   background: #fff7e6;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .status-value.approved {
   background: #f6ffed;
-  color: #52c41a;
+  color: #b31b1b;
 }
 
 .status-value.rejected {
@@ -1971,7 +2291,7 @@ onMounted(() => {
 
 .status-value.returned {
   background: #f9f0ff;
-  color: #722ed1;
+  color: #b31b1b;
 }
 
 .status-actions {
@@ -1998,7 +2318,7 @@ onMounted(() => {
 
 .section-icon {
   font-size: 18px;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 /* 基本信息网格 */
@@ -2034,12 +2354,12 @@ onMounted(() => {
 
 .info-value.code {
   font-family: 'Courier New', monospace;
-  color: #722ed1;
+  color: #b31b1b;
   font-weight: 600;
 }
 
 .info-value.budget {
-  color: #fa8c16;
+  color: #b31b1b;
   font-weight: 600;
 }
 
@@ -2057,7 +2377,7 @@ onMounted(() => {
 .applicant-avatar {
   width: 60px;
   height: 60px;
-  background: #fa8c16;
+  background: #b31b1b;
   color: white;
   border-radius: 50%;
   display: flex;
@@ -2159,7 +2479,7 @@ onMounted(() => {
 
 .item-amount {
   font-weight: 600;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .item-justification {
@@ -2180,7 +2500,7 @@ onMounted(() => {
 
 .total-amount {
   font-weight: 700;
-  color: #fa8c16;
+  color: #b31b1b;
   font-size: 16px;
 }
 
@@ -2391,7 +2711,7 @@ onMounted(() => {
 .total-score {
   font-size: 16px;
   font-weight: 700;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .record-content {
@@ -2446,12 +2766,12 @@ onMounted(() => {
 
 .result-value.approve {
   background: #f6ffed;
-  color: #52c41a;
+  color: #b31b1b;
 }
 
 .result-value.approve_with_revision {
   background: #fff7e6;
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .result-value.reject {
@@ -2460,7 +2780,7 @@ onMounted(() => {
 }
 
 .result-value.resubmit {
-  background: #f0f7ff;
+  background: #fff5f5;
   color: #b31b1b;
 }
 

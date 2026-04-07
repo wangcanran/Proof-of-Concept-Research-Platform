@@ -564,7 +564,7 @@ const getRoleText = (role: string) => {
   const roleMap: Record<string, string> = {
     applicant: '申请人',
     reviewer: '评审专家',
-    assistant: '科研助理',
+    project_manager: '科研助理',
     admin: '管理员',
   }
   return roleMap[role] || role
@@ -986,7 +986,7 @@ const getRoleColor = (role: string) => {
   const colorMap: Record<string, string> = {
     applicant: '#b31b1b',
     reviewer: '#52c41a',
-    assistant: '#fa8c16',
+    project_manager: '#fa8c16',
     admin: '#722ed1',
   }
   return colorMap[role] || '#cccccc'
@@ -1053,7 +1053,7 @@ const showMockData = () => {
   roleDistribution.value = [
     { role: 'applicant', count: 120, percentage: 77, startAngle: 0, color: '#b31b1b' },
     { role: 'reviewer', count: 20, percentage: 13, startAngle: 277, color: '#52c41a' },
-    { role: 'assistant', count: 10, percentage: 6, startAngle: 332, color: '#fa8c16' },
+    { role: 'project_manager', count: 10, percentage: 6, startAngle: 332, color: '#fa8c16' },
     { role: 'admin', count: 6, percentage: 4, startAngle: 356, color: '#722ed1' },
   ]
 
@@ -1133,7 +1133,7 @@ onMounted(() => {
         const rolePaths: Record<string, string> = {
           applicant: '/applicant/dashboard',
           reviewer: '/reviewer/dashboard',
-          assistant: '/assistant/dashboard',
+          project_manager: '/assistant/dashboard',
         }
         const targetPath = rolePaths[userRole?.toLowerCase() || ''] || '/login'
         router.push(targetPath)

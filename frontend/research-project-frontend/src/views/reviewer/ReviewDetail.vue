@@ -1,13 +1,18 @@
-﻿<template>
+<template>
   <div class="review-detail-page">
-    <el-page-header @back="goBack">
-      <template #content>
-        <div class="page-header-content">
+    <div class="page-header">
+      <button type="button" class="back-workbench-box" @click="goToDashboard">
+        <el-icon class="back-icon"><ArrowLeft /></el-icon>
+        <span class="back-text">返回工作台</span>
+      </button>
+
+      <div class="header-content">
+        <div class="header-main">
           <h1>评审详情</h1>
-          <span class="subtitle">评审编号：{{ reviewData.id }}</span>
+          <p class="subtitle">评审编号：{{ reviewData.id }}</p>
         </div>
-      </template>
-    </el-page-header>
+      </div>
+    </div>
 
     <div class="content-container">
       <!-- 评审基本信息 -->
@@ -55,96 +60,6 @@
             <el-tag :type="reviewData.is_confidential ? 'warning' : 'success'" size="small">
               {{ reviewData.is_confidential ? '对申请人保密' : '向申请人公开' }}
             </el-tag>
-          </div>
-        </div>
-      </el-card>
-
-      <!-- 评分详情 -->
-      <el-card class="section-card" shadow="never">
-        <template #header>
-          <h3>评分详情</h3>
-        </template>
-
-        <div class="score-detail">
-          <div class="score-section">
-            <h4>各项评分</h4>
-            <div class="score-items">
-              <div class="score-item">
-                <span class="score-label">创新性：</span>
-                <el-rate
-                  v-model="reviewData.innovation_score"
-                  disabled
-                  :max="10"
-                  :allow-half="true"
-                  size="large"
-                />
-                <span class="score-value">{{ reviewData.innovation_score }}</span>
-              </div>
-
-              <div class="score-item">
-                <span class="score-label">可行性：</span>
-                <el-rate
-                  v-model="reviewData.feasibility_score"
-                  disabled
-                  :max="10"
-                  :allow-half="true"
-                  size="large"
-                />
-                <span class="score-value">{{ reviewData.feasibility_score }}</span>
-              </div>
-
-              <div class="score-item">
-                <span class="score-label">意义价值：</span>
-                <el-rate
-                  v-model="reviewData.significance_score"
-                  disabled
-                  :max="10"
-                  :allow-half="true"
-                  size="large"
-                />
-                <span class="score-value">{{ reviewData.significance_score }}</span>
-              </div>
-
-              <div class="score-item">
-                <span class="score-label">团队基础：</span>
-                <el-rate
-                  v-model="reviewData.team_score"
-                  disabled
-                  :max="10"
-                  :allow-half="true"
-                  size="large"
-                />
-                <span class="score-value">{{ reviewData.team_score }}</span>
-              </div>
-
-              <div class="score-item">
-                <span class="score-label">预算合理性：</span>
-                <el-rate
-                  v-model="reviewData.budget_score"
-                  disabled
-                  :max="10"
-                  :allow-half="true"
-                  size="large"
-                />
-                <span class="score-value">{{ reviewData.budget_score }}</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="total-score-section">
-            <div class="total-score-card">
-              <div class="total-score-label">综合评分</div>
-              <div class="total-score-value">{{ reviewData.total_score.toFixed(1) }}</div>
-              <div class="total-score-rating">
-                <el-rate
-                  v-model="reviewData.total_score"
-                  disabled
-                  :max="10"
-                  :allow-half="true"
-                  size="large"
-                />
-              </div>
-            </div>
           </div>
         </div>
       </el-card>
@@ -202,7 +117,6 @@
               <el-tag :type="getConclusionType(review.recommendation)" size="small">
                 {{ getConclusionText(review.recommendation) }}
               </el-tag>
-              <span class="review-score">评分：{{ review.total_score }}</span>
             </div>
 
             <p v-if="!review.is_confidential" class="review-comment">
@@ -224,6 +138,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import request from '@/utils/request'
 
 const router = useRouter()
@@ -239,12 +154,6 @@ const reviewData = ref<any>({
   reviewer_title: '',
   review_date: '',
   review_type: '',
-  innovation_score: 0,
-  feasibility_score: 0,
-  significance_score: 0,
-  team_score: 0,
-  budget_score: 0,
-  total_score: 0,
   strengths: '',
   weaknesses: '',
   recommendation: '',
@@ -285,8 +194,8 @@ const loadReviewDetail = async () => {
   }
 }
 
-const goBack = () => {
-  router.back()
+const goToDashboard = () => {
+  router.push('/reviewer/dashboard')
 }
 
 // 辅助函数
@@ -361,24 +270,96 @@ onMounted(() => {
 <style scoped>
 .review-detail-page {
   min-height: 100vh;
-  background: #f0f2f5;
+  background: #f5f7fa;
   padding: 20px;
 }
 
-.page-header-content h1 {
-  margin: 0;
-  font-size: 24px;
-  color: #303133;
+.review-detail-page :deep(.el-button--primary) {
+  --el-button-bg-color: #b31b1b;
+  --el-button-border-color: #b31b1b;
+  --el-button-hover-bg-color: #8b1515;
+  --el-button-hover-border-color: #8b1515;
+  --el-button-active-bg-color: #8b1515;
+  --el-button-active-border-color: #8b1515;
 }
 
-.page-header-content .subtitle {
-  font-size: 14px;
+.page-header {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+
+.back-workbench-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 10px 18px;
+  border: 1px solid rgba(179, 27, 27, 0.35);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffbfb 0%, #fff5f5 100%);
+  color: #b31b1b;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.back-workbench-box:hover {
+  background: #fff0f0;
+  border-color: #b31b1b;
+  box-shadow: 0 2px 8px rgba(179, 27, 27, 0.12);
+}
+
+.back-workbench-box:active {
+  background: #ffe8e8;
+}
+
+.back-workbench-box .back-icon {
+  font-size: 18px;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.header-main h1 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  color: #303133;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
+}
+
+.header-main .subtitle {
+  margin: 0;
   color: #909399;
-  margin-top: 4px;
+  font-size: 14px;
 }
 
 .content-container {
-  margin-top: 20px;
+  margin-top: 0;
+}
+
+@media (max-width: 768px) {
+  .header-content {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .back-workbench-box {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 .section-card {
@@ -435,74 +416,6 @@ onMounted(() => {
   margin-left: 4px;
 }
 
-.score-detail {
-  display: flex;
-  gap: 40px;
-  padding: 20px;
-}
-
-.score-section {
-  flex: 1;
-}
-
-.score-section h4 {
-  margin: 0 0 20px 0;
-  color: #303133;
-}
-
-.score-items {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.score-item {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.score-label {
-  font-weight: 500;
-  color: #606266;
-  min-width: 100px;
-}
-
-.score-value {
-  font-weight: bold;
-  color: #b31b1b;
-  min-width: 40px;
-}
-
-.total-score-section {
-  width: 200px;
-}
-
-.total-score-card {
-  padding: 24px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 12px;
-  text-align: center;
-  color: white;
-}
-
-.total-score-label {
-  font-size: 14px;
-  opacity: 0.9;
-  margin-bottom: 8px;
-}
-
-.total-score-value {
-  font-size: 36px;
-  font-weight: bold;
-  margin-bottom: 12px;
-}
-
-.total-score-rating :deep(.el-rate__icon) {
-  font-size: 24px;
-  margin-right: 2px;
-}
-
 .review-content {
   padding: 20px;
 }
@@ -555,12 +468,6 @@ onMounted(() => {
   color: #909399;
 }
 
-.review-score {
-  font-size: 14px;
-  color: #b31b1b;
-  margin-left: auto;
-}
-
 .review-comment {
   margin: 0 0 12px 0;
   color: #606266;
@@ -580,15 +487,6 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
-  .score-detail {
-    flex-direction: column;
-    gap: 24px;
-  }
-
-  .total-score-section {
-    width: 100%;
-  }
-
   .basic-info-grid {
     grid-template-columns: 1fr;
   }
@@ -597,10 +495,6 @@ onMounted(() => {
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
-  }
-
-  .review-score {
-    margin-left: 0;
   }
 }
 </style>

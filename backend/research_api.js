@@ -84,6 +84,61 @@ function formatDateForMySQL(dateString) {
     return new Date().toISOString().split('T')[0];
   }
 }
+
+/** 项目经理「确认立项」前：须已分配专家且各专家任务已结束（非 reviewing）。管理员不受此限。 */
+async function assertProjectManagerApprovePreconditions(poolConn, projectId, user) {
+  if (!user || user.role === 'admin') {
+    return { ok: true };
+  }
+  if (user.role !== 'project_manager') {
+    return { ok: true };
+  }
+  const [rows] = await poolConn.query(
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN status = 'reviewing' THEN 1 ELSE 0 END) AS still_reviewing
+     FROM \`ExpertAssignment\` WHERE project_id = ?`,
+    [projectId]
+  );
+  const total = Number(rows[0]?.total) || 0;
+  const still = Number(rows[0]?.still_reviewing) || 0;
+  if (total === 0) {
+    return {
+      ok: false,
+      error: '请先分配评审专家；分配后项目将进入「评审中」，专家完成评审后您可在此确认立项通过。',
+    };
+  }
+  if (still > 0) {
+    return {
+      ok: false,
+      error: '尚有评审专家未完成评审，请待全部评审结束后再确认立项通过。',
+    };
+  }
+  return { ok: true };
+}
+
+/** 项目经理仅能操作自己已领取（manager_id 为自己）的项目；管理员不受限。 */
+function assertProjectManagerProjectOwnership(project, user) {
+  if (!user || user.role === 'admin') {
+    return { ok: true };
+  }
+  if (user.role !== 'project_manager') {
+    return { ok: true };
+  }
+  if (!project.manager_id) {
+    return {
+      ok: false,
+      error: '请先在工作台「领取」该项目，领取后由您作为项目经理持续负责后续分配专家与跟进。',
+    };
+  }
+  if (String(project.manager_id) !== String(user.id)) {
+    return {
+      ok: false,
+      error: '该项目由其他项目经理负责，您无法操作。',
+    };
+  }
+  return { ok: true };
+}
+
 // 辅助函数：解析请求体
 function parseRequestBody(req) {
   return new Promise((resolve, reject) => {
@@ -103,13 +158,16 @@ function parseRequestBody(req) {
 }
 // 在 parseRequestBody 后添加角色转换函数
 function normalizeRole(role) {
+  const r = (role == null ? '' : String(role)).toLowerCase().trim();
   const roleMap = {
-    'user': 'applicant',
-    'admin': 'admin',
-    'assistant': 'assistant',
-    'reviewer': 'reviewer'
+    user: 'applicant',
+    applicant: 'applicant',
+    admin: 'admin',
+    assistant: 'project_manager',
+    project_manager: 'project_manager',
+    reviewer: 'reviewer',
   };
-  return roleMap[role] || role || 'applicant';
+  return roleMap[r] || r || 'applicant';
 }
 // 辅助函数：验证token
 // Token 验证函数（修复版）
@@ -142,7 +200,7 @@ async function verifyToken(token) {
       id: payload.userId || payload.id,
       userId: payload.userId || payload.id,
       username: payload.username,
-      role: payload.role
+      role: normalizeRole(payload.role),
     };
   } catch (error) {
     console.error('❌ Token解析失败:', error.message);
@@ -202,6 +260,11 @@ function checkPermission(userRole, requiredRoles) {
   }
   
   return userRoleUpper === requiredRoles.toUpperCase();
+}
+
+/** 用户管理类接口：系统管理员 / 项目经理（与侧边栏「用户管理」入口一致） */
+function canManageUsers(role) {
+  return checkPermission(role, ['admin', 'project_manager']);
 }
 
 // 统一响应函数
@@ -407,60 +470,74 @@ if (pathname === '/api/home/notices' && req.method === 'GET') {
   }
   
   try {
-    // 查询用户 - 使用正确的表名 User
-    // 支持按角色过滤（如果前端传了 role）
-    let query = 'SELECT * FROM `User` WHERE username = ? OR email = ?';
-    const queryParams = [body.username, body.username];
-    
-    // 如果指定了角色，增加角色过滤
-    if (body.role) {
-      query += ' AND role = ?';
-      queryParams.push(body.role);
-    }
-    
-    const [users] = await pool.query(query, queryParams);
-    
-    if (users.length === 0) {
-      sendResponse(res, 401, {
+    const allowedRoles = ['applicant', 'reviewer', 'project_manager', 'admin'];
+    if (!body.role || !allowedRoles.includes(String(body.role).trim())) {
+      sendResponse(res, 400, {
         success: false,
-        error: '用户名或密码错误，或该角色不存在'
+        error: '请选择有效的身份类型（项目申请人 / 评审专家 / 项目经理 / 系统管理员）',
       });
       return;
     }
-    
+
+    // 仅用用户名/邮箱查找，避免「身份类型」选错时误报「用户不存在」
+    const [users] = await pool.query(
+      'SELECT * FROM `User` WHERE username = ? OR email = ? LIMIT 1',
+      [body.username, body.username],
+    );
+
+    if (users.length === 0) {
+      sendResponse(res, 401, {
+        success: false,
+        error: '用户名或密码错误',
+      });
+      return;
+    }
+
     const user = users[0];
-    
+
     // 检查账号状态
     if (user.status === 'inactive') {
       sendResponse(res, 403, {
         success: false,
-        error: '账号尚未激活，请联系管理员审核'
+        error: '账号尚未激活，请联系管理员审核',
       });
       return;
     }
-    
-    // 密码验证 - 支持明文和bcrypt加密
+
+    // 密码验证通过后再校验身份，避免未认证即泄露账号角色
     let passwordValid = false;
-    
-    // 检查是否是bcrypt加密的密码（通常以$2a$、$2b$、$2y$开头）
+
     if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$')) {
       try {
         const bcrypt = require('bcryptjs');
         passwordValid = await bcrypt.compare(body.password, user.password);
       } catch (bcryptError) {
         console.error('bcrypt验证失败:', bcryptError);
-        // 降级到明文比较
-        passwordValid = (body.password === user.password);
+        passwordValid = body.password === user.password;
       }
     } else {
-      // 明文密码比较
-      passwordValid = (body.password === user.password);
+      passwordValid = body.password === user.password;
     }
-    
+
     if (!passwordValid) {
       sendResponse(res, 401, {
         success: false,
-        error: '用户名或密码错误'
+        error: '用户名或密码错误',
+      });
+      return;
+    }
+
+    const requestedRole = String(body.role).trim();
+    if (requestedRole !== user.role) {
+      const roleLabel = {
+        applicant: '项目申请人',
+        reviewer: '评审专家',
+        project_manager: '项目经理',
+        admin: '系统管理员',
+      };
+      sendResponse(res, 403, {
+        success: false,
+        error: `身份与账号不符：该账号为「${roleLabel[user.role] || user.role}」，请重新选择身份类型后登录`,
       });
       return;
     }
@@ -1177,7 +1254,7 @@ function formatRelativeTime(dateString) {
       }
       
       // 检查是否是管理员
-      const isAdmin = user.role === 'admin' || user.role === 'assistant';
+      const isAdmin = user.role === 'admin' || user.role === 'project_manager';
       if (!isAdmin) {
         sendResponse(res, 403, {
           success: false,
@@ -1447,7 +1524,7 @@ if (pathname === '/api/admin/users/pending' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'admin') {
+  if (!user || !canManageUsers(user.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -1499,7 +1576,7 @@ if (pathname.startsWith('/api/admin/users/') && pathname.endsWith('/approve') &&
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -1561,7 +1638,7 @@ if (pathname.startsWith('/api/admin/users/') && pathname.endsWith('/reject') && 
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -1968,7 +2045,7 @@ if (pathname === '/api/admin/users' && req.method === 'GET') {
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -2150,7 +2227,7 @@ if (pathname === '/api/admin/users' && req.method === 'POST') {
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -2260,7 +2337,7 @@ if (pathname.startsWith('/api/admin/users/') && req.method === 'PUT') {
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -2380,7 +2457,7 @@ if (pathname.startsWith('/api/admin/users/') && pathname.includes('/reset-passwo
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -2470,7 +2547,7 @@ if (pathname.startsWith('/api/admin/users/') && pathname.includes('/status') && 
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -2570,7 +2647,7 @@ if (pathname.startsWith('/api/admin/users/') && req.method === 'DELETE') {
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -2655,7 +2732,7 @@ if (pathname === '/api/admin/users/batch-status' && req.method === 'POST') {
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -2729,7 +2806,7 @@ if (pathname === '/api/admin/users/batch-reset-password' && req.method === 'POST
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -2802,7 +2879,7 @@ if (pathname === '/api/admin/users/batch-delete' && req.method === 'POST') {
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -2898,7 +2975,7 @@ if (pathname === '/api/admin/users/export' && req.method === 'GET') {
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -2948,7 +3025,7 @@ if (pathname === '/api/admin/users/export' && req.method === 'GET') {
         CASE role
           WHEN 'applicant' THEN '申请人'
           WHEN 'reviewer' THEN '评审专家'
-          WHEN 'assistant' THEN '科研助理'
+          WHEN 'project_manager' THEN '科研助理'
           WHEN 'admin' THEN '管理员'
           ELSE role
         END as 角色,
@@ -3003,7 +3080,7 @@ if (pathname === '/api/admin/departments' && req.method === 'GET') {
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -3040,7 +3117,7 @@ if (pathname === '/api/admin/departments/search' && req.method === 'GET') {
   const token = req.headers.authorization;
   const admin = await verifyToken(token);
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !canManageUsers(admin.role)) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -3217,7 +3294,7 @@ if (pathname === '/api/admin/roles/stats' && req.method === 'GET') {
     
     // 组合统计数据
     const stats = {};
-    const allRoles = ['applicant', 'reviewer', 'assistant', 'admin'];
+    const allRoles = ['applicant', 'reviewer', 'project_manager', 'admin'];
     
     allRoles.forEach(role => {
       const userStat = userStats.find(s => s.role === role) || { user_count: 0, active_users: 0, pending_users: 0 };
@@ -4027,7 +4104,7 @@ if (pathname === '/api/dashboard/assistant/detailed' && req.method === 'GET') {
   }
   
   // 检查是否是科研助理或管理员
-  const isAssistant = user.role === 'assistant' || user.role === 'admin';
+  const isAssistant = user.role === 'project_manager' || user.role === 'admin';
   if (!isAssistant) {
     sendResponse(res, 403, {
       success: false,
@@ -4382,7 +4459,7 @@ if (pathname === '/api/assistant/dashboard/overview' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -4390,11 +4467,11 @@ if (pathname === '/api/assistant/dashboard/overview' && req.method === 'GET') {
   try {
     console.log('获取科研助理仪表板概览，助理ID:', user.id);
     
-    // 获取待处理申请数量
+    // 待领取：已提交且尚未指定项目经理（与申请列表 scope=unassigned 一致）
     const [pendingAppsResult] = await pool.query(`
       SELECT COUNT(*) as count 
       FROM \`Project\` 
-      WHERE status = 'submitted'
+      WHERE status = 'submitted' AND manager_id IS NULL
     `);
     
     // 获取进行中项目数量
@@ -4461,7 +4538,7 @@ if (pathname === '/api/assistant/applications/pending' && req.method === 'GET') 
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -4508,7 +4585,7 @@ if (pathname === '/api/assistant/stats/projects' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -4591,7 +4668,7 @@ if (pathname === '/api/assistant/activities/recent' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -4716,7 +4793,7 @@ if (pathname === '/api/assistant/users/recent' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -4774,6 +4851,7 @@ if (pathname === '/api/users' && req.method === 'GET') {
     const role = query.role;
     const status = query.status;
     const keyword = query.keyword || '';
+    const domainId = query.domain_id || query.domainId || '';
     const limit = parseInt(query.limit) || 100;
     const page = parseInt(query.page) || 1;
     const offset = (page - 1) * limit;
@@ -4790,10 +4868,26 @@ if (pathname === '/api/users' && req.method === 'GET') {
       sql += ' AND status = ?';
       params.push(status);
     }
+
+    if (domainId) {
+      sql += ` AND EXISTS (SELECT 1 FROM \`ExpertDomain\` ed WHERE ed.expert_id = \`User\`.id AND ed.domain_id = ?)`;
+      params.push(domainId);
+    }
     
     if (keyword) {
-      sql += ' AND (name LIKE ? OR username LIKE ? OR email LIKE ?)';
-      params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+      const kw = `%${keyword}%`;
+      // 含部门、职称、专家特长描述、擅长领域名称（否则搜「生物」等无法命中仅写在领域/简介里的专家）
+      sql += ` AND (
+        name LIKE ? OR username LIKE ? OR email LIKE ?
+        OR department LIKE ? OR title LIKE ?
+        OR EXISTS (SELECT 1 FROM \`ExpertProfile\` ep WHERE ep.id = \`User\`.id AND ep.expertise_description LIKE ?)
+        OR EXISTS (
+          SELECT 1 FROM \`ExpertDomain\` ed
+          INNER JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
+          WHERE ed.expert_id = \`User\`.id AND rd.name LIKE ?
+        )
+      )`;
+      params.push(kw, kw, kw, kw, kw, kw, kw);
     }
     
     // 获取总数
@@ -4863,7 +4957,7 @@ if (pathname === '/api/assistant/tasks/pending' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -4965,7 +5059,7 @@ if (pathname === '/api/assistant/tasks' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -5125,7 +5219,7 @@ if (pathname.startsWith('/api/assistant/tasks/') && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -5240,7 +5334,7 @@ if (pathname.startsWith('/api/assistant/tasks/') && req.method === 'PUT') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -5407,7 +5501,7 @@ if (pathname === '/api/assistant/projects/review' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -5556,8 +5650,11 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/review') && req
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
+  if (!user || user.role !== 'admin') {
+    sendResponse(res, 403, {
+      success: false,
+      error: '项目评审须由评审专家在专家工作台提交；仅管理员可使用本接口代录评审。',
+    });
     return;
   }
   
@@ -5637,38 +5734,21 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/review') && req
       [newStatus, projectId]
     );
     
-    // 如果是科研助理评审且结论为通过，可以直接批准
-    if (user.role === 'assistant' && recommendation === 'approve') {
-      await pool.query(
-        'UPDATE `Project` SET status = "approved", approval_date = CURDATE() WHERE id = ?',
-        [projectId]
-      );
-      
-      // 创建通知
-      await createNotification(
-        project.applicant_id,
-        '项目审核通过',
-        `您的项目"${project.title}"已通过审核并获得批准`,
-        'project',
-        projectId
-      );
-    } else {
-      // 创建通知
-      const recommendationText = {
-        approve: '通过',
-        approve_with_revision: '修改后通过',
-        reject: '拒绝',
-        resubmit: '需要重新提交'
-      };
-      
-      await createNotification(
-        project.applicant_id,
-        '项目收到评审意见',
-        `您的项目"${project.title}"收到了新的评审意见，结果为：${recommendationText[recommendation] || recommendation}`,
-        'review',
-        projectId
-      );
-    }
+    // 创建通知
+    const recommendationText = {
+      approve: '通过',
+      approve_with_revision: '修改后通过',
+      reject: '拒绝',
+      resubmit: '需要重新提交'
+    };
+    
+    await createNotification(
+      project.applicant_id,
+      '项目收到评审意见',
+      `您的项目"${project.title}"收到了新的评审意见，结果为：${recommendationText[recommendation] || recommendation}`,
+      'review',
+      projectId
+    );
     
     // 记录操作日志
     await pool.query(
@@ -5702,7 +5782,7 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/approve') && re
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -5712,7 +5792,7 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/approve') && re
     const { comment } = body;
     
     console.log('快速审核通过项目，项目ID:', projectId, '操作人:', user.id);
-    
+
     // 检查项目状态
     const [projects] = await pool.query(
       'SELECT * FROM `Project` WHERE id = ? AND status IN ("submitted", "under_review")',
@@ -5728,6 +5808,18 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/approve') && re
     }
     
     const project = projects[0];
+
+    const ownPm = assertProjectManagerProjectOwnership(project, user);
+    if (!ownPm.ok) {
+      sendResponse(res, 400, { success: false, error: ownPm.error });
+      return;
+    }
+
+    const preApprove = await assertProjectManagerApprovePreconditions(pool, projectId, user);
+    if (!preApprove.ok) {
+      sendResponse(res, 400, { success: false, error: preApprove.error });
+      return;
+    }
     
     // 更新项目状态
     await pool.query(
@@ -5780,7 +5872,7 @@ if (pathname === '/api/assistant/projects/batch-review' && req.method === 'POST'
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -5832,6 +5924,27 @@ if (pathname === '/api/assistant/projects/batch-review' && req.method === 'POST'
     // 逐个处理项目
     for (const project of projects) {
       try {
+        const ownBatch = assertProjectManagerProjectOwnership(project, user);
+        if (!ownBatch.ok) {
+          failedProjects.push({
+            project_id: project.id,
+            project_title: project.title,
+            error: ownBatch.error,
+          });
+          continue;
+        }
+        if (result === 'approve') {
+          const preBatch = await assertProjectManagerApprovePreconditions(pool, project.id, user);
+          if (!preBatch.ok) {
+            failedProjects.push({
+              project_id: project.id,
+              project_title: project.title,
+              error: preBatch.error,
+            });
+            continue;
+          }
+        }
+
         // 更新项目状态
         await pool.query(
           'UPDATE `Project` SET status = ?, updated_at = NOW() WHERE id = ?',
@@ -5918,7 +6031,7 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/reject') && req
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -5986,7 +6099,7 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/return') && req
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -6051,7 +6164,7 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -6081,13 +6194,7 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
       whereClauses.push('p.status != "draft"');
     }
     
-    // 按项目类别筛选
-    if (query.category) {
-      const categories = query.category.split(',');
-      const placeholders = categories.map(() => '?').join(',');
-      whereClauses.push(`p.category IN (${placeholders})`);
-      queryParams.push(...categories);
-    }
+    // Project 表无 category 字段，忽略 query.category
     
     // 按提交时间筛选
     if (query.startDate && query.endDate) {
@@ -6097,20 +6204,29 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
     
     // 按预算范围筛选
     if (query.minBudget) {
-      whereClauses.push('p.budget_total >= ?');
+      whereClauses.push('p.approved_budget >= ?');
       queryParams.push(parseFloat(query.minBudget));
     }
     
     if (query.maxBudget) {
-      whereClauses.push('p.budget_total <= ?');
+      whereClauses.push('p.approved_budget <= ?');
       queryParams.push(parseFloat(query.maxBudget));
     }
     
     // 关键词搜索
     if (query.keyword) {
-      whereClauses.push('(p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ? OR p.research_field LIKE ? OR p.keywords LIKE ?)');
+      whereClauses.push('(p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ? OR p.keywords LIKE ? OR p.abstract LIKE ?)');
       const keyword = `%${query.keyword}%`;
       queryParams.push(keyword, keyword, keyword, keyword, keyword);
+    }
+
+    // 我负责的：当前用户为项目经理（manager_id）；科研助理与管理员均适用
+    if (query.scope === 'mine') {
+      whereClauses.push('p.manager_id = ?');
+      queryParams.push(user.id);
+    } else if (query.scope === 'unassigned') {
+      whereClauses.push('p.manager_id IS NULL');
+      whereClauses.push('p.status = "submitted"');
     }
     
     const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
@@ -6128,7 +6244,8 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
     // 排序字段映射
     const orderByMap = {
       'created_at': 'p.created_at',
-      'budget_total': 'p.budget_total',
+      'updated_at': 'p.updated_at',
+      'budget_total': 'p.approved_budget',
       'submit_date': 'p.submit_date',
       'approval_date': 'p.approval_date'
     };
@@ -6142,20 +6259,22 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
         p.id,
         p.project_code,
         p.title,
-        p.category,
-        p.research_field,
+        NULL AS category,
+        NULL AS research_field,
         p.keywords,
         p.abstract,
-        p.objectives,
-        p.budget_total,
-        p.duration_months,
+        p.implementation_plan AS objectives,
+        p.approved_budget AS budget_total,
+        NULL AS duration_months,
         p.status,
-        p.current_stage,
+        NULL AS current_stage,
         p.submit_date,
         p.approval_date,
-        p.completion_date,
+        p.end_date AS completion_date,
         p.created_at,
-
+        p.updated_at,
+        p.manager_id,
+        mgr.name as manager_name,
         u.name as applicant_name,
         u.department,
         u.title as applicant_title,
@@ -6163,6 +6282,7 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
         u.phone as applicant_phone
       FROM \`Project\` p
       LEFT JOIN \`User\` u ON p.applicant_id = u.id
+      LEFT JOIN \`User\` mgr ON p.manager_id = mgr.id
       ${whereClause}
       ${orderByClause}
       LIMIT ? OFFSET ?
@@ -6200,10 +6320,12 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
           keywords: app.keywords,
           abstract: app.abstract,
           objectives: app.objectives,
-          budget_total: parseFloat(app.budget_total),
+          budget_total: app.budget_total != null ? parseFloat(app.budget_total) : null,
           duration_months: app.duration_months,
           status: app.status,
           current_stage: app.current_stage,
+          manager_id: app.manager_id,
+          manager_name: app.manager_name,
           submit_date: app.submit_date ? app.submit_date.toISOString().split('T')[0] : null,
           approval_date: app.approval_date ? app.approval_date.toISOString().split('T')[0] : null,
           completion_date: app.completion_date ? app.completion_date.toISOString().split('T')[0] : null,
@@ -6244,7 +6366,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -6260,9 +6382,11 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
         u.department,
         u.title as applicant_title,
         u.email as applicant_email,
-        u.phone as applicant_phone
+        u.phone as applicant_phone,
+        mgr.name as manager_name
       FROM \`Project\` p
       LEFT JOIN \`User\` u ON p.applicant_id = u.id
+      LEFT JOIN \`User\` mgr ON p.manager_id = mgr.id
       WHERE p.id = ?
     `, [applicationId]);
     
@@ -6273,7 +6397,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
     
     const application = applications[0];
     
-    // 获取预算明细
+    // 获取预算明细（表结构见 ProjectBudget：无 justification/sequence，用 description、sort_order）
     const [budgetItems] = await pool.query(`
       SELECT 
         id,
@@ -6281,11 +6405,10 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
         item_name,
         description,
         amount,
-        justification,
-        sequence
+        sort_order
       FROM \`ProjectBudget\`
       WHERE project_id = ?
-      ORDER BY sequence ASC
+      ORDER BY sort_order ASC, created_at ASC
     `, [applicationId]);
     
     // 获取项目成员
@@ -6377,6 +6500,8 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
           duration_months: application.duration_months,
           status: application.status,
           current_stage: application.current_stage,
+          manager_id: application.manager_id,
+          manager_name: application.manager_name,
           submit_date: application.submit_date ? application.submit_date.toISOString().split('T')[0] : null,
           start_date: application.start_date ? application.start_date.toISOString().split('T')[0] : null,
           end_date: application.end_date ? application.end_date.toISOString().split('T')[0] : null,
@@ -6397,8 +6522,8 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
           item_name: item.item_name,
           description: item.description,
           amount: parseFloat(item.amount),
-          justification: item.justification,
-          sequence: item.sequence
+          justification: item.description,
+          sequence: item.sort_order
         })),
         members: members.map(member => ({
           id: member.id,
@@ -6478,7 +6603,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/a
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -6504,6 +6629,19 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/a
     }
     
     const application = applications[0];
+
+    const ownApp = assertProjectManagerProjectOwnership(application, user);
+    if (!ownApp.ok) {
+      sendResponse(res, 400, { success: false, error: ownApp.error });
+      return;
+    }
+
+    const preApproveApp = await assertProjectManagerApprovePreconditions(pool, applicationId, user);
+    if (!preApproveApp.ok) {
+      sendResponse(res, 400, { success: false, error: preApproveApp.error });
+      return;
+    }
+
     const finalApprovalDate = approvalDate || new Date().toISOString().split('T')[0];
     
     // 更新申请状态
@@ -6599,7 +6737,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/r
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -6630,6 +6768,12 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/r
     }
     
     const application = applications[0];
+
+    const ownRet = assertProjectManagerProjectOwnership(application, user);
+    if (!ownRet.ok) {
+      sendResponse(res, 400, { success: false, error: ownRet.error });
+      return;
+    }
     
     // 更新申请状态
     await pool.query(
@@ -6723,7 +6867,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/r
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -6754,6 +6898,12 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/r
     }
     
     const application = applications[0];
+
+    const ownRej = assertProjectManagerProjectOwnership(application, user);
+    if (!ownRej.ok) {
+      sendResponse(res, 400, { success: false, error: ownRej.error });
+      return;
+    }
     
     // 更新申请状态
     await pool.query(
@@ -6843,7 +6993,7 @@ if (pathname === '/api/assistant/applications/batch-process' && req.method === '
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -7022,7 +7172,7 @@ if (pathname === '/api/assistant/applications/stats' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -7126,7 +7276,7 @@ if (pathname === '/api/assistant/funding/list' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -7318,7 +7468,7 @@ if (pathname.startsWith('/api/assistant/funding/') && !pathname.includes('/revie
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -7365,10 +7515,10 @@ if (pathname.startsWith('/api/assistant/funding/') && !pathname.includes('/revie
         item_name,
         description,
         amount,
-        justification
+        sort_order
       FROM \`ProjectBudget\`
       WHERE project_id = ?
-      ORDER BY sequence ASC
+      ORDER BY sort_order ASC, created_at ASC
     `, [funding.project_id]);
     
     // 获取项目支出记录
@@ -7453,7 +7603,7 @@ if (pathname.startsWith('/api/assistant/funding/') && !pathname.includes('/revie
           item_name: item.item_name,
           description: item.description,
           amount: parseFloat(item.amount),
-          justification: item.justification
+          justification: item.description
         })),
         expenditures: expenditures.map(exp => ({
           expense_no: exp.expense_no,
@@ -7501,7 +7651,7 @@ if (pathname.startsWith('/api/assistant/funding/') && pathname.includes('/review
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -7653,7 +7803,7 @@ if (pathname.startsWith('/api/assistant/funding/') && pathname.includes('/paymen
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -7777,7 +7927,7 @@ if (pathname === '/api/assistant/funding/batch-approve' && req.method === 'POST'
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -7916,7 +8066,7 @@ if (pathname === '/api/assistant/funding/batch-reject' && req.method === 'POST')
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -8060,7 +8210,7 @@ if (pathname === '/api/assistant/funding/stats' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -8182,7 +8332,7 @@ if (pathname === '/api/assistant/funding/export' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -8270,7 +8420,7 @@ if (pathname === '/api/assistant/expenditures/list' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -8491,7 +8641,7 @@ if (pathname.startsWith('/api/assistant/expenditures/') && !pathname.includes('/
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -8544,10 +8694,10 @@ if (pathname.startsWith('/api/assistant/expenditures/') && !pathname.includes('/
         item_name,
         description,
         amount,
-        justification
+        sort_order
       FROM \`ProjectBudget\`
       WHERE project_id = ?
-      ORDER BY sequence ASC
+      ORDER BY sort_order ASC, created_at ASC
     `, [expenditure.project_id]);
     
     // 获取类似支出记录
@@ -8641,7 +8791,7 @@ if (pathname.startsWith('/api/assistant/expenditures/') && !pathname.includes('/
           item_name: item.item_name,
           description: item.description,
           amount: parseFloat(item.amount),
-          justification: item.justification
+          justification: item.description
         })),
         similar_expenditures: similarExpenditures.map(exp => ({
           expense_no: exp.expense_no,
@@ -8687,7 +8837,7 @@ if (pathname.startsWith('/api/assistant/expenditures/') && pathname.includes('/r
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -8835,7 +8985,7 @@ if (pathname === '/api/assistant/expenditures/batch-approve' && req.method === '
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -8974,7 +9124,7 @@ if (pathname === '/api/assistant/expenditures/batch-reject' && req.method === 'P
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -9118,7 +9268,7 @@ if (pathname === '/api/assistant/expenditures/stats' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -9268,7 +9418,7 @@ if (pathname === '/api/assistant/expenditures/export' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -9364,7 +9514,7 @@ if (pathname === '/api/assistant/achievements/list' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -9564,7 +9714,7 @@ if (pathname.startsWith('/api/assistant/achievements/') &&
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -9754,7 +9904,7 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/r
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -9914,7 +10064,7 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/p
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -10045,7 +10195,7 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/t
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -10212,7 +10362,7 @@ if (pathname === '/api/assistant/achievements/batch-verify' && req.method === 'P
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -10351,7 +10501,7 @@ if (pathname === '/api/assistant/achievements/batch-reject' && req.method === 'P
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -10495,7 +10645,7 @@ if (pathname === '/api/assistant/achievements/batch-publish' && req.method === '
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -10637,7 +10787,7 @@ if (pathname === '/api/assistant/achievements/stats' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -10768,7 +10918,7 @@ if (pathname === '/api/assistant/achievements/export' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -10878,7 +11028,7 @@ if (pathname === '/api/assistant/users' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -10952,7 +11102,7 @@ if (pathname === '/api/assistant/users' && req.method === 'GET') {
       ORDER BY 
         CASE role
           WHEN 'admin' THEN 1
-          WHEN 'assistant' THEN 2
+          WHEN 'project_manager' THEN 2
           WHEN 'reviewer' THEN 3
           WHEN 'applicant' THEN 4
           ELSE 5
@@ -10967,7 +11117,7 @@ if (pathname === '/api/assistant/users' && req.method === 'GET') {
         COUNT(*) as totalUsers,
         SUM(CASE WHEN role = 'applicant' THEN 1 ELSE 0 END) as totalApplicants,
         SUM(CASE WHEN role = 'reviewer' THEN 1 ELSE 0 END) as totalReviewers,
-        SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END) as totalAssistants,
+        SUM(CASE WHEN role = 'project_manager' THEN 1 ELSE 0 END) as totalAssistants,
         SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as totalAdmins,
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as activeUsers
       FROM \`User\`
@@ -11011,7 +11161,7 @@ if (pathname === '/api/assistant/users/stats' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -11024,7 +11174,7 @@ if (pathname === '/api/assistant/users/stats' && req.method === 'GET') {
         COUNT(*) as totalUsers,
         SUM(CASE WHEN role = 'applicant' THEN 1 ELSE 0 END) as totalApplicants,
         SUM(CASE WHEN role = 'reviewer' THEN 1 ELSE 0 END) as totalReviewers,
-        SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END) as totalAssistants,
+        SUM(CASE WHEN role = 'project_manager' THEN 1 ELSE 0 END) as totalAssistants,
         SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as totalAdmins,
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as activeUsers,
         SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) as inactiveUsers,
@@ -11099,7 +11249,7 @@ if (pathname === '/api/assistant/users' && req.method === 'POST') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -11198,7 +11348,7 @@ if (pathname.startsWith('/api/assistant/users/') && req.method === 'PUT') {
   const token = req.headers.authorization;
   const assistant = await verifyToken(token);
   
-  if (!assistant || assistant.role !== 'assistant') {
+  if (!assistant || assistant.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -11283,7 +11433,7 @@ if (pathname.startsWith('/api/assistant/users/') && pathname.endsWith('/status')
   const token = req.headers.authorization;
   const assistant = await verifyToken(token);
   
-  if (!assistant || assistant.role !== 'assistant') {
+  if (!assistant || assistant.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -11366,7 +11516,7 @@ if (pathname.startsWith('/api/assistant/users/') && pathname.endsWith('/password
   const token = req.headers.authorization;
   const assistant = await verifyToken(token);
   
-  if (!assistant || assistant.role !== 'assistant') {
+  if (!assistant || assistant.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -11447,7 +11597,7 @@ if (pathname === '/api/assistant/users/export' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -11488,7 +11638,7 @@ if (pathname === '/api/assistant/users/export' && req.method === 'GET') {
         CASE role
           WHEN 'applicant' THEN '申请人'
           WHEN 'reviewer' THEN '评审专家'
-          WHEN 'assistant' THEN '科研助理'
+          WHEN 'project_manager' THEN '科研助理'
           WHEN 'admin' THEN '管理员'
           ELSE role
         END as role,
@@ -11555,16 +11705,18 @@ function getStatusText(status) {
 
 // ==================== 科研助理申请管理API ApplicationDetail====================
 
-// 获取申请详情
-if (pathname.startsWith('/api/assistant/applications/') && req.method === 'GET') {
-  const match = pathname.match(/\/api\/assistant\/applications\/(.+)/);
+// 获取申请详情（裸路径 /applications/:id；不得与 /detail、/history 等子路由冲突，否则 history 会被 (.+) 吃成 id）
+if (pathname.startsWith('/api/assistant/applications/') && req.method === 'GET'
+  && !pathname.endsWith('/history')
+  && !pathname.includes('/detail')) {
+  const match = pathname.match(/\/api\/assistant\/applications\/([^/]+)\/?$/);
   if (!match) return;
   
   const applicationId = match[1];
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -11610,12 +11762,8 @@ if (pathname.startsWith('/api/assistant/applications/') && req.method === 'GET')
         END
     `, [applicationId]);
     
-    // 获取项目阶段
-    const [stages] = await pool.query(`
-      SELECT * FROM \`ProjectStage\`
-      WHERE project_id = ?
-      ORDER BY stage_number
-    `, [applicationId]);
+    // 库表无 ProjectStage，阶段信息暂不返回（避免 ER_NO_SUCH_TABLE）
+    const stages = [];
     
     const applicationDetail = {
       id: project.id,
@@ -11671,7 +11819,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.endsWith('/r
   const token = req.headers.authorization;
   const assistant = await verifyToken(token);
   
-  if (!assistant || assistant.role !== 'assistant') {
+  if (!assistant || assistant.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -11785,7 +11933,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.endsWith('/h
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -11844,7 +11992,7 @@ if (pathname.startsWith('/api/assistant/projects/') && pathname.endsWith('/budge
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -11858,11 +12006,11 @@ if (pathname.startsWith('/api/assistant/projects/') && pathname.endsWith('/budge
         item_name,
         description,
         amount,
-        justification,
-        sequence
+        sort_order,
+        created_at
       FROM \`ProjectBudget\`
       WHERE project_id = ?
-      ORDER BY sequence, created_at
+      ORDER BY sort_order ASC, created_at ASC
     `, [projectId]);
     
     sendResponse(res, 200, {
@@ -11887,7 +12035,7 @@ if (pathname === '/api/assistant/activities' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -12073,7 +12221,7 @@ if (pathname === '/api/assistant/activities/stats' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -12182,7 +12330,7 @@ if (pathname === '/api/assistant/activities/export' && req.method === 'GET') {
   const token = req.headers.authorization;
   const user = await verifyToken(token);
   
-  if (!user || user.role !== 'assistant') {
+  if (!user || user.role !== 'project_manager') {
     sendResponse(res, 403, { success: false, error: '没有权限' });
     return;
   }
@@ -12354,7 +12502,7 @@ function getRoleText(role) {
   const map = {
     'applicant': '申请人',
     'reviewer': '评审专家',
-    'assistant': '科研助理',
+    'project_manager': '科研助理',
     'admin': '管理员',
   };
   return map[role] || role;
@@ -12569,7 +12717,7 @@ function getRoleText(role) {
         return;
       }
       
-      const isAssistant = user.role === 'assistant' || user.role === 'admin';
+      const isAssistant = user.role === 'project_manager' || user.role === 'admin';
       if (!isAssistant) {
         sendResponse(res, 403, {
           success: false,
@@ -12626,7 +12774,7 @@ function getRoleText(role) {
         return;
       }
       
-      const isAssistant = user.role === 'assistant' || user.role === 'admin';
+      const isAssistant = user.role === 'project_manager' || user.role === 'admin';
       if (!isAssistant) {
         sendResponse(res, 403, {
           success: false,
@@ -12754,7 +12902,7 @@ function getRoleText(role) {
         return;
       }
       
-      const isAssistant = user.role === 'assistant' || user.role === 'admin';
+      const isAssistant = user.role === 'project_manager' || user.role === 'admin';
       if (!isAssistant) {
         sendResponse(res, 403, {
           success: false,
@@ -12828,7 +12976,7 @@ function getRoleText(role) {
         return;
       }
       
-      const isAssistant = user.role === 'assistant' || user.role === 'admin';
+      const isAssistant = user.role === 'project_manager' || user.role === 'admin';
       if (!isAssistant) {
         sendResponse(res, 403, {
           success: false,
@@ -12948,7 +13096,7 @@ function getRoleText(role) {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
       
-      if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+      if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
         sendResponse(res, 403, { success: false, error: '没有权限' });
         return;
       }
@@ -13112,7 +13260,7 @@ function getRoleText(role) {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
       
-      if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+      if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
         sendResponse(res, 403, { success: false, error: '没有权限' });
         return;
       }
@@ -13162,7 +13310,7 @@ function getRoleText(role) {
                 AND pr.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
             ) as recent_reviews
           FROM \`User\` u
-          LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.user_id
+          LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.id
           WHERE u.role = 'reviewer'
             AND u.status = 'active'
             AND (u.name LIKE ? OR u.department LIKE ? OR u.title LIKE ?)
@@ -13226,13 +13374,120 @@ function getRoleText(role) {
       return;
     }
 
-    // 3. 为项目分配评审专家
+    // 3. 项目经理领取已提交项目（绑定 manager_id，后续由该经理负责）
+    if (pathname === '/api/assistant/projects/claim' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      try {
+        const body = await getBody(req);
+        const { projectId, managerId } = body;
+
+        if (!projectId) {
+          sendResponse(res, 400, { success: false, error: '请提供项目ID' });
+          return;
+        }
+
+        const [projects] = await pool.query('SELECT * FROM `Project` WHERE id = ?', [projectId]);
+        if (projects.length === 0) {
+          sendResponse(res, 404, { success: false, error: '项目不存在' });
+          return;
+        }
+
+        const project = projects[0];
+
+        if (project.status !== 'submitted') {
+          sendResponse(res, 400, {
+            success: false,
+            error: '仅「已提交」且尚未进入后续流程的申请可以领取',
+          });
+          return;
+        }
+
+        if (user.role === 'admin') {
+          if (!managerId) {
+            sendResponse(res, 400, {
+              success: false,
+              error: '管理员指派时请提供 managerId（项目经理用户 ID）',
+            });
+            return;
+          }
+          const [mgr] = await pool.query(
+            'SELECT id FROM `User` WHERE id = ? AND role = ?',
+            [managerId, 'project_manager']
+          );
+          if (!mgr.length) {
+            sendResponse(res, 400, { success: false, error: '指定的项目经理无效' });
+            return;
+          }
+          await pool.query(
+            'UPDATE `Project` SET manager_id = ?, updated_at = NOW() WHERE id = ?',
+            [managerId, projectId]
+          );
+          await pool.query(
+            `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+             VALUES (?, 'project_claim', 'Project', ?, ?, NOW())`,
+            [user.id, projectId, JSON.stringify({ manager_id: managerId, byAdmin: true })]
+          );
+          sendResponse(res, 200, {
+            success: true,
+            message: '已指定项目经理负责人',
+            data: { projectId, manager_id: managerId },
+          });
+          return;
+        }
+
+        if (project.manager_id && String(project.manager_id) !== String(user.id)) {
+          sendResponse(res, 409, {
+            success: false,
+            error: '该项目已由其他项目经理领取，您无法再领取',
+          });
+          return;
+        }
+
+        if (project.manager_id && String(project.manager_id) === String(user.id)) {
+          sendResponse(res, 200, {
+            success: true,
+            message: '您已是该项目的项目经理负责人',
+            data: { projectId, manager_id: user.id },
+          });
+          return;
+        }
+
+        await pool.query(
+          'UPDATE `Project` SET manager_id = ?, updated_at = NOW() WHERE id = ?',
+          [user.id, projectId]
+        );
+        await pool.query(
+          `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+           VALUES (?, 'project_claim', 'Project', ?, ?, NOW())`,
+          [user.id, projectId, JSON.stringify({ manager_id: user.id })]
+        );
+
+        sendResponse(res, 200, {
+          success: true,
+          message: '领取成功，您将负责该项目的后续分配评审专家与跟进',
+          data: { projectId, manager_id: user.id },
+        });
+      } catch (error) {
+        console.error('领取项目失败:', error);
+        sendResponse(res, 500, { success: false, error: '领取项目失败', message: error.message });
+      }
+      return;
+    }
+
+    // 4. 为项目分配评审专家（原 3）
     // 为项目分配评审专家
     if (pathname === '/api/assistant/projects/assign-reviewer' && req.method === 'POST') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
       
-      if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+      if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
         sendResponse(res, 403, { success: false, error: '没有权限' });
         return;
       }
@@ -13260,6 +13515,12 @@ function getRoleText(role) {
         }
         
         const project = projects[0];
+
+        const ownAssign = assertProjectManagerProjectOwnership(project, user);
+        if (!ownAssign.ok) {
+          sendResponse(res, 400, { success: false, error: ownAssign.error });
+          return;
+        }
         
         // 检查专家是否存在
         const [reviewers] = await pool.query(`
@@ -13277,39 +13538,27 @@ function getRoleText(role) {
         
         const assignmentResults = [];
         
-        // 为每个评审专家创建记录
+        // 为每个评审专家创建记录（库表仅有 ExpertAssignment，无 ProjectReview）
         for (const reviewer of reviewers) {
-          // 检查是否已分配
-          const [existing] = await pool.query(`
-            SELECT pr.id FROM \`ProjectReview\` pr
-            WHERE pr.project_id = ? AND pr.expert_id = ?
-          `, [projectId, reviewer.id]);
-          
+          const [existing] = await pool.query(
+            `SELECT id FROM \`ExpertAssignment\` WHERE project_id = ? AND expert_id = ?`,
+            [projectId, reviewer.id],
+          );
+
           if (existing.length === 0) {
-            // 1. 先创建 ExpertAssignment 记录
             const assignmentId = generateUUID();
-            
-            await pool.query(`
-              INSERT INTO \`ExpertAssignment\` (
+
+            await pool.query(
+              `INSERT INTO \`ExpertAssignment\` (
                 id, project_id, expert_id, assigned_by, assigned_at, status, created_at
-              ) VALUES (?, ?, ?, ?, NOW(), 'assigned', NOW())
-            `, [assignmentId, projectId, reviewer.id, user.id]);
-            
-            // 2. 再创建 ProjectReview 记录
-            const reviewId = generateUUID();
-            
-            await pool.query(`
-              INSERT INTO \`ProjectReview\` (
-                id, project_id, expert_id, assignment_id, recommendation,
-                comments, status, created_at
-              ) VALUES (?, ?, ?, ?, 'recommend', '', 'draft', NOW())
-            `, [reviewId, projectId, reviewer.id, assignmentId]);
-            
-            assignmentResults.push({ 
-              reviewerId: reviewer.id, 
-              assigned: true, 
-              reviewId,
-              assignmentId 
+              ) VALUES (?, ?, ?, ?, NOW(), 'reviewing', NOW())`,
+              [assignmentId, projectId, reviewer.id, user.id],
+            );
+
+            assignmentResults.push({
+              reviewerId: reviewer.id,
+              assigned: true,
+              assignmentId,
             });
             
             // 创建通知
@@ -13376,7 +13625,7 @@ function getRoleText(role) {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
       
-      if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+      if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
         sendResponse(res, 403, { success: false, error: '没有权限' });
         return;
       }
@@ -13391,38 +13640,45 @@ function getRoleText(role) {
         }
         
         console.log('移除评审专家，项目ID:', projectId, '专家ID:', reviewerId);
-        
-        // 检查评审记录是否存在
-        const [reviews] = await pool.query(`
-          SELECT pr.*, p.title as project_title, u.name as reviewer_name
-          FROM \`ProjectReview\` pr
-          LEFT JOIN \`Project\` p ON pr.project_id = p.id
-          LEFT JOIN \`User\` u ON pr.expert_id = u.id
-          WHERE pr.project_id = ? AND pr.expert_id = ?
-        `, [projectId, reviewerId]);
-        
-        if (reviews.length === 0) {
-          sendResponse(res, 404, { success: false, error: '评审记录不存在' });
+
+        const [projForRemove] = await pool.query(
+          'SELECT id, manager_id FROM `Project` WHERE id = ?',
+          [projectId]
+        );
+        if (projForRemove.length === 0) {
+          sendResponse(res, 404, { success: false, error: '项目不存在' });
+          return;
+        }
+        const ownRemove = assertProjectManagerProjectOwnership(projForRemove[0], user);
+        if (!ownRemove.ok) {
+          sendResponse(res, 400, { success: false, error: ownRemove.error });
           return;
         }
         
-        const review = reviews[0];
-        
-        // 删除 ProjectReview 记录
-        await pool.query('DELETE FROM `ProjectReview` WHERE id = ?', [review.id]);
-        
-        // 删除 ExpertAssignment 记录
-        if (review.assignment_id) {
-          await pool.query('DELETE FROM `ExpertAssignment` WHERE id = ?', [review.assignment_id]);
+        const [assignRows] = await pool.query(
+          `SELECT ea.*, p.title AS project_title, u.name AS reviewer_name
+           FROM \`ExpertAssignment\` ea
+           LEFT JOIN \`Project\` p ON ea.project_id = p.id
+           LEFT JOIN \`User\` u ON ea.expert_id = u.id
+           WHERE ea.project_id = ? AND ea.expert_id = ?`,
+          [projectId, reviewerId],
+        );
+
+        if (assignRows.length === 0) {
+          sendResponse(res, 404, { success: false, error: '评审分配记录不存在' });
+          return;
         }
-        
-        // 通知评审专家
+
+        const row = assignRows[0];
+
+        await pool.query('DELETE FROM `ExpertAssignment` WHERE id = ?', [row.id]);
+
         await createNotification(
           reviewerId,
           '评审任务取消',
-          `您对项目"${review.project_title}"的评审任务已被取消。`,
+          `您对项目"${row.project_title}"的评审任务已被取消。`,
           'review',
-          projectId
+          projectId,
         );
         
         sendResponse(res, 200, {
@@ -13445,31 +13701,50 @@ function getRoleText(role) {
         const token = req.headers.authorization;
         const user = await verifyToken(token);
         
-        if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+        if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
           sendResponse(res, 403, { success: false, error: '没有权限' });
           return;
         }
         
         try {
           console.log('获取项目评审分配详情，项目ID:', projectId);
+
+          const [projAssignRows] = await pool.query(
+            'SELECT id, manager_id FROM `Project` WHERE id = ?',
+            [projectId]
+          );
+          if (projAssignRows.length === 0) {
+            sendResponse(res, 404, { success: false, error: '项目不存在' });
+            return;
+          }
+          const ownAsg = assertProjectManagerProjectOwnership(projAssignRows[0], user);
+          if (!ownAsg.ok) {
+            sendResponse(res, 400, { success: false, error: ownAsg.error });
+            return;
+          }
           
-          // 获取已分配的评审专家
-          const [assignedReviewers] = await pool.query(`
+          const [assignedReviewers] = await pool.query(
+            `
             SELECT 
-              pr.id as review_id,
-              pr.expert_id as id,
+              ea.id AS review_id,
+              ea.expert_id AS id,
               u.name,
               u.email,
               u.department,
               u.title,
-              pr.status,
-              pr.submitted_at,
-              pr.created_at
-            FROM \`ProjectReview\` pr
-            LEFT JOIN \`User\` u ON pr.expert_id = u.id
-            WHERE pr.project_id = ?
-            ORDER BY pr.created_at DESC
-          `, [projectId]);
+              ep.expertise_description AS research_field,
+              ea.status,
+              NULL AS submitted_at,
+              ea.assigned_at,
+              ea.created_at
+            FROM \`ExpertAssignment\` ea
+            LEFT JOIN \`User\` u ON ea.expert_id = u.id
+            LEFT JOIN \`ExpertProfile\` ep ON ep.id = ea.expert_id
+            WHERE ea.project_id = ?
+            ORDER BY ea.created_at DESC
+          `,
+            [projectId],
+          );
           
           sendResponse(res, 200, {
             success: true,
@@ -13489,7 +13764,7 @@ function getRoleText(role) {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
       
-      if (!user || (user.role !== 'assistant' && user.role !== 'admin')) {
+      if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
         sendResponse(res, 403, { success: false, error: '没有权限' });
         return;
       }
@@ -13570,7 +13845,7 @@ function getRoleText(role) {
         const roleMap = {
           'APPLICANT': 'applicant',
           'REVIEWER': 'reviewer',
-          'ASSISTANT': 'assistant',
+          'ASSISTANT': 'project_manager',
           'ADMIN': 'admin'
         };
         
@@ -14011,7 +14286,7 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
         const countParams = [];
         
         // 根据用户角色过滤
-        if (!checkPermission(user.role, ['admin', 'assistant'])) {
+        if (!checkPermission(user.role, ['admin', 'project_manager'])) {
           sql += ' AND (applicant_id = ? OR id IN (SELECT project_id FROM `ProjectMember` WHERE user_id = ?))';
           countSql += ' AND (applicant_id = ? OR id IN (SELECT project_id FROM `ProjectMember` WHERE user_id = ?))';
           params.push(user.id, user.id);
@@ -14273,7 +14548,7 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
         
         const isOwner = project.applicant_id === user.id;
         const isManager = project.manager_id === user.id;
-        const hasAdminAccess = checkPermission(user.role, ['admin', 'assistant']);
+        const hasAdminAccess = checkPermission(user.role, ['admin', 'project_manager']);
         
         console.log('   是否是项目所有者:', isOwner);
         console.log('   是否是项目经理:', isManager);
@@ -14304,9 +14579,8 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
             item_name,
             description,
             amount,
-            calculation_method,
-            justification,
-            sort_order
+            sort_order,
+            created_at
           FROM \`ProjectBudget\`
           WHERE project_id = ?
           ORDER BY sort_order ASC, created_at ASC
@@ -14433,8 +14707,8 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
               item_name: budget.item_name,
               description: budget.description,
               amount: budget.amount,
-              calculation_method: budget.calculation_method,
-              justification: budget.justification
+              calculation_method: null,
+              justification: budget.description
             })),
             achievements: achievements.map(ach => ({
               id: ach.id,
@@ -14734,7 +15008,7 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
         const project = projects[0];
         const isOwner = project.applicant_id === user.id;
         const isManager = project.manager_id === user.id;
-        const hasAdminAccess = checkPermission(user.role, ['admin', 'assistant']);
+        const hasAdminAccess = checkPermission(user.role, ['admin', 'project_manager']);
         
         if (!isOwner && !isManager && !hasAdminAccess) {
           sendResponse(res, 403, {
@@ -14752,8 +15026,6 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
             item_name,
             description,
             amount,
-            calculation_method,
-            justification,
             sort_order,
             created_at
           FROM \`ProjectBudget\`
@@ -14818,7 +15090,7 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
         const project = projects[0];
         const isOwner = project.applicant_id === user.id;
         const isManager = project.manager_id === user.id;
-        const hasAdminAccess = checkPermission(user.role, ['admin', 'assistant']);
+        const hasAdminAccess = checkPermission(user.role, ['admin', 'project_manager']);
         
         if (!isOwner && !isManager && !hasAdminAccess) {
           sendResponse(res, 403, {
@@ -16289,19 +16561,18 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const sql = `
           INSERT INTO \`ProjectBudget\` (
             id, project_id, category, item_name, description,
-            amount, calculation_method, justification, sort_order, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            amount, sort_order, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
         `;
         
+        const mergedDesc = [body.description, body.justification].filter(Boolean).join('\n').trim() || body.description || '';
         const params = [
           budgetId,
           projectId,
           body.category,
           body.item_name,
-          body.description,
+          mergedDesc,
           body.amount,
-          body.calculation_method,
-          body.justification,
           body.sort_order || 0
         ];
         
@@ -16367,7 +16638,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const isApplicant = attachment.applicant_id === user.id;
         const isManager = attachment.manager_id === user.id;
         const isAdmin = checkPermission(user.role, 'admin');
-        const isAssistant = checkPermission(user.role, 'assistant');
+        const isAssistant = checkPermission(user.role, 'project_manager');
         
         if (!isApplicant && !isManager && !isAdmin && !isAssistant) {
           sendResponse(res, 403, {
@@ -16724,7 +16995,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const isApplicant = project.applicant_id === user.id;
         const isManager = project.manager_id === user.id;
         const isAdmin = checkPermission(user.role, 'admin');
-        const isAssistant = checkPermission(user.role, 'assistant');
+        const isAssistant = checkPermission(user.role, 'project_manager');
         
         if (!isApplicant && !isManager && !isAdmin && !isAssistant) {
           sendResponse(res, 403, {
@@ -16774,7 +17045,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 只有管理员可以查看所有用户
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+      if (!checkPermission(user.role, ['admin', 'project_manager'])) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限查看用户列表'
@@ -16922,7 +17193,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const countParams = [user.id];
         
         // 管理员可以查看所有成果
-        if (checkPermission(user.role, ['admin', 'assistant'])) {
+        if (checkPermission(user.role, ['admin', 'project_manager'])) {
           sql = sql.replace('WHERE pa.created_by = ?', 'WHERE 1=1');
           countSql = countSql.replace('WHERE created_by = ?', 'WHERE 1=1');
           params.shift();
@@ -17027,7 +17298,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           
           // 检查权限：只有项目成员或管理员可以创建成果
           const isOwner = project.applicant_id === user.id;
-          const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+          const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
           const [isMember] = await pool.query(
             'SELECT id FROM `ProjectMember` WHERE project_id = ? AND user_id = ?',
             [body.project_id, user.id]
@@ -17170,7 +17441,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         // 检查权限
         const isOwner = achievement.created_by === user.id;
         const isProjectOwner = achievement.applicant_id === user.id;
-        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
         
         // 检查是否是项目成员（如果有项目）
         let isMember = false;
@@ -17280,7 +17551,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         
         // 检查权限：只有创建者或管理员可以修改
         const isOwner = achievement.created_by === user.id;
-        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
         
         if (!isOwner && !isAdmin) {
           sendResponse(res, 403, {
@@ -17403,7 +17674,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         
         // 检查权限：只有创建者或管理员可以删除
         const isOwner = achievement.created_by === user.id;
-        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
         
         if (!isOwner && !isAdmin) {
           sendResponse(res, 403, {
@@ -17483,7 +17754,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         
         // 检查权限：只有创建者或管理员可以提交审核
         const isOwner = achievement.created_by === user.id;
-        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
         
         if (!isOwner && !isAdmin) {
           sendResponse(res, 403, {
@@ -17541,7 +17812,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 只有管理员和评审员可以审核成果
-      if (!checkPermission(user.role, ['admin', 'assistant', 'reviewer'])) {
+      if (!checkPermission(user.role, ['admin', 'project_manager', 'reviewer'])) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限审核成果'
@@ -17689,7 +17960,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         
         // 检查权限
         const isOwner = project.applicant_id === user.id;
-        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
         const [isMember] = await pool.query(
           'SELECT id FROM `ProjectMember` WHERE project_id = ? AND user_id = ?',
           [projectId, user.id]
@@ -17775,7 +18046,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         let statsQuery = '';
         let statsParams = [];
         
-        if (checkPermission(user.role, ['admin', 'assistant'])) {
+        if (checkPermission(user.role, ['admin', 'project_manager'])) {
           // 管理员查看所有统计数据
           statsQuery = `
             SELECT 
@@ -17810,7 +18081,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         
         // 按类型统计
         let typeQuery = '';
-        if (checkPermission(user.role, ['admin', 'assistant'])) {
+        if (checkPermission(user.role, ['admin', 'project_manager'])) {
           typeQuery = `
             SELECT type, COUNT(*) as count 
             FROM \`ProjectAchievement\`
@@ -17837,12 +18108,12 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             COUNT(*) as count
           FROM \`ProjectAchievement\`
           WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
-          ${!checkPermission(user.role, ['admin', 'assistant']) ? 'AND created_by = ?' : ''}
+          ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND created_by = ?' : ''}
           GROUP BY DATE_FORMAT(created_at, '%Y-%m')
           ORDER BY month
         `;
         
-        const monthlyParams = checkPermission(user.role, ['admin', 'assistant']) ? [] : [user.id];
+        const monthlyParams = checkPermission(user.role, ['admin', 'project_manager']) ? [] : [user.id];
         const [monthlyStats] = await pool.query(monthlyQuery, monthlyParams);
         
         sendResponse(res, 200, {
@@ -17905,7 +18176,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       const countParams = [user.id];
       
       // 管理员可以查看所有转化记录
-      if (checkPermission(user.role, ['admin', 'assistant'])) {
+      if (checkPermission(user.role, ['admin', 'project_manager'])) {
         sql = sql.replace('WHERE at.created_by = ?', 'WHERE 1=1');
         countSql = countSql.replace('WHERE created_by = ?', 'WHERE 1=1');
         params.shift();
@@ -18032,7 +18303,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       
       // 检查权限：只有成果创建者或管理员可以创建转化记录
       const isOwner = achievement.created_by === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
       
       if (!isOwner && !isAdmin) {
         sendResponse(res, 403, {
@@ -18174,7 +18445,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       
       // 检查权限：只有创建者或管理员可以查看
       const isOwner = transfer.created_by === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
       
       if (!isOwner && !isAdmin) {
         sendResponse(res, 403, {
@@ -18265,7 +18536,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       
       // 检查权限：只有创建者或管理员可以修改
       const isOwner = transfer.created_by === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
       
       if (!isOwner && !isAdmin) {
         sendResponse(res, 403, {
@@ -18377,7 +18648,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       
       // 检查权限：只有创建者或管理员可以删除
       const isOwner = transfer.created_by === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
       
       if (!isOwner && !isAdmin) {
         sendResponse(res, 403, {
@@ -18565,8 +18836,6 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           pb.item_name,
           pb.description,
           pb.amount,
-          pb.calculation_method,
-          pb.justification,
           pb.sort_order,
           pb.created_at
         FROM \`ProjectBudget\` pb
@@ -18873,7 +19142,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       const project = projects[0];
       const isOwner = project.applicant_id === user.id;
       const isManager = project.manager_id === user.id;
-      const hasAdminAccess = checkPermission(user.role, ['admin', 'assistant']);
+      const hasAdminAccess = checkPermission(user.role, ['admin', 'project_manager']);
       
       if (!isOwner && !isManager && !hasAdminAccess) {
         sendResponse(res, 403, {
@@ -18891,8 +19160,6 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           item_name,
           description,
           amount,
-          calculation_method,
-          justification,
           sort_order,
           created_at
         FROM \`ProjectBudget\`
@@ -18986,8 +19253,6 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           pb.item_name,
           pb.description,
           pb.amount,
-          pb.calculation_method,
-          pb.justification,
           pb.sort_order,
           pb.created_at,
           p.title as project_title,
@@ -19003,7 +19268,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       const countParams = [];
       
       // 权限过滤：普通用户只能看到自己项目的预算
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+      if (!checkPermission(user.role, ['admin', 'project_manager'])) {
         sql += ' AND p.applicant_id = ?';
         countSql += ' AND p.applicant_id = ?';
         params.push(user.id);
@@ -19118,7 +19383,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       
       // 检查权限：只有项目负责人或管理员可以创建预算
       const isOwner = project.applicant_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
       
       if (!isOwner && !isAdmin) {
         sendResponse(res, 403, {
@@ -19131,12 +19396,13 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       // 生成预算ID
       const budgetId = randomUUID();
       
-      // 插入预算记录
+      // 插入预算记录（表仅含 description，无 calculation_method/justification）
+      const mergedDescCreate = [body.description, body.justification].filter(Boolean).join('\n').trim() || body.description || '';
       const sql = `
         INSERT INTO \`ProjectBudget\` (
           id, project_id, category, item_name, description,
-          amount, calculation_method, justification, sort_order, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+          amount, sort_order, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
       `;
       
       const params = [
@@ -19144,10 +19410,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         body.project_id,
         body.category,
         body.item_name,
-        body.description || '',
+        mergedDescCreate,
         parseFloat(body.amount),
-        body.calculation_method || '',
-        body.justification || '',
         body.sort_order || 0
       ];
       
@@ -19164,8 +19428,6 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           pb.item_name,
           pb.description,
           pb.amount,
-          pb.calculation_method,
-          pb.justification,
           pb.sort_order,
           pb.created_at,
           p.title as project_title,
@@ -19234,7 +19496,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       
       // 检查权限：只有项目负责人或管理员可以更新
       const isOwner = budget.applicant_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
       
       if (!isOwner && !isAdmin) {
         sendResponse(res, 403, {
@@ -19249,8 +19511,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       const updateValues = [];
       
       const allowedFields = [
-        'category', 'item_name', 'description', 
-        'amount', 'calculation_method', 'justification', 'sort_order'
+        'category', 'item_name', 'description',
+        'amount', 'sort_order'
       ];
       
       allowedFields.forEach(field => {
@@ -19333,7 +19595,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       
       // 检查权限：只有项目负责人或管理员可以删除
       const isOwner = budget.applicant_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
       
       if (!isOwner && !isAdmin) {
         sendResponse(res, 403, {
@@ -19403,7 +19665,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       // 检查权限
       const isOwner = project.applicant_id === user.id;
       const isManager = project.manager_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
       const [isMember] = await pool.query(
         'SELECT id FROM `ProjectMember` WHERE project_id = ? AND user_id = ?',
         [projectId, user.id]
@@ -19502,7 +19764,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       const params = [user.id];
       
       // 管理员可以查看所有项目
-      if (checkPermission(user.role, ['admin', 'assistant'])) {
+      if (checkPermission(user.role, ['admin', 'project_manager'])) {
         projectsSql = `
           SELECT 
             id,
@@ -19607,7 +19869,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       `;
       const params = [user.id];
       
-      if (checkPermission(user.role, ['admin', 'assistant'])) {
+      if (checkPermission(user.role, ['admin', 'project_manager'])) {
         projectsSql = `
           SELECT id FROM \`Project\`
           WHERE status IN ('approved', 'incubating', 'completed')
@@ -19685,16 +19947,16 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
     try {
       // 获取用户的项目
       let projectsSql = `
-        SELECT id, budget_total, approved_budget 
+        SELECT id, approved_budget 
         FROM \`Project\` 
         WHERE applicant_id = ?
           AND status IN ('approved', 'incubating', 'completed')
       `;
       const params = [user.id];
       
-      if (checkPermission(user.role, ['admin', 'assistant'])) {
+      if (checkPermission(user.role, ['admin', 'project_manager'])) {
         projectsSql = `
-          SELECT id, budget_total, approved_budget 
+          SELECT id, approved_budget 
           FROM \`Project\` 
           WHERE status IN ('approved', 'incubating', 'completed')
         `;
@@ -19721,6 +19983,18 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         
         totalBudget = parseFloat(budgetResult[0]?.total_budget || 0);
         budgetCount = parseInt(budgetResult[0]?.count || 0);
+
+        // 无 ProjectBudget 明细时，用项目表批准预算汇总（与库表字段一致，无 budget_total 列）
+        if (totalBudget <= 0) {
+          const fromApproved = projects.reduce(
+            (sum, p) => sum + parseFloat(p.approved_budget || 0),
+            0,
+          );
+          if (fromApproved > 0) {
+            totalBudget = fromApproved;
+            budgetCount = projects.length;
+          }
+        }
         
         // 获取已使用金额（从预算明细中，实际使用金额需要支出记录，这里暂时设为0）
         totalUsed = 0;
@@ -19780,7 +20054,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       `;
       const params = [user.id];
       
-      if (checkPermission(user.role, ['admin', 'assistant'])) {
+      if (checkPermission(user.role, ['admin', 'project_manager'])) {
         projectsSql = `
           SELECT id FROM \`Project\` 
           WHERE status IN ('approved', 'incubating', 'completed')
@@ -19871,8 +20145,6 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           pb.item_name,
           pb.description,
           pb.amount,
-          pb.calculation_method,
-          pb.justification,
           pb.sort_order,
           pb.created_at,
           p.title as project_title,
@@ -19890,7 +20162,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       const countParams = [];
       
       // 权限过滤
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+      if (!checkPermission(user.role, ['admin', 'project_manager'])) {
         sql += ' AND p.applicant_id = ?';
         countSql += ' AND p.applicant_id = ?';
         params.push(user.id);
@@ -20074,7 +20346,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       );
       
       const isOwner = projects.length > 0 && projects[0].applicant_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
       
       if (!isOwner && !isAdmin) {
         sendResponse(res, 403, {
@@ -20128,8 +20400,6 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           pb.item_name as 预算事项,
           pb.description as 说明,
           pb.amount as 预算金额,
-          pb.calculation_method as 计算方法,
-          pb.justification as 预算依据,
           p.title as 项目名称,
           p.project_code as 项目编号,
           pb.created_at as 创建时间
@@ -20140,7 +20410,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       const params = [];
       
       // 权限过滤
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+      if (!checkPermission(user.role, ['admin', 'project_manager'])) {
         sql += ' AND p.applicant_id = ?';
         params.push(user.id);
       }
@@ -20262,7 +20532,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       
       // 检查权限：只有项目申请人可以申请支出
       const isOwner = project.applicant_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
       
       if (!isOwner && !isAdmin) {
         sendResponse(res, 403, {
@@ -20435,7 +20705,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       const countParams = [];
       
       // 权限过滤
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+      if (!checkPermission(user.role, ['admin', 'project_manager'])) {
         sql += ' AND er.applicant_id = ?';
         countSql += ' AND er.applicant_id = ?';
         params.push(user.id);
@@ -20520,16 +20790,16 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
     try {
       // 获取用户的项目预算
       let projectsSql = `
-        SELECT id, budget_total, approved_budget 
+        SELECT id, approved_budget 
         FROM \`Project\` 
         WHERE applicant_id = ?
           AND status IN ('approved', 'incubating')
       `;
       const params = [user.id];
       
-      if (checkPermission(user.role, ['admin', 'assistant'])) {
+      if (checkPermission(user.role, ['admin', 'project_manager'])) {
         projectsSql = `
-          SELECT id, budget_total, approved_budget 
+          SELECT id, approved_budget 
           FROM \`Project\` 
           WHERE status IN ('approved', 'incubating')
         `;
@@ -20556,6 +20826,17 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         
         totalBudget = parseFloat(budgetResult[0]?.total_budget || 0);
         budgetCount = parseInt(budgetResult[0]?.count || 0);
+
+        if (totalBudget <= 0) {
+          const fromApproved = projects.reduce(
+            (sum, p) => sum + parseFloat(p.approved_budget || 0),
+            0,
+          );
+          if (fromApproved > 0) {
+            totalBudget = fromApproved;
+            budgetCount = projects.length;
+          }
+        }
         
         // 获取已批准的支出总额
         const [expenditureResult] = await pool.query(
@@ -20710,7 +20991,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         
         // 检查权限
         const isOwner = project.applicant_id === user.id;
-        const isAdmin = checkPermission(user.role, ['admin', 'assistant']);
+        const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
         
         if (!isOwner && !isAdmin) {
           sendResponse(res, 403, {
@@ -20850,7 +21131,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const params = [startDateStr, endDateStr];
         let projectFilter = '';
         
-        if (project_ids && !checkPermission(user.role, ['admin', 'assistant'])) {
+        if (project_ids && !checkPermission(user.role, ['admin', 'project_manager'])) {
           const projectIds = project_ids.split(',');
           projectFilter = ` AND pa.project_id IN (${projectIds.map(() => '?').join(',')})`;
           params.push(...projectIds);
@@ -20873,10 +21154,10 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           FROM \`ProjectAchievement\` pa
           ${whereClause}
           ${projectFilter}
-          ${!checkPermission(user.role, ['admin', 'assistant']) ? 'AND pa.created_by = ?' : ''}
+          ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
         `;
         
-        if (!checkPermission(user.role, ['admin', 'assistant'])) {
+        if (!checkPermission(user.role, ['admin', 'project_manager'])) {
           params.push(user.id);
         }
         
@@ -20921,7 +21202,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           ...(project_ids ? project_ids.split(',') : [])
         ];
         
-        if (!checkPermission(user.role, ['admin', 'assistant'])) {
+        if (!checkPermission(user.role, ['admin', 'project_manager'])) {
           prevParams.push(user.id);
         }
         
@@ -20932,7 +21213,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           FROM \`ProjectAchievement\` pa
           WHERE pa.created_at BETWEEN ? AND ?
           ${projectFilter}
-          ${!checkPermission(user.role, ['admin', 'assistant']) ? 'AND pa.created_by = ?' : ''}
+          ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
         `;
         
         const [prevSummary] = await pool.query(prevSummaryQuery, prevParams);
@@ -21069,10 +21350,10 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           FROM \`ProjectAchievement\` pa
           ${whereClause}
           ${projectFilter}
-          ${!checkPermission(user.role, ['admin', 'assistant']) ? 'AND pa.created_by = ?' : ''}
+          ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
         `;
         
-        if (!checkPermission(user.role, ['admin', 'assistant'])) {
+        if (!checkPermission(user.role, ['admin', 'project_manager'])) {
           params.push(user.id);
         }
         
@@ -21091,14 +21372,14 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           ${groupByField.includes('u.name') ? 'LEFT JOIN `User` u ON pa.created_by = u.id' : ''}
           ${whereClause}
           ${projectFilter}
-          ${!checkPermission(user.role, ['admin', 'assistant']) ? 'AND pa.created_by = ?' : ''}
+          ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
           GROUP BY ${groupByField}
           ORDER BY count DESC
         `;
         
         const distributionParams = [total, ...params.slice(2)];
         
-        if (!checkPermission(user.role, ['admin', 'assistant'])) {
+        if (!checkPermission(user.role, ['admin', 'project_manager'])) {
           distributionParams.push(user.id);
         }
         
@@ -21211,12 +21492,12 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           FROM \`ProjectAchievement\` pa
           ${whereClause}
           ${projectFilter}
-          ${!checkPermission(user.role, ['admin', 'assistant']) ? 'AND pa.created_by = ?' : ''}
+          ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
           GROUP BY DATE_FORMAT(pa.created_at, '${dateFormat}')
           ORDER BY date
         `;
         
-        if (!checkPermission(user.role, ['admin', 'assistant'])) {
+        if (!checkPermission(user.role, ['admin', 'project_manager'])) {
           params.push(user.id);
         }
         
@@ -21344,7 +21625,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         let rankingQuery = '';
         let params = [startDateStr, endDateStr];
         
-        if (checkPermission(user.role, ['admin', 'assistant'])) {
+        if (checkPermission(user.role, ['admin', 'project_manager'])) {
           // 管理员查看所有项目
           rankingQuery = `
             SELECT 
@@ -21488,7 +21769,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             ROUND(AVG(DATEDIFF(COALESCE(pa.verified_at, pa.created_at), pa.created_at)), 1) as avg_review_days
           FROM \`ProjectAchievement\` pa
           WHERE pa.created_at BETWEEN ? AND ?
-          ${!checkPermission(user.role, ['admin', 'assistant']) ? 'AND pa.created_by = ?' : ''}
+          ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
           GROUP BY pa.type
         `;
         
@@ -21496,13 +21777,13 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           SELECT COUNT(DISTINCT pa.type) as total
           FROM \`ProjectAchievement\` pa
           WHERE pa.created_at BETWEEN ? AND ?
-          ${!checkPermission(user.role, ['admin', 'assistant']) ? 'AND pa.created_by = ?' : ''}
+          ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
         `;
         
         const params = [startDateStr, endDateStr];
         const countParams = [startDateStr, endDateStr];
         
-        if (!checkPermission(user.role, ['admin', 'assistant'])) {
+        if (!checkPermission(user.role, ['admin', 'project_manager'])) {
           params.push(user.id);
           countParams.push(user.id);
         }
@@ -21545,12 +21826,12 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             COUNT(*) as prev_total
           FROM \`ProjectAchievement\` pa
           WHERE pa.created_at BETWEEN ? AND ?
-          ${!checkPermission(user.role, ['admin', 'assistant']) ? 'AND pa.created_by = ?' : ''}
+          ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
           GROUP BY pa.type
         `;
         
         const prevParams = [prevStartDateStr, prevEndDateStr];
-        if (!checkPermission(user.role, ['admin', 'assistant'])) {
+        if (!checkPermission(user.role, ['admin', 'project_manager'])) {
           prevParams.push(user.id);
         }
         
@@ -21650,9 +21931,9 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
               LEFT JOIN \`Project\` p ON pa.project_id = p.id
               LEFT JOIN \`User\` u ON pa.created_by = u.id
               WHERE 1=1
-              ${!checkPermission(user.role, ['admin', 'assistant']) ? 'AND pa.created_by = ?' : ''}
+              ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
               ORDER BY pa.created_at DESC
-            `, checkPermission(user.role, ['admin', 'assistant']) ? [] : [user.id]);
+            `, checkPermission(user.role, ['admin', 'project_manager']) ? [] : [user.id]);
             
             exportData = achievements.map(item => ({
               成果类型: getAchievementTypeLabel(item.type),
@@ -21678,9 +21959,9 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
               FROM \`Project\` p
               LEFT JOIN \`User\` u ON p.applicant_id = u.id
               WHERE 1=1
-              ${!checkPermission(user.role, ['admin', 'assistant']) ? 'AND p.applicant_id = ?' : ''}
+              ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND p.applicant_id = ?' : ''}
               ORDER BY p.created_at DESC
-            `, checkPermission(user.role, ['admin', 'assistant']) ? [] : [user.id]);
+            `, checkPermission(user.role, ['admin', 'project_manager']) ? [] : [user.id]);
             
             exportData = projects.map(item => ({
               项目名称: item.title,
@@ -22370,7 +22651,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       const user = await verifyToken(token);
       
       // 只有管理员和系统可以创建通知
-      if (!user || !checkPermission(user.role, ['admin', 'assistant'])) {
+      if (!user || !checkPermission(user.role, ['admin', 'project_manager'])) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限创建系统通知'
@@ -22487,7 +22768,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             COUNT(*) as total,
             SUM(CASE WHEN role = 'applicant' THEN 1 ELSE 0 END) as applicants,
             SUM(CASE WHEN role = 'reviewer' THEN 1 ELSE 0 END) as reviewers,
-            SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END) as assistants,
+            SUM(CASE WHEN role = 'project_manager' THEN 1 ELSE 0 END) as assistants,
             SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as admins,
             12.5 as userGrowth  -- 示例增长数据，实际应从数据库计算
           FROM \`User\`
@@ -22737,7 +23018,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 检查是否是管理员
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+      if (!canManageUsers(user.role)) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限查看用户列表'
@@ -22851,8 +23132,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         return;
       }
       
-      // 检查是否是管理员
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+      // 与 canManageUsers 一致（含项目经理）
+      if (!canManageUsers(user.role)) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限查看用户统计'
@@ -22868,7 +23149,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             COUNT(*) as total,
             SUM(CASE WHEN role = 'applicant' THEN 1 ELSE 0 END) as applicants,
             SUM(CASE WHEN role = 'reviewer' THEN 1 ELSE 0 END) as reviewers,
-            SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END) as assistants,
+            SUM(CASE WHEN role = 'project_manager' THEN 1 ELSE 0 END) as assistants,
             SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as admins,
             SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_users,
             SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) as inactive_users,
@@ -22933,7 +23214,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 检查是否是管理员
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+      if (!canManageUsers(user.role)) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限创建用户'
@@ -22975,7 +23256,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         }
         
         // 验证角色
-        const validRoles = ['applicant', 'reviewer', 'assistant', 'admin'];
+        const validRoles = ['applicant', 'reviewer', 'project_manager', 'admin'];
         if (!validRoles.includes(body.role)) {
           sendResponse(res, 400, {
             success: false,
@@ -23084,7 +23365,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 检查是否是管理员
-      if (!checkPermission(user.role, ['admin', 'assistant'])) {
+      if (!canManageUsers(user.role)) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限查看用户详情'
@@ -23167,7 +23448,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 检查是否是管理员
-      if (!checkPermission(adminUser.role, ['admin', 'assistant'])) {
+      if (!canManageUsers(adminUser.role)) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限更新用户信息'
@@ -23294,7 +23575,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 检查是否是管理员
-      if (!checkPermission(adminUser.role, ['admin'])) { // 只有超级管理员可以删除用户
+      if (!canManageUsers(adminUser.role)) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限删除用户'
@@ -23413,7 +23694,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 检查是否是管理员
-      if (!checkPermission(adminUser.role, ['admin', 'assistant'])) {
+      if (!canManageUsers(adminUser.role)) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限更新用户状态'
@@ -23506,7 +23787,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 检查是否是管理员
-      if (!checkPermission(adminUser.role, ['admin'])) { // 只有超级管理员可以重置密码
+      if (!canManageUsers(adminUser.role)) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限重置用户密码'
@@ -23576,7 +23857,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 检查是否是管理员
-      if (!checkPermission(adminUser.role, ['admin', 'assistant'])) {
+      if (!canManageUsers(adminUser.role)) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限查看用户项目'
@@ -23654,7 +23935,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 检查是否是管理员
-      if (!checkPermission(adminUser.role, ['admin', 'assistant'])) {
+      if (!canManageUsers(adminUser.role)) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限查看用户评审记录'
@@ -23735,7 +24016,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       
       // 检查是否是管理员
-      if (!checkPermission(adminUser.role, ['admin', 'assistant'])) {
+      if (!canManageUsers(adminUser.role)) {
         sendResponse(res, 403, {
           success: false,
           error: '没有权限查看用户操作日志'
@@ -23802,144 +24083,76 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
     }
     // ==================== 评审专家仪表板API ====================
 
+    const parseAssignmentReviewComment = (commentText) => {
+      if (!commentText || typeof commentText !== 'string') return {};
+      try {
+        const parsed = JSON.parse(commentText);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {
+        return { comments: commentText };
+      }
+    };
+    const buildAssignmentReviewComment = (payload) =>
+      JSON.stringify({ type: 'expert_review', updated_at: new Date().toISOString(), ...payload });
+    const recommendationToAssignmentStatus = (recommendation) => {
+      if (recommendation === 'reject') return 'declined';
+      if (
+        recommendation === 'approve' ||
+        recommendation === 'approve_with_revision' ||
+        recommendation === 'resubmit'
+      ) {
+        return 'accepted';
+      }
+      return 'reviewing';
+    };
+    const assignmentStatusToRecommendation = (status, fallback = '') => {
+      if (status === 'accepted') return 'approve';
+      if (status === 'declined') return 'reject';
+      return fallback;
+    };
+
     if (pathname === '/api/reviewer/dashboard' && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
-      
       if (!user || user.role !== 'reviewer') {
         sendResponse(res, 403, { success: false, error: '没有权限访问评审专家仪表板' });
         return;
       }
-      
       try {
-        console.log('📊 获取评审专家仪表板数据，专家ID:', user.id);
-        
-        // 1. 获取待评审项目数量
-        // 状态为 under_review 或 batch_review，且专家尚未提交评审
         const [pendingCountResult] = await pool.query(`
-          SELECT COUNT(DISTINCT p.id) as count
-          FROM \`Project\` p
-          INNER JOIN \`ExpertAssignment\` ea ON p.id = ea.project_id
-          WHERE p.status IN ('under_review', 'batch_review')
-            AND ea.expert_id = ?
-            AND NOT EXISTS (
-              SELECT 1 FROM \`ProjectReview\` pr 
-              WHERE pr.project_id = p.id 
-                AND pr.expert_id = ?
-                AND pr.status = 'submitted'
-            )
-        `, [user.id, user.id]);
-        
-        // 2. 获取已评审项目数量（已提交评审的项目）
+          SELECT COUNT(*) as count
+          FROM \`ExpertAssignment\` ea
+          INNER JOIN \`Project\` p ON ea.project_id = p.id
+          WHERE ea.expert_id = ?
+            AND ea.status = 'reviewing'
+            AND p.status IN ('under_review', 'batch_review')
+        `, [user.id]);
         const [completedCountResult] = await pool.query(`
           SELECT COUNT(*) as count
-          FROM \`ProjectReview\`
-          WHERE expert_id = ?
-            AND status = 'submitted'
+          FROM \`ExpertAssignment\`
+          WHERE expert_id = ? AND status IN ('accepted', 'declined')
         `, [user.id]);
-        
-        // 3. 获取平均评分
-        const [averageScoreResult] = await pool.query(`
-          SELECT AVG(total_score) as avg_score
-          FROM \`ProjectReview\`
-          WHERE expert_id = ?
-            AND status = 'submitted'
-            AND total_score IS NOT NULL
-        `, [user.id]);
-        
-        // 4. 获取通过率（推荐通过的项目比例）
         const [approvalRateResult] = await pool.query(`
-          SELECT 
-            COUNT(*) as total,
-            COUNT(CASE WHEN recommendation = 'recommend' THEN 1 END) as recommended,
-            COUNT(CASE WHEN recommendation = 'revise_and_recommend' THEN 1 END) as revise_and_recommend
-          FROM \`ProjectReview\`
-          WHERE expert_id = ?
-            AND status = 'submitted'
-            AND recommendation IS NOT NULL
+          SELECT COUNT(*) as total, COUNT(CASE WHEN status = 'accepted' THEN 1 END) as recommended
+          FROM \`ExpertAssignment\`
+          WHERE expert_id = ? AND status IN ('accepted', 'declined')
         `, [user.id]);
-        
-        const totalReviewed = approvalRateResult[0]?.total || 0;
-        const recommendedCount = (approvalRateResult[0]?.recommended || 0) + (approvalRateResult[0]?.revise_and_recommend || 0);
-        const approvalRate = totalReviewed > 0 
-          ? Math.round((recommendedCount / totalReviewed) * 100)
-          : 0;
-        
-        // 5. 获取最高评分
-        const [highestScoreResult] = await pool.query(`
-          SELECT MAX(total_score) as max_score
-          FROM \`ProjectReview\`
-          WHERE expert_id = ?
-            AND status = 'submitted'
-        `, [user.id]);
-        
-        // 6. 获取平均评审时间（天）
-        const [avgReviewTimeResult] = await pool.query(`
-          SELECT AVG(DATEDIFF(pr.submitted_at, ea.assigned_at)) as avg_days
-          FROM \`ProjectReview\` pr
-          INNER JOIN \`ExpertAssignment\` ea ON pr.assignment_id = ea.id
-          WHERE pr.expert_id = ?
-            AND pr.status = 'submitted'
-            AND ea.assigned_at IS NOT NULL
-            AND pr.submitted_at IS NOT NULL
-        `, [user.id]);
-        
-        // 7. 获取评审一致性（与平均分的偏差）
-        const [consistencyResult] = await pool.query(`
-          SELECT 
-            AVG(ABS(total_score - avg_score)) as avg_deviation
-          FROM \`ProjectReview\` pr
-          CROSS JOIN (
-            SELECT AVG(total_score) as avg_score 
-            FROM \`ProjectReview\` 
-            WHERE expert_id = ? AND status = 'submitted'
-          ) as avg_table
-          WHERE pr.expert_id = ? AND pr.status = 'submitted'
-        `, [user.id, user.id]);
-        
-        const avgDeviation = consistencyResult[0]?.avg_deviation || 0;
-        const consistencyRate = avgDeviation > 0 ? Math.max(0, 100 - Math.min(100, avgDeviation * 10)) : 100;
-        
-        // 8. 获取总评语字数
         const [totalCommentsResult] = await pool.query(`
-          SELECT SUM(CHAR_LENGTH(comments)) as total_chars
-          FROM \`ProjectReview\`
-          WHERE expert_id = ?
-            AND status = 'submitted'
-            AND comments IS NOT NULL
+          SELECT SUM(CHAR_LENGTH(comment)) as total_chars
+          FROM \`ExpertAssignment\`
+          WHERE expert_id = ? AND status IN ('accepted', 'declined') AND comment IS NOT NULL
         `, [user.id]);
-        
-        // 构建统计数据
-        const stats = {
-          pendingCount: pendingCountResult[0]?.count || 0,
-          completedCount: completedCountResult[0]?.count || 0,
-          averageScore: averageScoreResult[0]?.avg_score ? parseFloat(averageScoreResult[0].avg_score).toFixed(1) : 0,
-          approvalRate: approvalRate,
-          highestScore: highestScoreResult[0]?.max_score || 0,
-          avgReviewTime: avgReviewTimeResult[0]?.avg_days ? Math.round(avgReviewTimeResult[0].avg_days) : 0,
-          consistencyRate: Math.round(consistencyRate),
-          totalComments: totalCommentsResult[0]?.total_chars || 0
-        };
-        
-        // 获取用户信息（包括专家扩展信息）
+        const totalReviewed = approvalRateResult[0]?.total || 0;
+        const recommendedCount = approvalRateResult[0]?.recommended || 0;
+        const approvalRate = totalReviewed > 0 ? Math.round((recommendedCount / totalReviewed) * 100) : 0;
+
         const [userInfoResult] = await pool.query(`
-          SELECT 
-            u.id,
-            u.username,
-            u.name,
-            u.email,
-            u.department,
-            u.title,
-            u.status,
-            ep.organization,
-            ep.expertise_description,
-            ep.is_external
+          SELECT u.id, u.username, u.name, u.email, u.department, u.title, u.status,
+                 ep.expertise_description
           FROM \`User\` u
-          LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.user_id
+          LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.id
           WHERE u.id = ?
         `, [user.id]);
-        
-        // 获取专家的研究领域
         let researchField = null;
         if (userInfoResult[0]?.id) {
           const [expertDomains] = await pool.query(`
@@ -23950,887 +24163,715 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           `, [user.id]);
           researchField = expertDomains[0]?.research_fields || null;
         }
-        
         const userInfo = userInfoResult[0] || { name: '评审专家' };
-        
         sendResponse(res, 200, {
           success: true,
           data: {
-            userInfo: {
-              ...userInfo,
-              research_field: researchField
-            },
-            stats: stats
+            userInfo: { ...userInfo, research_field: researchField },
+            stats: {
+              pendingCount: pendingCountResult[0]?.count || 0,
+              completedCount: completedCountResult[0]?.count || 0,
+              averageScore: 0,
+              approvalRate,
+              highestScore: 0,
+              avgReviewTime: 0,
+              consistencyRate: 0,
+              totalComments: totalCommentsResult[0]?.total_chars || 0
+            }
           }
         });
-        
       } catch (error) {
         console.error('获取评审专家仪表板数据失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '获取仪表板数据失败',
-          message: error.message,
-          stack: error.stack
+        sendResponse(res, 500, { success: false, error: '获取仪表板数据失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/reviewer/pending-projects' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const query = url.parse(req.url, true).query;
+        const limit = parseInt(query.limit, 10) || 10;
+        const [projects] = await pool.query(`
+          SELECT p.id, p.project_code, p.title,
+                 (SELECT GROUP_CONCAT(rd2.name ORDER BY rd2.name SEPARATOR ', ')
+                  FROM \`ProjectResearchDomain\` prd2
+                  INNER JOIN \`ResearchDomain\` rd2 ON prd2.research_domain_id = rd2.id
+                  WHERE prd2.project_id = p.id) as research_field,
+                 COALESCE(p.approved_budget, 0) as budget_total,
+                 p.submit_date,
+                 u.name as applicant_name, u.department as applicant_department, ea.assigned_at, ea.deadline as review_deadline,
+                 CASE WHEN ea.deadline <= DATE_ADD(NOW(), INTERVAL 3 DAY) THEN 'urgent'
+                      WHEN ea.deadline <= DATE_ADD(NOW(), INTERVAL 7 DAY) THEN 'high'
+                      ELSE 'medium' END as priority
+          FROM \`ExpertAssignment\` ea
+          INNER JOIN \`Project\` p ON ea.project_id = p.id
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE ea.expert_id = ?
+            AND ea.status = 'reviewing'
+            AND p.status IN ('under_review', 'batch_review')
+          ORDER BY ea.deadline ASC, ea.assigned_at ASC
+          LIMIT ?
+        `, [user.id, limit]);
+        sendResponse(res, 200, {
+          success: true,
+          data: projects.map((p) => ({
+            id: p.id,
+            project_code: p.project_code,
+            title: p.title,
+            research_field: p.research_field || '未指定',
+            budget_total: p.budget_total,
+            submit_date: p.submit_date ? new Date(p.submit_date).toISOString().split('T')[0] : null,
+            applicant_name: p.applicant_name,
+            applicant_department: p.applicant_department,
+            assigned_at: p.assigned_at ? p.assigned_at.toISOString() : null,
+            review_deadline: p.review_deadline ? new Date(p.review_deadline).toISOString().split('T')[0] : null,
+            priority: p.priority || 'medium'
+          }))
         });
+      } catch (error) {
+        console.error('获取待评审项目失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取待评审项目失败' });
       }
       return;
     }
 
-// ==================== 获取待评审项目列表API ====================
-// ==================== 获取待评审项目API ====================
-
-if (pathname === '/api/reviewer/pending-projects' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    const limit = parseInt(query.limit) || 10;
-    
-    console.log('获取待评审项目，专家ID:', user.id);
-    
-    // 获取分配给该专家的待评审项目
-    const [projects] = await pool.query(`
-      SELECT 
-        p.id,
-        p.project_code,
-        p.title,
-        rd.name as research_field,
-        p.budget_total,
-        p.submit_date,
-        u.name as applicant_name,
-        u.department as applicant_department,
-        u.title as applicant_title,
-        ea.assigned_at,
-        ea.deadline as review_deadline,
-        -- 计算优先级
-        CASE 
-          WHEN ea.deadline <= DATE_ADD(NOW(), INTERVAL 3 DAY) THEN 'urgent'
-          WHEN ea.deadline <= DATE_ADD(NOW(), INTERVAL 7 DAY) THEN 'high'
-          ELSE 'medium'
-        END as priority
-      FROM \`ExpertAssignment\` ea
-      INNER JOIN \`Project\` p ON ea.project_id = p.id
-      LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      WHERE ea.expert_id = ?
-        AND p.status IN ('under_review', 'batch_review')
-        AND NOT EXISTS (
-          SELECT 1 FROM \`ProjectReview\` pr 
-          WHERE pr.project_id = p.id 
-            AND pr.expert_id = ?
-            AND pr.status = 'submitted'
-        )
-      ORDER BY 
-        CASE 
-          WHEN ea.deadline <= DATE_ADD(NOW(), INTERVAL 3 DAY) THEN 1
-          WHEN ea.deadline <= DATE_ADD(NOW(), INTERVAL 7 DAY) THEN 2
-          ELSE 3
-        END,
-        ea.deadline ASC,
-        ea.assigned_at ASC
-      LIMIT ?
-    `, [user.id, user.id, limit]);
-    
-    console.log(`找到 ${projects.length} 个待评审项目`);
-    
-    const formattedProjects = projects.map(p => ({
-      id: p.id,
-      project_code: p.project_code,
-      title: p.title,
-      research_field: p.research_field || '未指定',
-      budget_total: p.budget_total,
-      submit_date: p.submit_date ? new Date(p.submit_date).toISOString().split('T')[0] : null,
-      applicant_name: p.applicant_name,
-      applicant_department: p.applicant_department,
-      assigned_at: p.assigned_at ? p.assigned_at.toISOString() : null,
-      review_deadline: p.review_deadline ? new Date(p.review_deadline).toISOString().split('T')[0] : null,
-      priority: p.priority || 'medium'
-    }));
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: formattedProjects
-    });
-    
-  } catch (error) {
-    console.error('获取待评审项目失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取待评审项目失败' });
-  }
-  return;
-}
-
-// 获取最近评审记录
-if (pathname === '/api/reviewer/recent-reviews' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    const limit = parseInt(query.limit) || 5;
-    
-    console.log('获取最近评审记录，专家ID:', user.id);
-    
-    const [reviews] = await pool.query(`
-      SELECT 
-        pr.id,
-        pr.project_id,
-        p.title as project_title,
-        p.project_code,
-        pr.total_score,
-        pr.recommendation,
-        pr.comments,
-        pr.submitted_at,
-        pr.created_at
-      FROM \`ProjectReview\` pr
-      INNER JOIN \`Project\` p ON pr.project_id = p.id
-      WHERE pr.expert_id = ?
-        AND pr.status = 'submitted'
-      ORDER BY pr.submitted_at DESC
-      LIMIT ?
-    `, [user.id, limit]);
-    
-    const formattedReviews = reviews.map(r => ({
-      id: r.id,
-      project_id: r.project_id,
-      project_title: r.project_title,
-      project_code: r.project_code,
-      total_score: r.total_score,
-      recommendation: r.recommendation,
-      comments: r.comments,
-      submitted_at: r.submitted_at ? r.submitted_at.toISOString() : null,
-      review_date: r.submitted_at ? r.submitted_at.toISOString() : null
-    }));
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: formattedReviews
-    });
-    
-  } catch (error) {
-    console.error('获取最近评审记录失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取评审记录失败' });
-  }
-  return;
-}
-
-// 获取评分分布统计
-if (pathname === '/api/reviewer/score-distribution' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    console.log('获取评分分布，专家ID:', user.id);
-    
-    // 统计各分数段的评审数量
-    const [distribution] = await pool.query(`
-      SELECT 
-        CASE 
-          WHEN total_score >= 9 THEN '优秀 (9-10分)'
-          WHEN total_score >= 7 AND total_score < 9 THEN '良好 (7-8.9分)'
-          WHEN total_score >= 5 AND total_score < 7 THEN '中等 (5-6.9分)'
-          WHEN total_score < 5 THEN '待改进 (5分以下)'
-          ELSE '未评分'
-        END as score_range,
-        COUNT(*) as count
-      FROM \`ProjectReview\`
-      WHERE expert_id = ?
-        AND status = 'submitted'
-        AND total_score IS NOT NULL
-      GROUP BY score_range
-    `, [user.id]);
-    
-    // 定义所有分类
-    const allCategories = [
-      { range: '优秀 (9-10分)', count: 0, color: '#52c41a' },
-      { range: '良好 (7-8.9分)', count: 0, color: '#1890ff' },
-      { range: '中等 (5-6.9分)', count: 0, color: '#faad14' },
-      { range: '待改进 (5分以下)', count: 0, color: '#ff4d4f' }
-    ];
-    
-    // 合并查询结果
-    distribution.forEach(item => {
-      const found = allCategories.find(cat => cat.range === item.score_range);
-      if (found) {
-        found.count = item.count;
+    // 评审专家：浏览系统中项目列表（项目浏览页）
+    if (pathname === '/api/reviewer/all-projects' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
       }
-    });
-    
-    const total = allCategories.reduce((sum, item) => sum + item.count, 0);
-    
-    const result = allCategories.map(item => ({
-      range: item.range,
-      count: item.count,
-      percentage: total > 0 ? Math.round((item.count / total) * 100) : 0,
-      color: item.color
-    }));
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: result
-    });
-    
-  } catch (error) {
-    console.error('获取评分分布失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取评分分布失败' });
-  }
-  return;
-}
+      try {
+        const q = url.parse(req.url, true).query;
+        const page = Math.max(1, parseInt(q.page, 10) || 1);
+        const pageSize = Math.min(100, Math.max(1, parseInt(q.pageSize, 10) || 20));
+        const offset = (page - 1) * pageSize;
+        const statusFilter = (q.status || '').trim();
+        const categoryFilter = (q.category || '').trim();
+        const keyword = (q.keyword || '').trim();
 
-// 获取评审历史列表
-if (pathname === '/api/reviewer/reviews' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    const page = parseInt(query.page) || 1;
-    const limit = parseInt(query.limit) || 20;
-    const offset = (page - 1) * limit;
-    const status = query.status;
-    
-    let sql = `
-      SELECT 
-        pr.id,
-        pr.project_id,
-        p.project_code,
-        p.title as project_title,
-        rd.name as research_field,
-        pr.total_score,
-        pr.recommendation,
-        pr.comments,
-        pr.suggestions,
-        pr.submitted_at,
-        pr.created_at,
-        u.name as applicant_name,
-        u.department as applicant_department
-      FROM \`ProjectReview\` pr
-      INNER JOIN \`Project\` p ON pr.project_id = p.id
-      LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      WHERE pr.expert_id = ?
-    `;
-    const params = [user.id];
-    
-    if (status) {
-      sql += ' AND pr.status = ?';
-      params.push(status);
-    } else {
-      sql += ' AND pr.status = "submitted"';
-    }
-    
-    // 获取总数
-    let countSql = `
-      SELECT COUNT(*) as total
-      FROM \`ProjectReview\` pr
-      WHERE pr.expert_id = ?
-    `;
-    const countParams = [user.id];
-    
-    if (status) {
-      countSql += ' AND pr.status = ?';
-      countParams.push(status);
-    } else {
-      countSql += ' AND pr.status = "submitted"';
-    }
-    
-    sql += ' ORDER BY pr.submitted_at DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-    
-    const [reviews] = await pool.query(sql, params);
-    const [totalResult] = await pool.query(countSql, countParams);
-    const total = totalResult[0]?.total || 0;
-    
-    const formattedReviews = reviews.map(r => ({
-      id: r.id,
-      project_id: r.project_id,
-      project_code: r.project_code,
-      project_title: r.project_title,
-      research_field: r.research_field || '未指定',
-      total_score: r.total_score,
-      recommendation: r.recommendation,
-      comments: r.comments,
-      suggestions: r.suggestions,
-      submitted_at: r.submitted_at ? r.submitted_at.toISOString() : null,
-      review_date: r.submitted_at ? r.submitted_at.toISOString() : null,
-      applicant_name: r.applicant_name,
-      applicant_department: r.applicant_department
-    }));
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: formattedReviews,
-      total: total,
-      page: page,
-      limit: limit,
-      pages: Math.ceil(total / limit)
-    });
-    
-  } catch (error) {
-    console.error('获取评审历史失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取评审历史失败' });
-  }
-  return;
-}
+        const whereParts = ['1=1'];
+        const params = [];
 
-// 获取评审专家统计数据
-if (pathname === '/api/reviewer/stats' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    // 获取待评审项目数量
-    const [pendingResult] = await pool.query(`
-      SELECT COUNT(DISTINCT p.id) as count
-      FROM \`ExpertAssignment\` ea
-      INNER JOIN \`Project\` p ON ea.project_id = p.id
-      WHERE ea.expert_id = ?
-        AND p.status IN ('under_review', 'batch_review')
-        AND NOT EXISTS (
-          SELECT 1 FROM \`ProjectReview\` pr 
-          WHERE pr.project_id = p.id 
-            AND pr.expert_id = ?
-            AND pr.status = 'submitted'
-        )
-    `, [user.id, user.id]);
-    
-    // 获取已完成评审数量
-    const [completedResult] = await pool.query(`
-      SELECT COUNT(*) as count
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted'
-    `, [user.id]);
-    
-    // 获取平均分
-    const [avgScoreResult] = await pool.query(`
-      SELECT AVG(total_score) as avg_score
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted' AND total_score IS NOT NULL
-    `, [user.id]);
-    
-    // 获取最高分
-    const [highestResult] = await pool.query(`
-      SELECT MAX(total_score) as max_score
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted'
-    `, [user.id]);
-    
-    // 获取平均评审时间
-    const [avgTimeResult] = await pool.query(`
-      SELECT AVG(DATEDIFF(pr.submitted_at, ea.assigned_at)) as avg_days
-      FROM \`ProjectReview\` pr
-      INNER JOIN \`ExpertAssignment\` ea ON pr.assignment_id = ea.id
-      WHERE pr.expert_id = ? AND pr.status = 'submitted'
-    `, [user.id]);
-    
-    // 获取评审一致性（标准差）
-    const [consistencyResult] = await pool.query(`
-      SELECT STDDEV(total_score) as stddev
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted' AND total_score IS NOT NULL
-    `, [user.id]);
-    
-    const stddev = consistencyResult[0]?.stddev || 0;
-    const consistencyRate = stddev > 0 ? Math.max(0, 100 - Math.min(100, stddev * 10)) : 100;
-    
-    // 获取总评语字数
-    const [commentsResult] = await pool.query(`
-      SELECT SUM(CHAR_LENGTH(comments)) as total_chars
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted' AND comments IS NOT NULL
-    `, [user.id]);
-    
-    // 获取通过率
-    const [approvalResult] = await pool.query(`
-      SELECT 
-        COUNT(*) as total,
-        COUNT(CASE WHEN recommendation = 'recommend' THEN 1 END) as recommended
-      FROM \`ProjectReview\`
-      WHERE expert_id = ? AND status = 'submitted'
-    `, [user.id]);
-    
-    const totalReviewed = approvalResult[0]?.total || 0;
-    const recommended = approvalResult[0]?.recommended || 0;
-    const approvalRate = totalReviewed > 0 ? Math.round((recommended / totalReviewed) * 100) : 0;
-    
-    const stats = {
-      pendingCount: pendingResult[0]?.count || 0,
-      completedCount: completedResult[0]?.count || 0,
-      averageScore: avgScoreResult[0]?.avg_score ? parseFloat(avgScoreResult[0].avg_score).toFixed(1) : 0,
-      approvalRate: approvalRate,
-      highestScore: highestResult[0]?.max_score || 0,
-      avgReviewTime: avgTimeResult[0]?.avg_days ? Math.round(avgTimeResult[0].avg_days) : 0,
-      consistencyRate: Math.round(consistencyRate),
-      totalComments: commentsResult[0]?.total_chars || 0
-    };
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: stats
-    });
-    
-  } catch (error) {
-    console.error('获取评审专家统计数据失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取评审专家统计数据失败' });
-  }
-  return;
-}
-
-// 开始评审项目（获取项目详情）
-if (pathname === '/api/reviewer/project-for-review' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const { projectId } = url.parse(req.url, true).query;
-    
-    if (!projectId) {
-      sendResponse(res, 400, { success: false, error: '项目ID不能为空' });
-      return;
-    }
-    
-    console.log('获取待评审项目详情，专家ID:', user.id, '项目ID:', projectId);
-    
-    // 获取项目基本信息
-    const [projectResult] = await pool.query(`
-      SELECT 
-        p.id,
-        p.project_code,
-        p.title,
-        rd.name as research_field,
-        p.abstract,
-        p.background,
-        p.objectives,
-        p.methodology,
-        p.expected_outcomes,
-        p.budget_total,
-        p.duration_months,
-        p.submit_date,
-        u.name as applicant_name,
-        u.department as applicant_department,
-        u.title as applicant_title,
-        u.email as applicant_email
-      FROM \`Project\` p
-      LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      WHERE p.id = ?
-    `, [projectId]);
-    
-    if (!projectResult.length) {
-      sendResponse(res, 404, { success: false, error: '项目不存在' });
-      return;
-    }
-    
-    const project = projectResult[0];
-    
-    // 获取项目成员
-    const [membersResult] = await pool.query(`
-      SELECT 
-        pm.name,
-        pm.role,
-        pm.title,
-        pm.organization,
-        pm.responsibility,
-        pm.workload_percentage
-      FROM \`ProjectMember\` pm
-      WHERE pm.project_id = ?
-      ORDER BY 
-        CASE pm.role
-          WHEN 'principal' THEN 1
-          WHEN 'co_principal' THEN 2
-          WHEN 'researcher' THEN 3
-          WHEN 'student' THEN 4
-          ELSE 5
-        END
-    `, [projectId]);
-    
-    // 获取项目预算
-    const [budgetResult] = await pool.query(`
-      SELECT *
-      FROM \`ProjectBudget\`
-      WHERE project_id = ?
-      ORDER BY sort_order ASC
-    `, [projectId]);
-    
-    // 检查是否已评审过
-    const [existingReviewResult] = await pool.query(`
-      SELECT id, status, 
-        innovation_score, feasibility_score, significance_score,
-        team_score, budget_score, 
-        recommendation, comments, suggestions
-      FROM \`ProjectReview\`
-      WHERE project_id = ? AND expert_id = ?
-    `, [projectId, user.id]);
-    
-    const existingReview = existingReviewResult[0];
-    
-    // 获取其他评审专家的评审信息
-    const [otherReviewsResult] = await pool.query(`
-      SELECT 
-        pr.id,
-        pr.expert_id,
-        pr.submitted_at as review_date,
-        pr.total_score,
-        pr.recommendation,
-        u.name as reviewer_name,
-        u.title as reviewer_title
-      FROM \`ProjectReview\` pr
-      LEFT JOIN \`User\` u ON pr.expert_id = u.id
-      WHERE pr.project_id = ?
-        AND pr.expert_id != ?
-        AND pr.status = 'submitted'
-    `, [projectId, user.id]);
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: {
-        project: {
-          ...project,
-          research_field: project.research_field || '未指定',
-          submit_date: project.submit_date ? project.submit_date.toISOString().split('T')[0] : null
-        },
-        members: membersResult,
-        budget: budgetResult,
-        existingReview: existingReview || null,
-        otherReviews: otherReviewsResult
-      }
-    });
-    
-  } catch (error) {
-    console.error('获取项目详情失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取项目详情失败' });
-  }
-  return;
-}
-
-// 提交评审结果
-if (pathname === '/api/reviewer/submit-review' && req.method === 'POST') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const {
-      project_id,
-      innovation_score,
-      feasibility_score,
-      significance_score,
-      team_score,
-      budget_score,
-      recommendation,
-      comments,
-      suggestions
-    } = body;
-    
-    if (!project_id || !comments) {
-      sendResponse(res, 400, { success: false, error: '项目和评审意见不能为空' });
-      return;
-    }
-    
-    // 检查项目是否存在且状态正确
-    const [projectResult] = await pool.query(`
-      SELECT status, title, applicant_id 
-      FROM \`Project\`
-      WHERE id = ?
-    `, [project_id]);
-    
-    if (!projectResult.length) {
-      sendResponse(res, 400, { success: false, error: '项目不存在' });
-      return;
-    }
-    
-    const project = projectResult[0];
-    if (!['under_review', 'batch_review'].includes(project.status)) {
-      sendResponse(res, 400, { success: false, error: '项目当前状态不可评审' });
-      return;
-    }
-    
-    // 计算总分
-    const scores = [innovation_score, feasibility_score, significance_score, team_score, budget_score];
-    const validScores = scores.filter(s => s !== undefined && s !== null);
-    const total_score = validScores.length > 0 
-      ? validScores.reduce((a, b) => a + b, 0) / validScores.length 
-      : null;
-    
-    // 检查是否已评审过
-    const [existingReviewResult] = await pool.query(`
-      SELECT id, status
-      FROM \`ProjectReview\`
-      WHERE project_id = ? AND expert_id = ?
-    `, [project_id, user.id]);
-    
-    let reviewId;
-    
-    if (existingReviewResult.length) {
-      // 更新现有评审
-      const existingReview = existingReviewResult[0];
-      reviewId = existingReview.id;
-      
-      await pool.query(`
-        UPDATE \`ProjectReview\`
-        SET 
-          innovation_score = ?,
-          feasibility_score = ?,
-          significance_score = ?,
-          team_score = ?,
-          budget_score = ?,
-          total_score = ?,
-          recommendation = ?,
-          comments = ?,
-          suggestions = ?,
-          status = 'submitted',
-          submitted_at = NOW()
-        WHERE id = ?
-      `, [
-        innovation_score, feasibility_score, significance_score,
-        team_score, budget_score, total_score,
-        recommendation, comments, suggestions,
-        reviewId
-      ]);
-    } else {
-      // 创建新评审
-      reviewId = generateUUID();
-      
-      await pool.query(`
-        INSERT INTO \`ProjectReview\` (
-          id, project_id, expert_id, assignment_id,
-          innovation_score, feasibility_score, significance_score,
-          team_score, budget_score, total_score,
-          recommendation, comments, suggestions,
-          status, submitted_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', NOW(), NOW())
-      `, [
-        reviewId, project_id, user.id, generateUUID(),
-        innovation_score, feasibility_score, significance_score,
-        team_score, budget_score, total_score,
-        recommendation, comments, suggestions
-      ]);
-    }
-    
-    // 发送通知给申请人
-    await createNotification(
-      project.applicant_id,
-      '评审意见已提交',
-      `您的项目"${project.title}"的评审意见已提交，请查看详细评审结果。`,
-      'review',
-      project_id
-    );
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: '评审提交成功',
-      data: { review_id: reviewId }
-    });
-    
-  } catch (error) {
-    console.error('提交评审失败:', error);
-    sendResponse(res, 500, { success: false, error: '提交评审失败' });
-  }
-  return;
-}
-
-// 保存评审草稿
-if (pathname === '/api/reviewer/save-review-draft' && req.method === 'POST') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const {
-      project_id,
-      innovation_score,
-      feasibility_score,
-      significance_score,
-      team_score,
-      budget_score,
-      recommendation,
-      comments,
-      suggestions
-    } = body;
-    
-    if (!project_id) {
-      sendResponse(res, 400, { success: false, error: '项目ID不能为空' });
-      return;
-    }
-    
-    // 检查项目是否存在
-    const [projectResult] = await pool.query(`
-      SELECT status FROM \`Project\` WHERE id = ?
-    `, [project_id]);
-    
-    if (!projectResult.length) {
-      sendResponse(res, 400, { success: false, error: '项目不存在' });
-      return;
-    }
-    
-    // 计算总分
-    const scores = [innovation_score, feasibility_score, significance_score, team_score, budget_score];
-    const validScores = scores.filter(s => s !== undefined && s !== null);
-    const total_score = validScores.length > 0 
-      ? validScores.reduce((a, b) => a + b, 0) / validScores.length 
-      : null;
-    
-    // 检查是否已存在评审
-    const [existingReviewResult] = await pool.query(`
-      SELECT id, status
-      FROM \`ProjectReview\`
-      WHERE project_id = ? AND expert_id = ?
-    `, [project_id, user.id]);
-    
-    if (existingReviewResult.length) {
-      // 更新现有评审
-      await pool.query(`
-        UPDATE \`ProjectReview\`
-        SET 
-          innovation_score = ?,
-          feasibility_score = ?,
-          significance_score = ?,
-          team_score = ?,
-          budget_score = ?,
-          total_score = ?,
-          recommendation = ?,
-          comments = ?,
-          suggestions = ?,
-          status = 'draft'
-        WHERE id = ?
-      `, [
-        innovation_score, feasibility_score, significance_score,
-        team_score, budget_score, total_score,
-        recommendation, comments, suggestions,
-        existingReviewResult[0].id
-      ]);
-    } else {
-      // 创建新评审草稿
-      const reviewId = generateUUID();
-      
-      await pool.query(`
-        INSERT INTO \`ProjectReview\` (
-          id, project_id, expert_id, assignment_id,
-          innovation_score, feasibility_score, significance_score,
-          team_score, budget_score, total_score,
-          recommendation, comments, suggestions,
-          status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', NOW())
-      `, [
-        reviewId, project_id, user.id, generateUUID(),
-        innovation_score, feasibility_score, significance_score,
-        team_score, budget_score, total_score,
-        recommendation, comments, suggestions
-      ]);
-    }
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: '草稿保存成功'
-    });
-    
-  } catch (error) {
-    console.error('保存评审草稿失败:', error);
-    sendResponse(res, 500, { success: false, error: '保存评审草稿失败' });
-  }
-  return;
-}
-
-// 获取评审详情
-if (pathname === '/api/reviewer/review-detail' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || user.role !== 'reviewer') {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const { reviewId } = url.parse(req.url, true).query;
-    
-    if (!reviewId) {
-      sendResponse(res, 400, { success: false, error: '评审ID不能为空' });
-      return;
-    }
-    
-    console.log('获取评审详情，评审ID:', reviewId);
-    
-    const [reviewResult] = await pool.query(`
-      SELECT 
-        pr.*,
-        p.title as project_title,
-        p.project_code,
-        p.abstract,
-        u_app.name as applicant_name,
-        u_rev.name as reviewer_name,
-        u_rev.title as reviewer_title
-      FROM \`ProjectReview\` pr
-      JOIN \`Project\` p ON pr.project_id = p.id
-      JOIN \`User\` u_app ON p.applicant_id = u_app.id
-      JOIN \`User\` u_rev ON pr.expert_id = u_rev.id
-      WHERE pr.id = ?
-    `, [reviewId]);
-    
-    if (!reviewResult.length) {
-      sendResponse(res, 404, { success: false, error: '评审记录不存在' });
-      return;
-    }
-    
-    const review = reviewResult[0];
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: {
-        review: {
-          ...review,
-          submitted_at: review.submitted_at ? review.submitted_at.toISOString() : null,
-          review_date: review.submitted_at ? review.submitted_at.toISOString() : null
+        if (statusFilter) {
+          whereParts.push('p.status = ?');
+          params.push(statusFilter);
         }
+        if (keyword) {
+          const like = `%${keyword}%`;
+          whereParts.push(
+            '(p.title LIKE ? OR p.project_code LIKE ? OR p.abstract LIKE ? OR IFNULL(u.name, "") LIKE ? OR IFNULL(u.department, "") LIKE ?)'
+          );
+          params.push(like, like, like, like, like);
+        }
+        if (categoryFilter) {
+          whereParts.push(`EXISTS (
+            SELECT 1 FROM \`ProjectResearchDomain\` prd_c
+            INNER JOIN \`ResearchDomain\` rd_c ON prd_c.research_domain_id = rd_c.id
+            WHERE prd_c.project_id = p.id AND rd_c.name = ?
+          )`);
+          params.push(categoryFilter);
+        }
+
+        const whereSql = `WHERE ${whereParts.join(' AND ')}`;
+
+        const [countRows] = await pool.query(
+          `
+          SELECT COUNT(*) as total
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          ${whereSql}
+        `,
+          params
+        );
+        const total = countRows[0]?.total || 0;
+
+        const [statRows] = await pool.query(`
+          SELECT status, COUNT(*) as c
+          FROM \`Project\`
+          GROUP BY status
+        `);
+        const stats = {};
+        statRows.forEach((row) => {
+          stats[row.status] = row.c;
+        });
+
+        const listParams = [...params, pageSize, offset];
+        const [rows] = await pool.query(
+          `
+          SELECT
+            p.id,
+            p.project_code,
+            p.title,
+            p.abstract,
+            p.status,
+            COALESCE(p.approved_budget, 0) as budget_total,
+            CASE
+              WHEN p.start_date IS NOT NULL AND p.end_date IS NOT NULL
+              THEN TIMESTAMPDIFF(MONTH, p.start_date, p.end_date)
+              ELSE NULL
+            END as duration_months,
+            u.name as applicant_name,
+            u.department as applicant_department,
+            (
+              SELECT COUNT(*)
+              FROM \`ExpertAssignment\` ea
+              WHERE ea.project_id = p.id
+            ) as review_count,
+            (
+              SELECT GROUP_CONCAT(rd2.name ORDER BY rd2.name SEPARATOR ', ')
+              FROM \`ProjectResearchDomain\` prd2
+              INNER JOIN \`ResearchDomain\` rd2 ON prd2.research_domain_id = rd2.id
+              WHERE prd2.project_id = p.id
+            ) as research_domains,
+            NULL as avg_score
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          ${whereSql}
+          ORDER BY p.updated_at DESC, p.created_at DESC
+          LIMIT ? OFFSET ?
+        `,
+          listParams
+        );
+
+        const projects = rows.map((r) => ({
+          id: r.id,
+          project_code: r.project_code,
+          title: r.title,
+          abstract: r.abstract,
+          status: r.status,
+          budget_total: r.budget_total != null ? parseFloat(r.budget_total) : 0,
+          duration_months: r.duration_months != null ? r.duration_months : null,
+          applicant_name: r.applicant_name || '',
+          applicant_department: r.applicant_department || '',
+          review_count: r.review_count || 0,
+          avg_score: r.avg_score,
+          category: r.research_domains || '未分类'
+        }));
+
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            projects,
+            pagination: { total, page, pageSize },
+            stats
+          }
+        });
+      } catch (error) {
+        console.error('获取项目浏览列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目列表失败', message: error.message });
       }
-    });
-    
-  } catch (error) {
-    console.error('获取评审详情失败:', error);
-    sendResponse(res, 500, { success: false, error: '获取评审详情失败' });
-  }
-  return;
-}
+      return;
+    }
+
+    if (pathname === '/api/reviewer/recent-reviews' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const query = url.parse(req.url, true).query;
+        const limit = parseInt(query.limit, 10) || 5;
+        const [rows] = await pool.query(`
+          SELECT ea.id, ea.project_id, ea.status, ea.comment, ea.assigned_at, p.title as project_title, p.project_code
+          FROM \`ExpertAssignment\` ea
+          INNER JOIN \`Project\` p ON ea.project_id = p.id
+          WHERE ea.expert_id = ? AND ea.status IN ('accepted', 'declined')
+          ORDER BY ea.assigned_at DESC
+          LIMIT ?
+        `, [user.id, limit]);
+        const data = rows.map((r) => {
+          const parsed = parseAssignmentReviewComment(r.comment);
+          return {
+            id: r.id,
+            project_id: r.project_id,
+            project_title: r.project_title,
+            project_code: r.project_code,
+            recommendation: parsed.recommendation || assignmentStatusToRecommendation(r.status, ''),
+            comments: parsed.comments || '',
+            suggestions: parsed.suggestions || '',
+            submitted_at: r.assigned_at ? r.assigned_at.toISOString() : null,
+            review_date: r.assigned_at ? r.assigned_at.toISOString() : null,
+          };
+        });
+        sendResponse(res, 200, { success: true, data });
+      } catch (error) {
+        console.error('获取最近评审记录失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取评审记录失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/reviewer/score-distribution' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        // 与「待评审项目」一致：仅当项目仍处于 under_review / batch_review 时，reviewing 才算「待处理」；
+        // 否则易出现分配记录未收尾但项目已流转，图表「待处理」与列表不一致。
+        const [distribution] = await pool.query(`
+          SELECT CASE WHEN ea.status = 'accepted' THEN '已通过'
+                      WHEN ea.status = 'declined' THEN '未通过'
+                      WHEN ea.status = 'reviewing' AND p.status IN ('under_review', 'batch_review') THEN '待处理'
+                      WHEN ea.status = 'reviewing' THEN '其他'
+                      WHEN ea.status = 'expired' THEN '其他'
+                      ELSE '其他' END as score_range,
+                 COUNT(*) as count
+          FROM \`ExpertAssignment\` ea
+          INNER JOIN \`Project\` p ON ea.project_id = p.id
+          WHERE ea.expert_id = ? AND ea.status IN ('reviewing', 'accepted', 'declined', 'expired')
+          GROUP BY score_range
+        `, [user.id]);
+        const allCategories = [
+          { range: '已通过', count: 0, color: '#52c41a' },
+          { range: '未通过', count: 0, color: '#ff4d4f' },
+          { range: '待处理', count: 0, color: '#faad14' },
+          { range: '其他', count: 0, color: '#909399' }
+        ];
+        distribution.forEach((item) => {
+          const found = allCategories.find((cat) => cat.range === item.score_range);
+          if (found) found.count = item.count;
+        });
+        const total = allCategories.reduce((sum, item) => sum + item.count, 0);
+        sendResponse(res, 200, {
+          success: true,
+          data: allCategories.map((item) => ({
+            range: item.range,
+            count: item.count,
+            percentage: total > 0 ? Math.round((item.count / total) * 100) : 0,
+            color: item.color
+          }))
+        });
+      } catch (error) {
+        console.error('获取状态分布失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取状态分布失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/reviewer/reviews' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const query = url.parse(req.url, true).query;
+        const page = parseInt(query.page, 10) || 1;
+        const limit = parseInt(query.limit, 10) || parseInt(query.pageSize, 10) || 20;
+        const offset = (page - 1) * limit;
+        const status = query.status;
+        let sql = `
+          SELECT ea.id, ea.project_id, ea.status as assignment_status, ea.comment, ea.assigned_at,
+                 p.project_code, p.title as project_title, p.status as project_status,
+                 (SELECT GROUP_CONCAT(rd2.name ORDER BY rd2.name SEPARATOR ', ')
+                  FROM \`ProjectResearchDomain\` prd2
+                  INNER JOIN \`ResearchDomain\` rd2 ON prd2.research_domain_id = rd2.id
+                  WHERE prd2.project_id = p.id) as research_field,
+                 u.name as applicant_name, u.department as applicant_department
+          FROM \`ExpertAssignment\` ea
+          INNER JOIN \`Project\` p ON ea.project_id = p.id
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE ea.expert_id = ?
+        `;
+        const params = [user.id];
+        if (status) {
+          sql += ' AND ea.status = ?';
+          params.push(status);
+        } else {
+          sql += ' AND ea.status IN ("accepted", "declined")';
+        }
+        sql += ' ORDER BY ea.assigned_at DESC LIMIT ? OFFSET ?';
+        params.push(limit, offset);
+
+        let countSql = 'SELECT COUNT(*) as total FROM `ExpertAssignment` ea WHERE ea.expert_id = ?';
+        const countParams = [user.id];
+        if (status) {
+          countSql += ' AND ea.status = ?';
+          countParams.push(status);
+        } else {
+          countSql += ' AND ea.status IN ("accepted", "declined")';
+        }
+        const [rows] = await pool.query(sql, params);
+        const [countRows] = await pool.query(countSql, countParams);
+        const total = countRows[0]?.total || 0;
+        const data = rows.map((r) => {
+          const parsed = parseAssignmentReviewComment(r.comment);
+          return {
+            id: r.id,
+            project_id: r.project_id,
+            project_code: r.project_code,
+            project_title: r.project_title,
+            research_field: r.research_field || '未指定',
+            recommendation: parsed.recommendation || assignmentStatusToRecommendation(r.assignment_status, ''),
+            comments: parsed.comments || '',
+            suggestions: parsed.suggestions || '',
+            submitted_at: r.assigned_at ? r.assigned_at.toISOString() : null,
+            review_date: r.assigned_at ? r.assigned_at.toISOString() : null,
+            applicant_name: r.applicant_name,
+            applicant_department: r.applicant_department,
+            project_status: r.project_status,
+          };
+        });
+        sendResponse(res, 200, { success: true, data, total, page, limit, pages: Math.ceil(total / limit) });
+      } catch (error) {
+        console.error('获取评审历史失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取评审历史失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/reviewer/stats' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const [pendingResult] = await pool.query(`
+          SELECT COUNT(*) as count FROM \`ExpertAssignment\` ea
+          INNER JOIN \`Project\` p ON ea.project_id = p.id
+          WHERE ea.expert_id = ? AND ea.status = 'reviewing' AND p.status IN ('under_review','batch_review')
+        `, [user.id]);
+        const [completedResult] = await pool.query(`
+          SELECT COUNT(*) as count FROM \`ExpertAssignment\`
+          WHERE expert_id = ? AND status IN ('accepted', 'declined')
+        `, [user.id]);
+        const [commentsResult] = await pool.query(`
+          SELECT SUM(CHAR_LENGTH(comment)) as total_chars FROM \`ExpertAssignment\`
+          WHERE expert_id = ? AND status IN ('accepted', 'declined') AND comment IS NOT NULL
+        `, [user.id]);
+        const [approvalResult] = await pool.query(`
+          SELECT COUNT(*) as total, COUNT(CASE WHEN status='accepted' THEN 1 END) as recommended
+          FROM \`ExpertAssignment\`
+          WHERE expert_id = ? AND status IN ('accepted', 'declined')
+        `, [user.id]);
+        const totalReviewed = approvalResult[0]?.total || 0;
+        const approvalRate = totalReviewed > 0 ? Math.round(((approvalResult[0]?.recommended || 0) / totalReviewed) * 100) : 0;
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            pendingCount: pendingResult[0]?.count || 0,
+            completedCount: completedResult[0]?.count || 0,
+            averageScore: 0,
+            approvalRate,
+            highestScore: 0,
+            avgReviewTime: 0,
+            consistencyRate: 0,
+            totalComments: commentsResult[0]?.total_chars || 0
+          }
+        });
+      } catch (error) {
+        console.error('获取评审专家统计数据失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取评审专家统计数据失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/reviewer/project-for-review' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const { projectId } = url.parse(req.url, true).query;
+        if (!projectId) {
+          sendResponse(res, 400, { success: false, error: '项目ID不能为空' });
+          return;
+        }
+        const [projectResult] = await pool.query(`
+          SELECT p.id, p.project_code, p.title,
+                 (SELECT GROUP_CONCAT(rd2.name ORDER BY rd2.name SEPARATOR ', ')
+                  FROM \`ProjectResearchDomain\` prd2
+                  INNER JOIN \`ResearchDomain\` rd2 ON prd2.research_domain_id = rd2.id
+                  WHERE prd2.project_id = p.id) as research_field,
+                 p.abstract,
+                 p.detailed_introduction_part1 as background,
+                 p.implementation_plan as objectives,
+                 p.detailed_introduction_part2 as methodology,
+                 p.detailed_introduction_part3 as expected_outcomes,
+                 COALESCE(p.approved_budget, 0) as budget_total,
+                 CASE WHEN p.start_date IS NOT NULL AND p.end_date IS NOT NULL
+                      THEN TIMESTAMPDIFF(MONTH, p.start_date, p.end_date)
+                      ELSE NULL END as duration_months,
+                 p.submit_date, u.name as applicant_name, u.department as applicant_department, u.title as applicant_title,
+                 u.email as applicant_email
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE p.id = ?
+        `, [projectId]);
+        if (!projectResult.length) {
+          sendResponse(res, 404, { success: false, error: '项目不存在' });
+          return;
+        }
+        const [assignmentRows] = await pool.query(`
+          SELECT id, status, comment, assigned_at, deadline
+          FROM \`ExpertAssignment\`
+          WHERE project_id = ? AND expert_id = ?
+          LIMIT 1
+        `, [projectId, user.id]);
+        if (!assignmentRows.length) {
+          sendResponse(res, 403, { success: false, error: '您未被分配该项目评审任务' });
+          return;
+        }
+        const assignment = assignmentRows[0];
+        const parsedSelf = parseAssignmentReviewComment(assignment.comment);
+
+        const [membersResult] = await pool.query(`
+          SELECT pm.name, pm.role, pm.title, pm.organization, pm.email
+          FROM \`ProjectMember\` pm
+          WHERE pm.project_id = ?
+          ORDER BY CASE pm.role WHEN 'principal' THEN 1 WHEN 'contact' THEN 2 WHEN 'other' THEN 3 ELSE 4 END,
+                   pm.sort_order ASC
+        `, [projectId]);
+        const [budgetResult] = await pool.query(`
+          SELECT * FROM \`ProjectBudget\` WHERE project_id = ? ORDER BY sort_order ASC
+        `, [projectId]);
+        const [otherRows] = await pool.query(`
+          SELECT ea.id, ea.expert_id, ea.status, ea.comment, ea.assigned_at as review_date,
+                 u.name as reviewer_name, u.title as reviewer_title
+          FROM \`ExpertAssignment\` ea
+          LEFT JOIN \`User\` u ON ea.expert_id = u.id
+          WHERE ea.project_id = ? AND ea.expert_id != ? AND ea.status IN ('accepted', 'declined')
+        `, [projectId, user.id]);
+        const otherReviews = otherRows.map((item) => {
+          const parsed = parseAssignmentReviewComment(item.comment);
+          return {
+            id: item.id,
+            expert_id: item.expert_id,
+            review_date: item.review_date ? item.review_date.toISOString() : null,
+            recommendation: parsed.recommendation || assignmentStatusToRecommendation(item.status, ''),
+            comments: parsed.comments || '',
+            suggestions: parsed.suggestions || '',
+            strengths: parsed.strengths || '',
+            weaknesses: parsed.weaknesses || '',
+            reviewer_name: item.reviewer_name,
+            reviewer_title: item.reviewer_title,
+            is_confidential: !!parsed.is_confidential,
+          };
+        });
+
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            project: {
+              ...projectResult[0],
+              research_field: projectResult[0].research_field || '未指定',
+              submit_date: projectResult[0].submit_date ? projectResult[0].submit_date.toISOString().split('T')[0] : null
+            },
+            members: membersResult,
+            budget: budgetResult,
+            existingReview: {
+              id: assignment.id,
+              status: assignment.status,
+              assigned_at: assignment.assigned_at
+                ? assignment.assigned_at.toISOString()
+                : null,
+              deadline: assignment.deadline ? assignment.deadline.toISOString() : null,
+              strengths: parsedSelf.strengths || '',
+              weaknesses: parsedSelf.weaknesses || '',
+              recommendation: parsedSelf.recommendation || assignmentStatusToRecommendation(assignment.status, ''),
+              comments: parsedSelf.comments || '',
+              suggestions: parsedSelf.suggestions || '',
+              is_confidential: !!parsedSelf.is_confidential,
+            },
+            otherReviews
+          }
+        });
+      } catch (error) {
+        console.error('获取项目详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目详情失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/reviewer/submit-review' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const body = await getBody(req);
+        const { project_id, recommendation, comments } = body;
+        if (!project_id || !comments) {
+          sendResponse(res, 400, { success: false, error: '项目和评审意见不能为空' });
+          return;
+        }
+        const [projectResult] = await pool.query(`
+          SELECT status, title, applicant_id FROM \`Project\` WHERE id = ?
+        `, [project_id]);
+        if (!projectResult.length) {
+          sendResponse(res, 400, { success: false, error: '项目不存在' });
+          return;
+        }
+        const [assignmentRows] = await pool.query(`
+          SELECT id, status FROM \`ExpertAssignment\` WHERE project_id = ? AND expert_id = ? LIMIT 1
+        `, [project_id, user.id]);
+        if (!assignmentRows.length) {
+          sendResponse(res, 403, { success: false, error: '您未被分配该项目评审任务' });
+          return;
+        }
+        if (['accepted', 'declined'].includes(assignmentRows[0].status)) {
+          sendResponse(res, 400, { success: false, error: '该评审任务已结束，无法再次提交' });
+          return;
+        }
+        const reviewComment = buildAssignmentReviewComment({
+          recommendation,
+          comments: body.comments,
+          suggestions: body.suggestions || '',
+          strengths: body.strengths || '',
+          weaknesses: body.weaknesses || '',
+          is_confidential: !!body.is_confidential,
+          submitted: true,
+        });
+        const nextStatus = recommendationToAssignmentStatus(recommendation);
+        const reviewId = assignmentRows[0].id;
+        await pool.query(`
+          UPDATE \`ExpertAssignment\` SET status = ?, comment = ? WHERE id = ?
+        `, [nextStatus, reviewComment, reviewId]);
+
+        await createNotification(
+          projectResult[0].applicant_id,
+          '评审意见已提交',
+          `您的项目"${projectResult[0].title}"的评审意见已提交，请查看详细评审结果。`,
+          'review',
+          project_id
+        );
+        sendResponse(res, 200, { success: true, message: '评审提交成功', data: { review_id: reviewId } });
+      } catch (error) {
+        console.error('提交评审失败:', error);
+        sendResponse(res, 500, { success: false, error: '提交评审失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/reviewer/save-review-draft' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const body = await getBody(req);
+        const { project_id } = body;
+        if (!project_id) {
+          sendResponse(res, 400, { success: false, error: '项目ID不能为空' });
+          return;
+        }
+        const [assignmentRows] = await pool.query(`
+          SELECT id, status FROM \`ExpertAssignment\` WHERE project_id = ? AND expert_id = ? LIMIT 1
+        `, [project_id, user.id]);
+        if (!assignmentRows.length) {
+          sendResponse(res, 403, { success: false, error: '您未被分配该项目评审任务' });
+          return;
+        }
+        if (['accepted', 'declined'].includes(assignmentRows[0].status)) {
+          sendResponse(res, 400, { success: false, error: '该评审任务已结束，无法保存草稿' });
+          return;
+        }
+        const reviewComment = buildAssignmentReviewComment({
+          recommendation: body.recommendation || '',
+          comments: body.comments || '',
+          suggestions: body.suggestions || '',
+          strengths: body.strengths || '',
+          weaknesses: body.weaknesses || '',
+          is_confidential: !!body.is_confidential,
+          submitted: false,
+        });
+        await pool.query(`
+          UPDATE \`ExpertAssignment\` SET status = 'reviewing', comment = ? WHERE id = ?
+        `, [reviewComment, assignmentRows[0].id]);
+        sendResponse(res, 200, { success: true, message: '草稿保存成功' });
+      } catch (error) {
+        console.error('保存评审草稿失败:', error);
+        sendResponse(res, 500, { success: false, error: '保存评审草稿失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/reviewer/review-detail' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const { reviewId } = url.parse(req.url, true).query;
+        if (!reviewId) {
+          sendResponse(res, 400, { success: false, error: '评审ID不能为空' });
+          return;
+        }
+        const [rows] = await pool.query(`
+          SELECT ea.id, ea.status as assignment_status, ea.comment, ea.assigned_at, ea.project_id, ea.expert_id,
+                 p.title as project_title, p.project_code, p.abstract,
+                 u_app.name as applicant_name, u_rev.name as reviewer_name, u_rev.title as reviewer_title
+          FROM \`ExpertAssignment\` ea
+          JOIN \`Project\` p ON ea.project_id = p.id
+          JOIN \`User\` u_app ON p.applicant_id = u_app.id
+          JOIN \`User\` u_rev ON ea.expert_id = u_rev.id
+          WHERE ea.id = ?
+        `, [reviewId]);
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '评审记录不存在' });
+          return;
+        }
+        const row = rows[0];
+        const parsed = parseAssignmentReviewComment(row.comment);
+        const review = {
+          id: row.id,
+          project_id: row.project_id,
+          expert_id: row.expert_id,
+          project_title: row.project_title,
+          project_code: row.project_code,
+          abstract: row.abstract,
+          applicant_name: row.applicant_name,
+          reviewer_name: row.reviewer_name,
+          reviewer_title: row.reviewer_title,
+          review_type: 'initial',
+          strengths: parsed.strengths || '',
+          weaknesses: parsed.weaknesses || '',
+          recommendation: parsed.recommendation || assignmentStatusToRecommendation(row.assignment_status, ''),
+          comments: parsed.comments || '',
+          suggestions: parsed.suggestions || '',
+          is_confidential: !!parsed.is_confidential,
+          submitted_at: row.assigned_at ? row.assigned_at.toISOString() : null,
+        };
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            review: {
+              ...review,
+              review_date: review.submitted_at
+            }
+          }
+        });
+      } catch (error) {
+        console.error('获取评审详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取评审详情失败' });
+      }
+      return;
+    }
 
 
     // ==================== 404处理 ====================

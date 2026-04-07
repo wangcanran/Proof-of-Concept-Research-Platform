@@ -1,7 +1,12 @@
-﻿<template>
+<template>
   <div class="pending-projects-page">
     <!-- 页面头部 -->
     <div class="page-header">
+      <button type="button" class="back-workbench-box" @click="goToDashboard">
+        <el-icon class="back-icon"><ArrowLeft /></el-icon>
+        <span class="back-text">返回工作台</span>
+      </button>
+
       <div class="header-content">
         <div class="header-main">
           <h1>
@@ -280,6 +285,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
+  ArrowLeft,
   Clock,
   Refresh,
   ArrowDown,
@@ -298,6 +304,10 @@ import {
 import request from '@/utils/request'
 
 const router = useRouter()
+
+const goToDashboard = () => {
+  router.push('/reviewer/dashboard')
+}
 
 // 状态管理
 const loading = ref(false)
@@ -555,8 +565,27 @@ onMounted(() => {
 <style scoped>
 .pending-projects-page {
   padding: 20px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #f5f7fa;
   min-height: 100vh;
+}
+
+/* 与评审仪表盘一致的红色主色 */
+.pending-projects-page :deep(.el-button--primary) {
+  --el-button-bg-color: #b31b1b;
+  --el-button-border-color: #b31b1b;
+  --el-button-hover-bg-color: #8b1515;
+  --el-button-hover-border-color: #8b1515;
+  --el-button-active-bg-color: #8b1515;
+  --el-button-active-border-color: #8b1515;
+}
+
+.pending-projects-page :deep(.el-pagination .el-pager li.is-active) {
+  color: #b31b1b;
+  font-weight: 600;
+}
+
+.pending-projects-page :deep(.el-pagination .el-pager li:hover) {
+  color: #8b1515;
 }
 
 .page-header {
@@ -567,11 +596,54 @@ onMounted(() => {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
+.back-workbench-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 10px 18px;
+  border: 1px solid rgba(179, 27, 27, 0.35);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffbfb 0%, #fff5f5 100%);
+  color: #b31b1b;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.back-workbench-box:hover {
+  background: #fff0f0;
+  border-color: #b31b1b;
+  box-shadow: 0 2px 8px rgba(179, 27, 27, 0.12);
+}
+
+.back-workbench-box:active {
+  background: #ffe8e8;
+}
+
+.back-workbench-box .back-icon {
+  font-size: 18px;
+}
+
 .header-content {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 16px;
   margin-bottom: 24px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .header-main h1 {
@@ -581,6 +653,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
 }
 
 .subtitle {
@@ -664,8 +737,8 @@ onMounted(() => {
 }
 
 .project-card:hover {
-  border-color: #409eff;
-  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.1);
+  border-color: #b31b1b;
+  box-shadow: 0 2px 12px rgba(179, 27, 27, 0.12);
 }
 
 .project-card.urgent {
@@ -694,7 +767,7 @@ onMounted(() => {
 .project-code {
   font-family: monospace;
   font-weight: bold;
-  color: #409eff;
+  color: #b31b1b;
 }
 
 .project-meta {
@@ -730,7 +803,7 @@ onMounted(() => {
 }
 
 .project-title:hover {
-  color: #409eff;
+  color: #b31b1b;
 }
 
 .project-info {
@@ -774,11 +847,16 @@ onMounted(() => {
 @media (max-width: 768px) {
   .header-content {
     flex-direction: column;
-    gap: 16px;
     align-items: stretch;
+    gap: 16px;
   }
 
   .header-actions {
+    justify-content: center;
+  }
+
+  .back-workbench-box {
+    width: 100%;
     justify-content: center;
   }
 

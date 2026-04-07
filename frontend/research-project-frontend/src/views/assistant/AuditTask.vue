@@ -1,6 +1,6 @@
 <!-- src/views/assistant/AuditTask.vue -->
 <template>
-  <div class="audit-task-page">
+  <div class="audit-task-page assistant-ruc-theme">
     <!-- 顶部导航栏 -->
     <header class="page-header">
       <div class="header-content">
@@ -874,7 +874,7 @@ onMounted(() => {
 .stat-value {
   font-size: 20px;
   font-weight: 700;
-  color: #fa8c16;
+  color: #b31b1b;
   margin-bottom: 4px;
 }
 
@@ -1001,12 +1001,12 @@ onMounted(() => {
 
 .filter-apply-btn {
   border: none;
-  background: #fa8c16;
+  background: #b31b1b;
   color: white;
 }
 
 .filter-apply-btn:hover {
-  background: #ffa940;
+  background: #c44747;
 }
 
 /* 主要内容 */
@@ -1027,7 +1027,7 @@ onMounted(() => {
   width: 40px;
   height: 40px;
   border: 3px solid #f3f3f3;
-  border-top: 3px solid #fa8c16;
+  border-top: 3px solid #b31b1b;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin: 0 auto 20px;
@@ -1067,7 +1067,7 @@ onMounted(() => {
 
 .empty-action-btn {
   padding: 10px 24px;
-  background: #fa8c16;
+  background: #b31b1b;
   color: white;
   border: none;
   border-radius: 6px;
@@ -1079,7 +1079,7 @@ onMounted(() => {
 }
 
 .empty-action-btn:hover {
-  background: #ffa940;
+  background: #c44747;
 }
 
 /* 任务区域 */
@@ -1120,7 +1120,7 @@ onMounted(() => {
 .task-card {
   background: white;
   border: 1px solid #e8e8e8;
-  border-left: 4px solid #fa8c16;
+  border-left: 4px solid #b31b1b;
   border-radius: 8px;
   padding: 20px;
   cursor: pointer;
@@ -1134,7 +1134,7 @@ onMounted(() => {
 }
 
 .task-card.completed {
-  border-left-color: #52c41a;
+  border-left-color: #b31b1b;
   opacity: 0.9;
 }
 
@@ -1144,7 +1144,7 @@ onMounted(() => {
 }
 
 .task-card.priority-high {
-  border-left-color: #fa8c16;
+  border-left-color: #b31b1b;
   background: linear-gradient(to right, #fff7e6 0%, white 10%);
 }
 
@@ -1209,7 +1209,7 @@ onMounted(() => {
 
 .task-status.completed {
   background: #d9f7be;
-  color: #389e0d;
+  color: #8b1515;
 }
 
 .task-title {
@@ -1285,7 +1285,7 @@ onMounted(() => {
 }
 
 .info-value.result.approved {
-  color: #52c41a;
+  color: #b31b1b;
 }
 
 .info-value.result.rejected {
@@ -1320,18 +1320,18 @@ onMounted(() => {
 
 .process-btn {
   border: none;
-  background: #fa8c16;
+  background: #b31b1b;
   color: white;
 }
 
 .process-btn:hover {
-  background: #ffa940;
+  background: #c44747;
 }
 
 .review-btn {
-  border: 1px solid #52c41a;
+  border: 1px solid #b31b1b;
   background: #f6ffed;
-  color: #52c41a;
+  color: #b31b1b;
 }
 
 .review-btn:hover {
@@ -1394,11 +1394,11 @@ onMounted(() => {
 }
 
 .detail-value.high {
-  color: #fa8c16;
+  color: #b31b1b;
 }
 
 .detail-value.status.completed {
-  color: #52c41a;
+  color: #b31b1b;
 }
 
 /* 申请人信息 */
@@ -1414,7 +1414,7 @@ onMounted(() => {
 .applicant-avatar {
   width: 48px;
   height: 48px;
-  background: #fa8c16;
+  background: #b31b1b;
   color: white;
   border-radius: 50%;
   display: flex;
@@ -1530,12 +1530,12 @@ onMounted(() => {
 
 .primary-btn {
   border: none;
-  background: #fa8c16;
+  background: #b31b1b;
   color: white;
 }
 
 .primary-btn:hover {
-  background: #ffa940;
+  background: #c44747;
 }
 
 /* 响应式设计 */

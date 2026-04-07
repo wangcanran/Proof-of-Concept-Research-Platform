@@ -4,7 +4,10 @@
     <!-- 页面标题和导航 -->
     <div class="page-header">
       <div class="header-left">
-        <button class="back-btn" @click="goBack">← 返回</button>
+        <button type="button" class="back-workbench-box" @click="goBack">
+          <el-icon class="back-icon"><ArrowLeft /></el-icon>
+          <span class="back-text">返回工作台</span>
+        </button>
         <h1>项目申报</h1>
       </div>
       <div class="header-right">
@@ -611,6 +614,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
 
 const router = useRouter()
@@ -1017,7 +1021,7 @@ const goBack = async () => {
     await ElMessageBox.confirm('确定要离开吗？未保存的内容将会丢失。', '确认离开', {
       type: 'warning',
     })
-    router.back()
+    router.push('/applicant/dashboard')
   } catch {}
 }
 
@@ -1083,26 +1087,48 @@ onMounted(async () => {
   padding: 16px 24px;
   background: white;
   border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
 .header-left {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.back-workbench-box {
+  display: inline-flex;
   align-items: center;
-  gap: 16px;
-}
-
-.back-btn {
-  padding: 8px 16px;
-  background: #f5f7fa;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 18px;
+  border: 1px solid rgba(179, 27, 27, 0.35);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffbfb 0%, #fff5f5 100%);
+  color: #b31b1b;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
   cursor: pointer;
-  font-size: 14px;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
 }
 
-.back-btn:hover {
-  background: #e8e8e8;
+.back-workbench-box:hover {
+  background: #fff0f0;
+  border-color: #b31b1b;
+  box-shadow: 0 2px 8px rgba(179, 27, 27, 0.12);
+}
+
+.back-workbench-box:active {
+  background: #ffe8e8;
+}
+
+.back-workbench-box .back-icon {
+  font-size: 18px;
 }
 
 .header-left h1 {
@@ -1884,6 +1910,28 @@ onMounted(async () => {
 @media (max-width: 768px) {
   .create-project-container {
     padding: 16px;
+  }
+
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .header-right {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .back-workbench-box {
+    width: 100%;
+    justify-content: center;
   }
 
   .form-row {

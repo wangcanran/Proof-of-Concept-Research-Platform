@@ -1,0 +1,39 @@
+/**
+ * Element Plus 与平台「工作台」主色（#b31b1b）对齐
+ * MessageBox 挂载在 body 下，需全局样式。
+ */
+
+.el-overlay-message-box .el-message-box__btns .el-button--primary {
+  --el-button-bg-color: #b31b1b;
+  --el-button-border-color: #b31b1b;
+  --el-button-hover-bg-color: #8b1515;
+  --el-button-hover-border-color: #8b1515;
+  --el-button-active-bg-color: #8b1515;
+  --el-button-active-border-color: #8b1515;
+}
+
+.el-overlay-message-box .el-message-box__status.el-message-box-icon--warning {
+  color: #b31b1b;
+}
+
+.el-overlay-message-box .el-message-box__status.el-message-box-icon--error {
+  color: #b31b1b;
+}
+
+.el-overlay-message-box .el-message-box__headerbtn:hover .el-message-box__close,
+.el-overlay-message-box .el-message-box__headerbtn:focus .el-message-box__close {
+  color: #b31b1b;
+}
+
+/**
+ * 项目经理/科研助理子页面根节点加 class="assistant-ruc-theme"，主按钮与 primary 链接触发为人大红
+ */
+.assistant-ruc-theme {
+  --el-color-primary: #b31b1b;
+  --el-color-primary-light-3: #c44747;
+  --el-color-primary-light-5: #d67373;
+  --el-color-primary-light-7: #e8a3a3;
+  --el-color-primary-light-8: #f0c4c4;
+  --el-color-primary-light-9: #fceeee;
+  --el-color-primary-dark-2: #8b1515;
+}
