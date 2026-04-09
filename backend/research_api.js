@@ -434,6 +434,52 @@ if (pathname === '/api/home/data' && req.method === 'GET') {
   return;
 }
 
+/** 首页「平台数据」：无需登录，由数据库聚合（与列表拉全量再数数相比更准确） */
+if (pathname === '/api/home/stats' && req.method === 'GET') {
+  try {
+    const [projectRows] = await pool.query(`
+      SELECT
+        COUNT(*) AS total_projects,
+        SUM(CASE WHEN status IN ('approved', 'incubating', 'completed') THEN 1 ELSE 0 END) AS approved_projects,
+        SUM(CASE WHEN status = 'incubating' THEN 1 ELSE 0 END) AS incubating_projects,
+        COALESCE(SUM(COALESCE(approved_budget, 0)), 0) AS total_budget_yuan
+      FROM \`Project\`
+    `);
+    const [reviewerRows] = await pool.query(`
+      SELECT COUNT(*) AS reviewer_count
+      FROM \`User\`
+      WHERE role = 'reviewer'
+    `);
+    const [achievementRows] = await pool.query(`
+      SELECT COUNT(*) AS achievement_count
+      FROM \`ProjectAchievement\`
+    `);
+
+    const p = projectRows[0] || {};
+    const totalBudgetWan = (Number(p.total_budget_yuan) || 0) / 10000;
+
+    sendResponse(res, 200, {
+      success: true,
+      data: {
+        totalProjects: Number(p.total_projects) || 0,
+        approvedProjects: Number(p.approved_projects) || 0,
+        incubatingProjects: Number(p.incubating_projects) || 0,
+        reviewerCount: Number(reviewerRows[0]?.reviewer_count) || 0,
+        achievementCount: Number(achievementRows[0]?.achievement_count) || 0,
+        totalBudget: String(Math.round(totalBudgetWan)),
+      },
+    });
+  } catch (error) {
+    console.error('获取首页平台统计失败:', error);
+    sendResponse(res, 500, {
+      success: false,
+      error: '获取首页平台统计失败',
+      message: error.message,
+    });
+  }
+  return;
+}
+
 // 获取公开的公告列表（首页展示）
 if (pathname === '/api/home/notices' && req.method === 'GET') {
   try {

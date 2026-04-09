@@ -1,174 +1,261 @@
 <template>
   <div class="home-container">
-    <!-- 首屏区块 -->
-    <div class="hero-section">
-    <!-- 左右两栏布局 -->
-    <div class="content-wrapper">
-      <!-- 左侧：登录/注册入口（宽度1/3） -->
-      <div class="left-panel">
-        <!-- 校徽放在左侧面板内部顶部 -->
-        <div class="top-logo">
-          <img
-            src="/src/views/picture/university-logo.png"
-            alt="人大校徽"
-            class="logo"
-            @error="handleLogoError"
-          />
+    <div class="home-landing">
+      <!-- 顶栏：校徽 + 标题 + 操作 -->
+      <header class="home-header">
+        <div class="brand">
+          <div class="brand-logo-wrap">
+            <img
+              :src="logoUrl"
+              alt="中国人民大学校徽"
+              class="brand-logo"
+              @error="handleLogoError"
+            />
+          </div>
+          <div class="brand-text">
+            <h1 class="brand-title">中国人民大学</h1>
+            <p class="brand-sub">图灵数智 · 概念验证平台</p>
+            <p class="brand-en">Proof of Concept Research Platform</p>
+          </div>
         </div>
 
-        <!-- 未登录：显示登录/注册 -->
-        <div v-if="!isLoggedIn" class="auth-buttons">
-          <button class="auth-btn login-btn" @click="goToLogin">
-            <span class="btn-icon">🔐</span>
-            登录
-          </button>
-          <button class="auth-btn register-btn" @click="goToRegister">
-            <span class="btn-icon">📝</span>
-            注册
-          </button>
+        <div class="header-actions">
+          <template v-if="!isLoggedIn">
+            <button type="button" class="btn-ghost" @click="goToRegister">注册</button>
+            <button type="button" class="btn-primary" @click="goToLogin">登录</button>
+          </template>
+          <template v-else>
+            <span class="welcome-pill">您好，{{ userName }}</span>
+            <button type="button" class="btn-primary" @click="goToDashboard">进入系统</button>
+            <button type="button" class="btn-ghost" @click="handleLogout">退出</button>
+          </template>
         </div>
+      </header>
 
-        <!-- 已登录：显示欢迎信息和进入系统按钮 -->
-        <div v-else class="auth-buttons">
-          <div class="welcome-text">欢迎回来，{{ userName }}</div>
-          <button class="auth-btn login-btn" @click="goToDashboard">
-            <span class="btn-icon">🚀</span>
-            进入系统
-          </button>
-          <button class="auth-btn register-btn" @click="handleLogout">
-            <span class="btn-icon">🚪</span>
-            退出登录
-          </button>
-        </div>
+      <!-- 第一行：左轮播 | 右栏整列为公告 -->
+      <div class="home-body">
+        <section class="hero-visual" aria-label="平台展示">
+          <div class="carousel-container">
+            <div class="carousel-wrapper" :style="carouselStyle">
+              <div v-for="(image, index) in carouselImages" :key="index" class="carousel-slide">
+                <img
+                  :src="image.src"
+                  :alt="image.alt"
+                  class="carousel-image"
+                  @error="handleImageError"
+                />
+                <div class="carousel-caption">
+                  <h3>{{ image.caption.title }}</h3>
+                  <p>{{ image.caption.description }}</p>
+                </div>
+              </div>
+            </div>
 
-        <div class="system-title">
-          <h1>概念验证平台</h1>
-          <p>Proof of Concept Platform</p>
-        </div>
+            <div class="carousel-dots">
+              <span
+                v-for="(_, index) in carouselImages"
+                :key="index"
+                class="dot"
+                :class="{ active: currentIndex === index }"
+                @click="goToSlide(index)"
+              />
+            </div>
+
+            <button type="button" class="carousel-btn prev" aria-label="上一张" @click="prevSlide">
+              <el-icon><ArrowLeft /></el-icon>
+            </button>
+            <button type="button" class="carousel-btn next" aria-label="下一张" @click="nextSlide">
+              <el-icon><ArrowRight /></el-icon>
+            </button>
+          </div>
+        </section>
+
+        <aside class="home-notice-aside">
+          <div class="side-card notice-card-block">
+            <div class="side-card-head">
+              <span class="side-card-icon" aria-hidden="true">
+                <el-icon :size="20"><Bell /></el-icon>
+              </span>
+              <div>
+                <h2 class="side-card-title">最新公告</h2>
+                <p class="side-card-desc">政策与通知摘要</p>
+              </div>
+            </div>
+
+            <ul v-if="displayNotices.length > 0" class="notice-compact-list">
+              <li v-for="notice in displayNotices" :key="notice.id" class="notice-compact-item">
+                <span class="notice-compact-tag" :class="notice.category">{{
+                  categoryLabel(notice.category)
+                }}</span>
+                <div class="notice-compact-main">
+                  <div class="notice-compact-title">{{ notice.title }}</div>
+                  <p v-if="notice.abstract" class="notice-compact-abs">{{ notice.abstract }}</p>
+                </div>
+                <time class="notice-compact-date">{{ formatNoticeDate(notice.published_at) }}</time>
+              </li>
+            </ul>
+            <div v-else class="notice-compact-empty">
+              <el-icon class="empty-ico-el" :size="44"><FolderOpened /></el-icon>
+              <p>暂无公告</p>
+            </div>
+          </div>
+        </aside>
       </div>
 
-      <!-- 右侧：轮播图（宽度2/3） -->
-      <div class="right-panel">
-        <div class="carousel-container">
-          <div class="carousel-wrapper" :style="carouselStyle">
-            <div v-for="(image, index) in carouselImages" :key="index" class="carousel-slide">
-              <img
-                :src="image.src"
-                :alt="image.alt"
-                class="carousel-image"
-                @error="handleImageError"
-              />
-              <div class="carousel-caption">
-                <h3>{{ image.caption.title }}</h3>
-                <p>{{ image.caption.description }}</p>
+      <!-- 第二行：平台数据整行 -->
+      <section class="home-stats-band" aria-label="平台数据">
+        <div class="side-card stats-band-card">
+          <div class="side-card-head">
+            <span class="side-card-icon" aria-hidden="true">
+              <el-icon :size="20"><DataAnalysis /></el-icon>
+            </span>
+            <div>
+              <h2 class="side-card-title">平台数据</h2>
+              <p class="side-card-desc">科研项目与资源概览</p>
+            </div>
+          </div>
+          <div class="stats-grid-band">
+            <div class="stat-pill">
+              <span class="stat-pill-icon" aria-hidden="true">
+                <el-icon :size="20"><Document /></el-icon>
+              </span>
+              <div class="stat-pill-body">
+                <span class="stat-pill-num">{{ stats.totalProjects }}</span>
+                <span class="stat-pill-label">累计项目</span>
+              </div>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-pill-icon" aria-hidden="true">
+                <el-icon :size="20"><CircleCheck /></el-icon>
+              </span>
+              <div class="stat-pill-body">
+                <span class="stat-pill-num">{{ stats.approvedProjects }}</span>
+                <span class="stat-pill-label">已批准</span>
+              </div>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-pill-icon" aria-hidden="true">
+                <el-icon :size="20"><TrendCharts /></el-icon>
+              </span>
+              <div class="stat-pill-body">
+                <span class="stat-pill-num">{{ stats.incubatingProjects }}</span>
+                <span class="stat-pill-label">孵化中</span>
+              </div>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-pill-icon" aria-hidden="true">
+                <el-icon :size="20"><UserFilled /></el-icon>
+              </span>
+              <div class="stat-pill-body">
+                <span class="stat-pill-num">{{ stats.reviewerCount }}</span>
+                <span class="stat-pill-label">评审专家</span>
+              </div>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-pill-icon" aria-hidden="true">
+                <el-icon :size="20"><Trophy /></el-icon>
+              </span>
+              <div class="stat-pill-body">
+                <span class="stat-pill-num">{{ stats.achievementCount }}</span>
+                <span class="stat-pill-label">登记成果</span>
+              </div>
+            </div>
+            <div class="stat-pill stat-pill-wide">
+              <span class="stat-pill-icon" aria-hidden="true">
+                <el-icon :size="20"><Money /></el-icon>
+              </span>
+              <div class="stat-pill-body">
+                <span class="stat-pill-num">{{ stats.totalBudget }}</span>
+                <span class="stat-pill-label">累计批准经费（万元）</span>
               </div>
             </div>
           </div>
+        </div>
+      </section>
 
-          <div class="carousel-dots">
-            <span
-              v-for="(_, index) in carouselImages"
-              :key="index"
-              class="dot"
-              :class="{ active: currentIndex === index }"
-              @click="goToSlide(index)"
-            ></span>
-          </div>
-
-          <button class="carousel-btn prev" @click="prevSlide">❮</button>
-          <button class="carousel-btn next" @click="nextSlide">❯</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 向下滚动提示（在首屏内底部居中） -->
-    <div class="scroll-hint" @click="scrollToStats">
-      <span>了解更多</span>
-      <div class="scroll-arrow">▼</div>
-    </div>
-    </div><!-- /hero-section -->
-
-    <!-- 平台数据统计区 -->
-    <div class="stats-section" ref="statsRef">
-      <div class="section-header">
-        <h2>平台数据总览</h2>
-        <p>实时反映平台科研项目运营情况</p>
-      </div>
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-icon">📋</div>
-          <div class="stat-number">{{ stats.totalProjects }}</div>
-          <div class="stat-label">累计项目数</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">✅</div>
-          <div class="stat-number">{{ stats.approvedProjects }}</div>
-          <div class="stat-label">已批准项目</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">🔬</div>
-          <div class="stat-number">{{ stats.incubatingProjects }}</div>
-          <div class="stat-label">孵化中项目</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">👨‍🏫</div>
-          <div class="stat-number">{{ stats.reviewerCount }}</div>
-          <div class="stat-label">评审专家</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">🏆</div>
-          <div class="stat-number">{{ stats.achievementCount }}</div>
-          <div class="stat-label">登记成果</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">💰</div>
-          <div class="stat-number">{{ stats.totalBudget }}</div>
-          <div class="stat-label">累计批准经费（万元）</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 公告区 -->
-    <div class="notice-section">
-      <div class="notice-container">
-        <div class="notice-header">
-          <h2>平台公告</h2>
-          <p>最新政策动态与通知公告</p>
-        </div>
-        <div class="notice-list" v-if="notices.length > 0">
-          <div
-            v-for="notice in notices"
-            :key="notice.id"
-            class="notice-item"
-          >
-            <div class="notice-tag" :class="notice.category">
-              {{ categoryLabel(notice.category) }}
+      <!-- 合作方展示（预留位：在 partners 中填写 name / logo / url） -->
+      <section class="partners-section" aria-labelledby="partners-heading">
+        <div class="partners-card">
+          <header class="partners-head">
+            <span class="partners-head-icon" aria-hidden="true">
+              <el-icon :size="20"><OfficeBuilding /></el-icon>
+            </span>
+            <div>
+              <h2 id="partners-heading" class="partners-title">合作单位</h2>
+              <p class="partners-desc">支持机构与战略合作伙伴 · Logo 可置于 public/partners/ 并在配置中引用</p>
             </div>
-            <div class="notice-content">
-              <div class="notice-title">{{ notice.title }}</div>
-              <div class="notice-abstract">{{ notice.abstract }}</div>
-            </div>
-            <div class="notice-date">{{ formatNoticeDate(notice.published_at) }}</div>
-          </div>
+          </header>
+          <ul class="partners-grid">
+            <li v-for="p in partners" :key="p.id" class="partner-item">
+              <a
+                v-if="p.url"
+                :href="p.url"
+                class="partner-cell is-link"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <div class="partner-inner">
+                  <img
+                    v-if="p.logo && !partnerImgFailed[p.id]"
+                    :src="resolvePartnerAsset(p.logo)"
+                    :alt="p.name"
+                    class="partner-logo"
+                    loading="lazy"
+                    @error="partnerImgFailed[p.id] = true"
+                  />
+                  <div v-else class="partner-placeholder">
+                    <el-icon class="partner-ph-icon" :size="28"><Picture /></el-icon>
+                    <span class="partner-name">{{ p.name }}</span>
+                  </div>
+                </div>
+              </a>
+              <div v-else class="partner-cell">
+                <div class="partner-inner">
+                  <img
+                    v-if="p.logo && !partnerImgFailed[p.id]"
+                    :src="resolvePartnerAsset(p.logo)"
+                    :alt="p.name"
+                    class="partner-logo"
+                    loading="lazy"
+                    @error="partnerImgFailed[p.id] = true"
+                  />
+                  <div v-else class="partner-placeholder">
+                    <el-icon class="partner-ph-icon" :size="28"><Picture /></el-icon>
+                    <span class="partner-name">{{ p.name }}</span>
+                  </div>
+                </div>
+              </div>
+            </li>
+          </ul>
         </div>
-        <div class="notice-empty" v-else>
-          <div class="empty-icon">📢</div>
-          <p>暂无公告</p>
-        </div>
-      </div>
-    </div>
+      </section>
 
-    <!-- 页脚 -->
-    <div class="home-footer">
-      <p>© 2026 中国人民大学图灵数智概念验证平台 · 科研项目管理系统</p>
+      <footer class="home-footer">
+        <p>© 2026 中国人民大学图灵数智概念验证平台 · 科研项目管理系统</p>
+      </footer>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
+import {
+  ArrowLeft,
+  ArrowRight,
+  DataAnalysis,
+  Document,
+  CircleCheck,
+  TrendCharts,
+  UserFilled,
+  Trophy,
+  Money,
+  Bell,
+  FolderOpened,
+  OfficeBuilding,
+  Picture,
+} from '@element-plus/icons-vue'
 
 const router = useRouter()
 
@@ -186,12 +273,39 @@ const stats = ref({
   totalBudget: '0',
 })
 
-// 公告数据
+// 公告数据（首页仅展示部分）
 const notices = ref<any[]>([])
-const statsRef = ref<HTMLElement | null>(null)
 
-const scrollToStats = () => {
-  statsRef.value?.scrollIntoView({ behavior: 'smooth' })
+/** 人大校徽（与构建工具路径解析一致） */
+const logoUrl = new URL('./picture/university-logo.png', import.meta.url).href
+
+const displayNotices = computed(() => notices.value.slice(0, 4))
+
+interface HomePartner {
+  id: string
+  name: string
+  logo?: string
+  url?: string
+}
+
+const partners = ref<HomePartner[]>([
+  { id: 'p1', name: '合作单位 1', logo: '', url: '' },
+  { id: 'p2', name: '合作单位 2', logo: '', url: '' },
+  { id: 'p3', name: '合作单位 3', logo: '', url: '' },
+  { id: 'p4', name: '合作单位 4', logo: '', url: '' },
+  { id: 'p5', name: '合作单位 5', logo: '', url: '' },
+  { id: 'p6', name: '合作单位 6', logo: '', url: '' },
+  { id: 'p7', name: '合作单位 7', logo: '', url: '' },
+  { id: 'p8', name: '合作单位 8', logo: '', url: '' },
+])
+
+/** 某合作方 Logo 加载失败时回退到占位 */
+const partnerImgFailed = reactive<Record<string, boolean>>({})
+
+const resolvePartnerAsset = (logo: string) => {
+  if (!logo) return ''
+  if (/^https?:\/\//i.test(logo)) return logo
+  return logo.startsWith('/') ? logo : `/${logo.replace(/^\//, '')}`
 }
 
 const categoryLabel = (cat: string) => {
@@ -216,30 +330,17 @@ const formatNoticeDate = (dateStr: string) => {
 
 const loadStats = async () => {
   try {
-    const [projectsRes, usersRes, achievementsRes] = await Promise.allSettled([
-      axios.get('http://localhost:3002/api/projects'),
-      axios.get('http://localhost:3002/api/users'),
-      axios.get('http://localhost:3002/api/achievements'),
-    ])
-
-    if (projectsRes.status === 'fulfilled' && projectsRes.value.data?.data) {
-      const projects = projectsRes.value.data.data
-      stats.value.totalProjects = projects.length
-      stats.value.approvedProjects = projects.filter((p: any) =>
-        ['approved', 'incubating', 'completed'].includes(p.status)
-      ).length
-      stats.value.incubatingProjects = projects.filter((p: any) => p.status === 'incubating').length
-      const total = projects.reduce((sum: number, p: any) => sum + (Number(p.approved_budget) || 0), 0)
-      stats.value.totalBudget = (total / 10000).toFixed(0)
-    }
-
-    if (usersRes.status === 'fulfilled' && usersRes.value.data?.data) {
-      const users = usersRes.value.data.data
-      stats.value.reviewerCount = users.filter((u: any) => u.role === 'reviewer').length
-    }
-
-    if (achievementsRes.status === 'fulfilled' && achievementsRes.value.data?.data) {
-      stats.value.achievementCount = achievementsRes.value.data.data.length
+    const res = await axios.get('http://localhost:3002/api/home/stats')
+    const payload = res.data
+    if (payload?.success && payload?.data) {
+      const d = payload.data
+      stats.value.totalProjects = Number(d.totalProjects) || 0
+      stats.value.approvedProjects = Number(d.approvedProjects) || 0
+      stats.value.incubatingProjects = Number(d.incubatingProjects) || 0
+      stats.value.reviewerCount = Number(d.reviewerCount) || 0
+      stats.value.achievementCount = Number(d.achievementCount) || 0
+      stats.value.totalBudget =
+        d.totalBudget != null && d.totalBudget !== '' ? String(d.totalBudget) : '0'
     }
   } catch (e) {
     // 静默失败，保持默认值
@@ -248,7 +349,7 @@ const loadStats = async () => {
 
 const loadNotices = async () => {
   try {
-    const res = await axios.get('http://localhost:3002/api/notices?status=published&limit=5')
+    const res = await axios.get('http://localhost:3002/api/notices?status=published&limit=6')
     if (res.data?.data) {
       notices.value = res.data.data
     }
@@ -368,6 +469,12 @@ const handleImageError = (e: Event) => {
     'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500"%3E%3Crect width="800" height="500" fill="%23333"/%3E%3Ctext x="400" y="250" text-anchor="middle" dy=".3em" fill="white" font-size="24"%3E概念验证平台%3C/text%3E%3C/svg%3E'
 }
 
+const handleLogoError = (e: Event) => {
+  const img = e.target as HTMLImageElement
+  img.src =
+    'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Ccircle cx="50" cy="50" r="48" fill="%23b31b1b"/%3E%3Ctext x="50" y="56" text-anchor="middle" fill="white" font-size="22" font-weight="bold"%3E人大%3C/text%3E%3C/svg%3E'
+}
+
 onMounted(() => {
   checkLoginStatus()
   startCarousel()
@@ -404,129 +511,446 @@ button {
   box-sizing: border-box;
 }
 
+/* 首页背景：酒红底；组件内强调色仍为人大红 */
 .home-container {
+  position: relative;
   width: 100%;
   min-height: 100vh;
-  overflow-y: auto;
-  background: #f5f7fa;
   scroll-behavior: smooth;
+  background-color: #722f37;
 }
 
-/* 内容区域 - 首屏占满全屏 */
-.content-wrapper {
-  display: flex;
-  width: 100%;
-  height: 100vh;
-}
-
-/* 左侧面板 */
-.left-panel {
-  width: 25%;
-  min-width: 220px;
-  height: 100%;
-  background: #b31b1b;
+/* 单页一体化容器 */
+.home-landing {
+  position: relative;
+  z-index: 1;
+  max-width: 1320px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: clamp(16px, 3vw, 28px);
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  gap: clamp(16px, 2.5vw, 24px);
+  box-sizing: border-box;
+}
+
+/* 顶栏 */
+.home-header {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  padding: 24px 20px;
-  position: relative;
-  gap: 0;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px 12px 18px;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 12px 40px rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-left: 4px solid #b31b1b;
 }
 
-/* 校徽：绝对定位在左侧面板内部左上角 */
-.top-logo {
-  position: absolute;
-  top: 24px;
-  left: 50%;
-  transform: translateX(-50%);
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
-.logo {
-  width: 80px;
-  height: 80px;
+.brand-logo-wrap {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #fafafa;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+}
+
+.brand-logo {
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 
-/* 右侧面板 */
-.right-panel {
-  flex: 1;
-  height: 100%;
-  background: #f5f5f5;
-  position: relative;
-  overflow: hidden;
+.brand-text {
+  min-width: 0;
 }
 
-.auth-buttons {
+.brand-title {
+  font-size: clamp(17px, 2vw, 20px);
+  font-weight: 700;
+  color: #1a1a1a;
+  margin: 0 0 2px;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+}
+
+.brand-sub {
+  margin: 0;
+  font-size: 13px;
+  color: #b31b1b;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.brand-en {
+  margin: 2px 0 0;
+  font-size: 10px;
+  color: #888;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.3;
+}
+
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.welcome-pill {
+  font-size: 13px;
+  color: #5c3d3d;
+  padding: 6px 12px;
+  background: #fff5f4;
+  border: 1px solid rgba(179, 27, 27, 0.14);
+  border-radius: 999px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-primary,
+.btn-ghost {
+  font-family: inherit;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  border: none;
+}
+
+.btn-primary {
+  background: #b31b1b;
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  background: #9e1818;
+  box-shadow: 0 4px 12px rgba(179, 27, 27, 0.28);
+}
+
+.btn-ghost {
+  background: #fff;
+  color: #b31b1b;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: none;
+}
+
+.btn-ghost:hover {
+  background: #fff8f8;
+  border-color: rgba(179, 27, 27, 0.35);
+}
+
+/* 第一行：左轮播 | 右栏整列公告（等高） */
+.home-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 400px);
+  grid-template-rows: 1fr;
+  gap: clamp(16px, 2vw, 24px);
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: min(52vh, 440px);
+  max-height: min(58vh, 540px);
+  min-width: 0;
+}
+
+.hero-visual {
+  border-radius: 0;
+  overflow: hidden;
+  background: #1a1a1a;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  min-height: 0;
+  height: 100%;
+  align-self: stretch;
+}
+
+.home-notice-aside {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 28px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  align-self: stretch;
+}
+
+/* 第二行：平台数据通栏 */
+.home-stats-band {
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.stats-band-card {
   width: 100%;
 }
 
-.welcome-text {
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 14px;
-  margin-bottom: 4px;
-  text-align: center;
+.stats-grid-band {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.auth-btn {
-  padding: 10px 24px;
-  font-size: 14px;
-  font-weight: bold;
-  border: 2px solid white;
-  border-radius: 40px;
-  cursor: pointer;
-  transition: all 0.3s;
+.stats-grid-band .stat-pill-wide {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .stats-grid-band {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .stats-grid-band {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.side-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 16px 18px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 32px rgba(0, 0, 0, 0.04);
+}
+
+.notice-card-block {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 区块标题：左色条 + 白底，偏编辑排版风格 */
+.side-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 14px 0;
+  padding: 0 0 12px 14px;
+  border-left: 3px solid #b31b1b;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: transparent;
+}
+
+.side-card-icon {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  width: 80%;
-}
-
-.login-btn {
-  background: white;
+  line-height: 1;
+  margin-top: 1px;
   color: #b31b1b;
 }
 
-.login-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+.side-card-icon :deep(.el-icon) {
+  color: #b31b1b;
 }
 
-.register-btn {
-  background: transparent;
-  color: white;
+.side-card-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f1f1f;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
 }
 
-.register-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
-  transform: translateY(-2px);
-}
-
-.btn-icon {
-  font-size: 16px;
-}
-
-.system-title {
-  text-align: center;
-  color: white;
-}
-
-.system-title h1 {
-  font-size: 24px;
-  margin-bottom: 8px;
-  font-weight: bold;
-}
-
-.system-title p {
+.side-card-desc {
+  margin: 4px 0 0;
   font-size: 12px;
-  opacity: 0.85;
-  letter-spacing: 1px;
+  color: #737373;
+  line-height: 1.4;
+}
+
+.stat-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #fafafa;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s,
+    background 0.2s;
+}
+
+.stat-pill:hover {
+  background: #fff;
+  border-color: rgba(179, 27, 27, 0.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.stat-pill-wide {
+  grid-column: 1 / -1;
+}
+
+.stat-pill-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(179, 27, 27, 0.06);
+  color: #b31b1b;
+}
+
+.stat-pill-icon :deep(.el-icon) {
+  color: #b31b1b;
+}
+
+.stat-pill-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.stat-pill-num {
+  font-size: 19px;
+  font-weight: 700;
+  color: #b31b1b;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-pill-label {
+  font-size: 11px;
+  color: #737373;
+  margin-top: 2px;
+}
+
+.notice-compact-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.notice-compact-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: start;
+  padding: 10px 12px;
+  background: #fafafa;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.notice-compact-item:hover {
+  background: #fff;
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.notice-compact-main {
+  min-width: 0;
+}
+
+.notice-compact-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.notice-compact-tag.notice {
+  background: rgba(179, 27, 27, 0.1);
+  color: #b31b1b;
+}
+.notice-compact-tag.news {
+  background: #f6ffed;
+  color: #389e0d;
+}
+.notice-compact-tag.result {
+  background: #fff7e6;
+  color: #d46b08;
+}
+.notice-compact-tag.recruitment {
+  background: #fff0f6;
+  color: #c41d7f;
+}
+.notice-compact-tag.other {
+  background: #f5f5f5;
+  color: #666;
+}
+
+.notice-compact-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2c3e50;
+  line-height: 1.35;
+}
+
+.notice-compact-abs {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #888;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.notice-compact-date {
+  font-size: 10px;
+  color: #bbb;
+  white-space: nowrap;
+  padding-top: 2px;
+}
+
+.notice-compact-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px 12px;
+  color: #bbb;
+  font-size: 13px;
+  min-height: 0;
+}
+
+.empty-ico-el {
+  display: block;
+  margin: 0 auto 10px;
+  color: #d0d0d0;
 }
 
 /* 轮播图容器 */
@@ -560,6 +984,9 @@ button {
   object-fit: cover;
   object-position: center;
   display: block;
+  box-sizing: border-box;
+  border: 4px solid #fff;
+  border-radius: 0;
 }
 
 /* 图片上的文字标题 */
@@ -568,7 +995,7 @@ button {
   bottom: 0;
   left: 0;
   right: 0;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+  background: rgba(0, 0, 0, 0.55);
   color: white;
   padding: 40px 30px 25px;
   text-align: center;
@@ -608,9 +1035,10 @@ button {
 }
 
 .dot.active {
-  width: 20px;
+  width: 22px;
   border-radius: 4px;
-  background: white;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(179, 27, 27, 0.45);
 }
 
 /* 轮播控制按钮 */
@@ -637,6 +1065,10 @@ button {
   background: rgba(0, 0, 0, 0.6);
 }
 
+.carousel-btn :deep(.el-icon) {
+  color: #fff;
+}
+
 .prev {
   left: 15px;
 }
@@ -645,347 +1077,307 @@ button {
   right: 15px;
 }
 
-/* 响应式 - 平板 */
-@media (max-width: 1024px) {
-  .logo {
-    width: 100px;
-    height: 100px;
-  }
-}
-
-@media (max-width: 768px) {
-  .content-wrapper {
-    flex-direction: column;
-  }
-
-  .left-panel {
-    width: 100%;
-    height: 40%;
-    padding: 20px;
-  }
-
-  .right-panel {
-    width: 100%;
-    height: 60%;
-  }
-
-  .top-logo {
-    top: 12px;
-    left: 50%;
-    transform: translateX(-50%);
-  }
-
-  .logo {
-    width: 60px;
-    height: 60px;
-  }
-
-  .auth-btn {
-    padding: 8px 20px;
-    font-size: 14px;
-  }
-
-  .system-title h1 {
-    font-size: 18px;
-  }
-
-  .system-title p {
-    font-size: 10px;
-  }
-
-  .carousel-caption {
-    padding: 20px 15px 15px;
-  }
-
-  .carousel-caption h3 {
-    font-size: 16px;
-  }
-
-  .carousel-caption p {
-    font-size: 10px;
-  }
-
-  .carousel-btn {
-    width: 28px;
-    height: 28px;
-    font-size: 14px;
-  }
-}
-
-/* 响应式 - 手机 */
-@media (max-width: 480px) {
-  .left-panel {
-    height: 35%;
-  }
-
-  .right-panel {
-    height: 65%;
-  }
-
-  .logo {
-    width: 50px;
-    height: 50px;
-  }
-
-  .auth-buttons {
-    gap: 15px;
-    margin-bottom: 20px;
-  }
-
-  .auth-btn {
-    padding: 6px 16px;
-    font-size: 12px;
-  }
-
-  .system-title h1 {
-    font-size: 16px;
-  }
-
-  .carousel-caption {
-    padding: 15px 12px 12px;
-  }
-
-  .carousel-caption h3 {
-    font-size: 14px;
-    margin-bottom: 4px;
-  }
-
-  .carousel-caption p {
-    font-size: 9px;
-  }
-}
-
-/* ===== 首屏区块 ===== */
-.hero-section {
-  position: relative;
+/* ===== 合作单位 ===== */
+.partners-section {
   width: 100%;
-  height: 100vh;
-  background: #b31b1b;
   flex-shrink: 0;
 }
 
-/* ===== 向下滚动提示 ===== */
-.scroll-hint {
-  position: absolute;
-  bottom: 28px;
-  left: 50%;
-  transform: translateX(-50%);
+.partners-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 18px 20px 20px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 32px rgba(0, 0, 0, 0.04);
+}
+
+.partners-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 16px 0;
+  padding: 0 0 12px 14px;
+  border-left: 3px solid #b31b1b;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: transparent;
+}
+
+.partners-head-icon {
+  flex-shrink: 0;
+  display: flex;
+  color: #b31b1b;
+  margin-top: 1px;
+}
+
+.partners-head-icon :deep(.el-icon) {
+  color: #b31b1b;
+}
+
+.partners-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1f1f1f;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+}
+
+.partners-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #737373;
+  line-height: 1.4;
+}
+
+.partners-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 14px;
+}
+
+.partner-item {
+  margin: 0;
+}
+
+.partner-cell {
+  display: block;
+  height: 100%;
+  min-height: 96px;
+  border-radius: 10px;
+  border: 1px dashed rgba(0, 0, 0, 0.1);
+  background: #fafafa;
+  transition:
+    border-color 0.2s,
+    background 0.2s,
+    box-shadow 0.2s;
+}
+
+.partner-cell.is-link {
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+}
+
+.partner-cell.is-link:hover {
+  border-color: rgba(179, 27, 27, 0.35);
+  border-style: solid;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.partner-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  padding: 12px 10px;
+  box-sizing: border-box;
+}
+
+.partner-logo {
+  max-width: 100%;
+  max-height: 52px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  vertical-align: middle;
+}
+
+.partner-placeholder {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  color: rgba(255, 255, 255, 0.75);
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  padding: 8px 4px;
+}
+
+.partner-ph-icon {
+  color: rgba(179, 27, 27, 0.22);
+}
+
+.partner-name {
   font-size: 12px;
-  cursor: pointer;
-  z-index: 20;
-  transition: color 0.2s;
-  /* 首屏内定位需要 home-container relative */
+  color: #737373;
+  line-height: 1.35;
 }
 
-.scroll-hint:hover {
-  color: white;
-}
-
-.scroll-arrow {
-  font-size: 16px;
-  animation: bounce 1.5s infinite;
-}
-
-@keyframes bounce {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(6px); }
-}
-
-/* ===== 数据统计区 ===== */
-.stats-section {
-  background: white;
-  padding: 64px 80px;
-}
-
-.section-header {
-  text-align: center;
-  margin-bottom: 48px;
-}
-
-.section-header h2 {
-  font-size: 28px;
-  color: #2c3e50;
-  margin-bottom: 8px;
-  font-weight: 700;
-}
-
-.section-header p {
-  color: #888;
-  font-size: 14px;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
-  max-width: 900px;
-  margin: 0 auto;
-}
-
-.stat-card {
-  background: #f9fafb;
-  border: 1px solid #eef0f3;
-  border-radius: 16px;
-  padding: 32px 20px;
-  text-align: center;
-  transition: all 0.3s;
-}
-
-.stat-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(179, 27, 27, 0.1);
-  border-color: #b31b1b;
-}
-
-.stat-icon {
-  font-size: 36px;
-  margin-bottom: 12px;
-}
-
-.stat-number {
-  font-size: 36px;
-  font-weight: 800;
-  color: #b31b1b;
-  line-height: 1;
-  margin-bottom: 8px;
-}
-
-.stat-label {
-  font-size: 13px;
-  color: #888;
-}
-
-/* ===== 公告区 ===== */
-.notice-section {
-  background: #f5f7fa;
-  padding: 64px 80px;
-}
-
-.notice-container {
-  max-width: 900px;
-  margin: 0 auto;
-}
-
-.notice-header {
-  text-align: center;
-  margin-bottom: 40px;
-}
-
-.notice-header h2 {
-  font-size: 28px;
-  color: #2c3e50;
-  margin-bottom: 8px;
-  font-weight: 700;
-}
-
-.notice-header p {
-  color: #888;
-  font-size: 14px;
-}
-
-.notice-list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.notice-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  background: white;
-  border-radius: 12px;
-  padding: 20px 24px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-  transition: all 0.2s;
-}
-
-.notice-item:hover {
-  box-shadow: 0 4px 16px rgba(179, 27, 27, 0.12);
-  transform: translateX(4px);
-}
-
-.notice-tag {
-  flex-shrink: 0;
-  padding: 3px 10px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 600;
-  margin-top: 2px;
-}
-
-.notice-tag.notice { background: rgba(179, 27, 27, 0.06); color: #b31b1b; }
-.notice-tag.news    { background: #f6ffed; color: #52c41a; }
-.notice-tag.result  { background: #fff7e6; color: #fa8c16; }
-.notice-tag.recruitment { background: #fff0f6; color: #eb2f96; }
-.notice-tag.other   { background: #f5f5f5; color: #888; }
-
-.notice-content {
-  flex: 1;
-}
-
-.notice-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #2c3e50;
-  margin-bottom: 4px;
-}
-
-.notice-abstract {
-  font-size: 13px;
-  color: #888;
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.notice-date {
-  flex-shrink: 0;
-  font-size: 12px;
-  color: #bbb;
-  margin-top: 2px;
-}
-
-.notice-empty {
-  text-align: center;
-  padding: 48px;
-  color: #bbb;
-}
-
-.notice-empty .empty-icon {
-  font-size: 48px;
-  margin-bottom: 12px;
-}
-
-/* ===== 页脚 ===== */
+/* 页脚：深色底 + 顶侧人大红线，克制不抢眼 */
 .home-footer {
-  background: #2c3e50;
-  color: rgba(255,255,255,0.5);
+  flex-shrink: 0;
+  margin-top: auto;
+  padding: 12px 16px;
   text-align: center;
-  padding: 24px;
-  font-size: 13px;
+  font-size: 12px;
+  background: #2c2c2c;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 3px solid #b31b1b;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.home-footer p {
+  margin: 0;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.72);
+  letter-spacing: 0.03em;
+}
+
+/* 中宽屏：右栏变窄 */
+@media (max-width: 1180px) {
+  .home-body {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  }
+}
+
+/* 平板：上下堆叠（取消单行等高限制，避免两栏合一列时行高计算异常） */
+@media (max-width: 1024px) {
+  .home-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    max-height: none;
+    min-height: 0;
+  }
+
+  .hero-visual {
+    height: auto;
+    max-height: 46vh;
+    min-height: 260px;
+  }
+
+  .home-notice-aside {
+    height: auto;
+  }
+
+  .notice-compact-list {
+    max-height: min(42vh, 380px);
+  }
 }
 
 @media (max-width: 768px) {
-  .stats-section,
-  .notice-section {
-    padding: 40px 20px;
+  .home-header {
+    padding: 9px 12px 9px 11px;
+    border-radius: 12px;
   }
 
-  .stats-grid {
-    grid-template-columns: repeat(2, 1fr);
+  .brand-logo-wrap {
+    width: 48px;
+    height: 48px;
   }
 
-  .notice-item {
-    flex-direction: column;
-    gap: 8px;
+  .brand-title {
+    font-size: 17px;
+  }
+
+  .brand-sub {
+    font-size: 13px;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .btn-primary,
+  .btn-ghost {
+    padding: 8px 16px;
+    font-size: 13px;
+  }
+
+  .carousel-caption {
+    padding: 18px 14px 14px;
+  }
+
+  .carousel-caption h3 {
+    font-size: 17px;
+  }
+
+  .carousel-caption p {
+    font-size: 12px;
+  }
+
+  .carousel-btn {
+    width: 30px;
+    height: 30px;
+    font-size: 15px;
+  }
+
+  .side-card {
+    padding: 14px 14px;
+  }
+
+  .side-card-head {
+    margin: 0 0 12px 0;
+    padding: 0 0 10px 12px;
+  }
+
+  .stat-pill-num {
+    font-size: 18px;
+  }
+}
+
+@media (max-width: 480px) {
+  .home-landing {
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .brand {
+    flex-wrap: wrap;
+  }
+
+  .hero-visual {
+    min-height: 200px;
+    max-height: 38vh;
+    border-radius: 0;
+  }
+
+  .stats-grid-band {
+    grid-template-columns: 1fr;
+  }
+
+  .notice-compact-item {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .notice-compact-date {
+    justify-self: start;
+  }
+
+  .carousel-caption h3 {
+    font-size: 15px;
+  }
+
+  .carousel-caption p {
+    font-size: 11px;
+  }
+
+  .partners-card {
+    padding: 16px 14px;
+  }
+
+  .partners-head {
+    margin: 0 0 14px 0;
+    padding: 0 0 10px 12px;
+  }
+
+  .partners-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .partner-cell {
+    min-height: 88px;
+  }
+
+  .partner-inner {
+    min-height: 88px;
+    padding: 10px 8px;
   }
 }
 </style>
