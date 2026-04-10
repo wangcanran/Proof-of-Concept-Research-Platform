@@ -37,3 +37,14 @@ __screenshots__/
 
 test-results/
 playwright-report/
+
+# Accidental emitted JS alongside TS/Vue (misconfigured compile); do not commit
+**/*.vue.js
+src/main.js
+src/router/copy.js
+src/stores/counter.js
+src/stores/user.js
+src/types/api.js
+src/types/statistics.js
+src/types/user.js
+src/utils/numberUtils.js

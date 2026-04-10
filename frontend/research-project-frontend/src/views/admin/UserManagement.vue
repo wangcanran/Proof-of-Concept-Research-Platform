@@ -1699,9 +1699,7 @@ watch(() => resetPasswordDialog.form.newPassword, checkPasswordStrength)
 
 <style scoped>
 .user-management {
-  padding: 20px;
-  background: #f5f7fa;
-  min-height: calc(100vh - 70px);
+  min-height: 0;
 }
 
 /* 页面标题栏 */

@@ -1,16 +1,9 @@
 {
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
-  },
-  "include": [
-    "src/**/*.ts",
-    "src/**/*.d.ts",
-    "src/**/*.tsx",
-    "src/**/*.vue",
-    "src/views/AchievementManagement/AchievementManagement.vue",
-    "src/api/funding.js"
+  "extends": "./tsconfig.app.json",
+  "exclude": [
+    "src/**/__tests__/*",
+    "src/router/copy.ts",
+    "src/views/admin/copy.vue",
+    "src/views/admin/1.vue"
   ]
 }

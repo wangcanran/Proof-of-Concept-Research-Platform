@@ -658,8 +658,8 @@ onMounted(() => {
 
 <style scoped lang="scss">
 .user-detail {
-  padding: 20px;
-  min-height: 100vh;
+  padding: 0;
+  min-height: 0;
 
   .detail-card {
     margin-top: 20px;

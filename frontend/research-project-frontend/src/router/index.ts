@@ -455,161 +455,140 @@ const routes: Array<RouteRecordRaw> = [
     },
   },
 
-  // ============ 管理员专属路由 ============
+  // ============ 管理员专属路由（与其它角色一致：左侧栏 + 顶栏 + 子路由） ============
   {
-    path: '/admin/dashboard',
-    name: 'AdminDashboard',
-    component: () => import('@/views/admin/AdminDashboard.vue'),
-    meta: {
-      title: '系统管理员工作台',
-      requiresAuth: true,
-      role: 'admin', // 注意：这里应该小写，与数据库一致
-      permissions: ['view_admin_dashboard'],
-    },
-  },
-  {
-    path: '/admin/users',
-    name: 'UserManagement',
-    component: () => import('@/views/admin/UserManagement.vue'),
-    meta: {
-      title: '用户管理',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['manage_users'],
-    },
-  },
-  {
-    path: '/admin/users/create',
-    name: 'CreateUser',
-    component: () => import('@/views/admin/UserManagement.vue'),
-    meta: {
-      title: '创建用户',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['create_user'],
-    },
-  },
-  {
-    path: '/admin/users/:id',
-    name: 'UserDetail',
-    component: () => import('@/views/admin/UserDetail.vue'),
-    meta: {
-      title: '用户详情',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['view_user_detail'],
-    },
-  },
-  {
-    path: '/admin/users/:id/edit',
-    name: 'EditUser',
-    component: () => import('@/views/admin/UserManagement.vue'),
-    meta: {
-      title: '编辑用户',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['edit_user'],
-    },
-  },
-  // 添加新的管理员页面路由
-  {
-    path: '/admin/roles',
-    name: 'RoleManagement',
-    component: () => import('@/views/admin/RoleManagement.vue'),
-    meta: {
-      title: '角色权限管理',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['manage_roles'],
-    },
-  },
-  {
-    path: '/admin/departments',
-    name: 'DepartmentManagement',
-    component: () => import('@/views/admin/DepartmentManagement.vue'),
-    meta: {
-      title: '部门管理',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['manage_departments'],
-    },
-  },
-  {
-    path: '/admin/system',
-    name: 'SystemSettings',
-    component: () => import('@/views/admin/SystemSettings.vue'),
-    meta: {
-      title: '系统设置',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['manage_system'],
-    },
-  },
-  {
-    path: '/admin/backup',
-    name: 'BackupManagement',
-    component: () => import('@/views/admin/BackupManagement.vue'),
-    meta: {
-      title: '数据备份',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['manage_backup'],
-    },
-  },
-  {
-    path: '/admin/logs',
-    name: 'SystemLogs',
-    component: () => import('@/views/admin/SystemLogs.vue'),
-    meta: {
-      title: '系统日志',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['view_system_logs'],
-    },
-  },
-  {
-    path: '/admin/statistics',
-    name: 'SystemStatistics',
-    component: () => import('@/views/admin/SystemStatistics.vue'),
-    meta: {
-      title: '统计分析',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['view_statistics'],
-    },
-  },
-  {
-    path: '/admin/reports',
-    name: 'ReportManagement',
-    component: () => import('@/views/admin/ReportManagement.vue'),
-    meta: {
-      title: '报表管理',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['manage_reports'],
-    },
-  },
-  {
-    path: '/admin/monitor',
-    name: 'SystemMonitor',
-    component: () => import('@/views/admin/SystemMonitor.vue'),
-    meta: {
-      title: '系统监控',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['view_system_monitor'],
-    },
-  },
-  {
-    path: '/admin/performance',
-    name: 'PerformanceAnalysis',
-    component: () => import('@/views/admin/PerformanceAnalysis.vue'),
-    meta: {
-      title: '性能分析',
-      requiresAuth: true,
-      role: 'admin',
-      permissions: ['view_performance'],
-    },
+    path: '/admin',
+    component: () => import('@/views/admin/AdminLayout.vue'),
+    meta: { requiresAuth: true, role: 'admin' },
+    redirect: '/admin/dashboard',
+    children: [
+      {
+        path: 'dashboard',
+        name: 'AdminDashboard',
+        component: () => import('@/views/admin/AdminDashboard.vue'),
+        meta: {
+          title: '系统管理员工作台',
+          permissions: ['view_admin_dashboard'],
+        },
+      },
+      {
+        path: 'users',
+        name: 'UserManagement',
+        component: () => import('@/views/admin/UserManagement.vue'),
+        meta: {
+          title: '用户管理',
+          permissions: ['manage_users'],
+        },
+      },
+      {
+        path: 'users/create',
+        name: 'CreateUser',
+        component: () => import('@/views/admin/UserManagement.vue'),
+        meta: {
+          title: '创建用户',
+          permissions: ['create_user'],
+        },
+      },
+      {
+        path: 'users/:id',
+        name: 'UserDetail',
+        component: () => import('@/views/admin/UserDetail.vue'),
+        meta: {
+          title: '用户详情',
+          permissions: ['view_user_detail'],
+        },
+      },
+      {
+        path: 'users/:id/edit',
+        name: 'EditUser',
+        component: () => import('@/views/admin/UserManagement.vue'),
+        meta: {
+          title: '编辑用户',
+          permissions: ['edit_user'],
+        },
+      },
+      {
+        path: 'roles',
+        name: 'RoleManagement',
+        component: () => import('@/views/admin/RoleManagement.vue'),
+        meta: {
+          title: '角色权限管理',
+          permissions: ['manage_roles'],
+        },
+      },
+      {
+        path: 'departments',
+        name: 'DepartmentManagement',
+        component: () => import('@/views/admin/DepartmentManagement.vue'),
+        meta: {
+          title: '部门管理',
+          permissions: ['manage_departments'],
+        },
+      },
+      {
+        path: 'system',
+        name: 'SystemSettings',
+        component: () => import('@/views/admin/SystemSettings.vue'),
+        meta: {
+          title: '系统设置',
+          permissions: ['manage_system'],
+        },
+      },
+      {
+        path: 'backup',
+        name: 'BackupManagement',
+        component: () => import('@/views/admin/BackupManagement.vue'),
+        meta: {
+          title: '数据备份',
+          permissions: ['manage_backup'],
+        },
+      },
+      {
+        path: 'logs',
+        name: 'SystemLogs',
+        component: () => import('@/views/admin/SystemLogs.vue'),
+        meta: {
+          title: '系统日志',
+          permissions: ['view_system_logs'],
+        },
+      },
+      {
+        path: 'statistics',
+        name: 'SystemStatistics',
+        component: () => import('@/views/admin/SystemStatistics.vue'),
+        meta: {
+          title: '统计分析',
+          permissions: ['view_statistics'],
+        },
+      },
+      {
+        path: 'reports',
+        name: 'ReportManagement',
+        component: () => import('@/views/admin/ReportManagement.vue'),
+        meta: {
+          title: '报表管理',
+          permissions: ['manage_reports'],
+        },
+      },
+      {
+        path: 'monitor',
+        name: 'SystemMonitor',
+        component: () => import('@/views/admin/SystemMonitor.vue'),
+        meta: {
+          title: '系统监控',
+          permissions: ['view_system_monitor'],
+        },
+      },
+      {
+        path: 'performance',
+        name: 'PerformanceAnalysis',
+        component: () => import('@/views/admin/PerformanceAnalysis.vue'),
+        meta: {
+          title: '性能分析',
+          permissions: ['view_performance'],
+        },
+      },
+    ],
   },
 
   // ============ 经费管理模块 ============
@@ -650,7 +629,10 @@ const routes: Array<RouteRecordRaw> = [
         path: 'applications',
         name: 'FundingApplications',
         component: () => import('../views/funds/FundingApplications.vue'),
-        meta: { permissions: ['manage_funding_applications'] },
+        meta: {
+          title: '经费申请',
+          permissions: ['manage_funding_applications'],
+        },
       },
       {
         path: 'applications/create',
@@ -683,6 +665,7 @@ const routes: Array<RouteRecordRaw> = [
     name: 'ReceiptManagement',
     component: () => import('../views/applicant/ReceiptManagement.vue'),
     meta: {
+      title: '收据与凭证管理',
       requiresAuth: true,
       role: 'APPLICANT',
       permissions: ['manage_receipts'],
@@ -778,13 +761,21 @@ router.beforeEach(async (to, from, next) => {
   console.log(`localStorage userRole: ${localStorage.getItem('userRole')}`)
   console.log(`localStorage token: ${localStorage.getItem('token') ? '存在' : '不存在'}`)
 
+  /** 子路由会丢失父级 meta，合并整条 matched 链上的 requiresAuth / role */
+  const mergedMeta: Record<string, unknown> = { ...to.meta }
+  for (const m of to.matched) {
+    if (m.meta.requiresAuth) mergedMeta.requiresAuth = true
+    if (m.meta.role !== undefined && m.meta.role !== null) mergedMeta.role = m.meta.role
+  }
+  const toForGuard = { ...to, meta: mergedMeta as typeof to.meta }
+
   // 1. 设置页面标题
   if (to.meta?.title) {
     document.title = `${to.meta.title} - 科研项目管理系统`
   }
 
   // 2. 检查是否需要认证
-  if (to.meta?.requiresAuth) {
+  if (mergedMeta.requiresAuth) {
     console.log(`页面需要认证: ${to.path}`)
 
     // 检查是否有token（更可靠的方式）
@@ -828,12 +819,12 @@ router.beforeEach(async (to, from, next) => {
   }
 
   // 4. 检查角色权限
-  if (to.meta?.role) {
+  if (mergedMeta.role) {
     const userRole = localStorage.getItem('userRole') || authStore.userRole || ''
-    const hasRole = checkRolePermission(to, userRole)
+    const hasRole = checkRolePermission(toForGuard, userRole)
 
     console.log(
-      `检查角色权限: 需要 ${to.meta.role}, 用户有 ${userRole}, 结果: ${hasRole ? '通过' : '拒绝'}`,
+      `检查角色权限: 需要 ${mergedMeta.role}, 用户有 ${userRole}, 结果: ${hasRole ? '通过' : '拒绝'}`,
     )
 
     if (!hasRole) {

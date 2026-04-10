@@ -1,125 +1,6 @@
 <!-- src/views/admin/AdminDashboard.vue -->
 <template>
-  <div class="admin-dashboard">
-    <!-- 顶部导航栏 -->
-    <header class="dashboard-header">
-      <div class="header-left">
-        <div class="mobile-menu-btn" @click="toggleMobileMenu">
-          <span class="icon">☰</span>
-        </div>
-        <h1 class="logo">科研项目管理系统</h1>
-        <div class="breadcrumb">
-          <span class="current-page">系统管理员工作台</span>
-        </div>
-      </div>
-      <div class="header-right">
-        <div class="user-menu">
-          <div class="header-actions">
-            <button class="icon-btn" @click="refreshData" title="刷新">
-              <span class="icon">🔄</span>
-            </button>
-            <button class="icon-btn" @click="toggleTheme" title="切换主题">
-              <span class="icon">{{ isDarkMode ? '☀️' : '🌙' }}</span>
-            </button>
-            <div class="notifications-dropdown">
-              <button class="icon-btn notification-btn" @click="toggleNotifications" title="通知">
-                <span class="icon">🔔</span>
-                <span v-if="unreadCount > 0" class="notification-count">{{ unreadCount }}</span>
-              </button>
-              <div v-if="showNotificationsDropdown" class="notifications-dropdown-content">
-                <div class="notifications-dropdown-header">
-                  <h4>系统通知</h4>
-                  <button @click="markAllAsRead" v-if="unreadCount > 0">标记已读</button>
-                </div>
-                <div class="notifications-dropdown-list">
-                  <div
-                    v-for="notification in recentNotifications"
-                    :key="notification.id"
-                    class="notification-dropdown-item"
-                    @click="openNotification(notification)"
-                  >
-                    <div class="notification-dropdown-icon">{{ notification.icon }}</div>
-                    <div class="notification-dropdown-content">
-                      <div class="notification-dropdown-title">{{ notification.title }}</div>
-                      <div class="notification-dropdown-time">{{ notification.time }}</div>
-                    </div>
-                    <span class="unread-dot-small" v-if="!notification.read"></span>
-                  </div>
-                  <div v-if="recentNotifications.length === 0" class="no-notifications">
-                    暂无通知
-                  </div>
-                </div>
-                <div class="notifications-dropdown-footer">
-                  <router-link to="/notifications" @click="showNotificationsDropdown = false">
-                    查看全部
-                  </router-link>
-                </div>
-              </div>
-            </div>
-            <div class="user-info-mini">
-              <div class="user-avatar-mini">{{ userInitial }}</div>
-              <div class="user-details">
-                <div class="user-name-mini">{{ userName }}</div>
-                <div class="user-role-mini">系统管理员</div>
-              </div>
-            </div>
-            <button class="logout-btn" @click="handleLogout">
-              <span class="icon">🚪</span>
-              退出
-            </button>
-          </div>
-        </div>
-      </div>
-    </header>
-
-    <div class="dashboard-content">
-      <!-- 侧边栏导航 -->
-      <aside class="sidebar" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
-        <div class="sidebar-header">
-          <h3 v-if="!sidebarCollapsed" class="sidebar-title">系统管理</h3>
-          <button class="sidebar-toggle" @click="toggleSidebar">
-            {{ sidebarCollapsed ? '→' : '←' }}
-          </button>
-        </div>
-
-        <nav class="sidebar-nav">
-          <div class="nav-section">
-            <h4 v-if="!sidebarCollapsed" class="nav-section-title">控制面板</h4>
-            <router-link to="/admin/dashboard" class="nav-link" active-class="active">
-              <span class="nav-icon">🏠</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">仪表板</span>
-            </router-link>
-          </div>
-
-          <div class="nav-section">
-            <h4 v-if="!sidebarCollapsed" class="nav-section-title">用户管理</h4>
-            <router-link to="/admin/users" class="nav-link" active-class="active">
-              <span class="nav-icon">👥</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">用户管理</span>
-              <span v-if="!sidebarCollapsed && pendingStats.userApprovals > 0" class="nav-badge">
-                {{ pendingStats.userApprovals }}
-              </span>
-            </router-link>
-            <router-link to="/admin/roles" class="nav-link" active-class="active">
-              <span class="nav-icon">🔑</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">角色权限</span>
-            </router-link>
-          </div>
-        </nav>
-
-        <div class="sidebar-footer">
-          <div class="user-info-mini">
-            <div class="user-avatar-mini">{{ userInitial }}</div>
-            <div v-if="!sidebarCollapsed" class="user-details">
-              <div class="user-name-mini">{{ userName }}</div>
-              <div class="user-role-mini">系统管理员</div>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      <!-- 主内容区域 -->
-      <main class="main-content" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+  <div class="admin-dashboard-inner assistant-ruc-theme">
         <!-- 欢迎区域 -->
         <div class="welcome-section">
           <div class="welcome-card admin-banner">
@@ -470,16 +351,11 @@
             </div>
           </div>
         </div>
-      </main>
-    </div>
-
-    <!-- 移动端菜单遮罩 -->
-    <div v-if="showMobileMenu" class="mobile-menu-overlay" @click="toggleMobileMenu"></div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/utils/request'
@@ -488,10 +364,6 @@ const router = useRouter()
 
 // 响应式数据
 const loading = ref(false)
-const isDarkMode = ref(false)
-const sidebarCollapsed = ref(false)
-const showMobileMenu = ref(false)
-const showNotificationsDropdown = ref(false)
 const userName = ref('')
 const unreadCount = ref(0)
 const selectedPeriod = ref('week')
@@ -530,10 +402,6 @@ const roleDistribution = ref<any[]>([])
 const systemLogs = ref<any[]>([])
 const notifications = ref<any[]>([])
 
-const pendingStats = computed(() => ({
-  userApprovals: pendingUsers.value.length,
-}))
-
 const timePeriods = [
   { label: '周', value: 'week' },
   { label: '月', value: 'month' },
@@ -541,10 +409,6 @@ const timePeriods = [
 ]
 
 // 计算属性
-const userInitial = computed(() => {
-  return userName.value ? userName.value.charAt(0).toUpperCase() : 'A'
-})
-
 const currentDate = computed(() => {
   const now = new Date()
   const year = now.getFullYear()
@@ -553,10 +417,6 @@ const currentDate = computed(() => {
   const weekdays = ['日', '一', '二', '三', '四', '五', '六']
   const weekday = weekdays[now.getDay()]
   return `${year}年${month}月${day}日 星期${weekday}`
-})
-
-const recentNotifications = computed(() => {
-  return notifications.value.slice(0, 3)
 })
 
 // 工具函数
@@ -711,19 +571,6 @@ const changePeriod = (period: string) => {
   loadUserGrowthData(period)
 }
 
-// UI控制
-const toggleSidebar = () => {
-  sidebarCollapsed.value = !sidebarCollapsed.value
-}
-
-const toggleMobileMenu = () => {
-  showMobileMenu.value = !showMobileMenu.value
-}
-
-const toggleNotifications = () => {
-  showNotificationsDropdown.value = !showNotificationsDropdown.value
-}
-
 const openNotification = async (notification: any) => {
   try {
     if (!notification.read) {
@@ -735,8 +582,6 @@ const openNotification = async (notification: any) => {
     if (notification.link) {
       router.push(notification.link)
     }
-
-    showNotificationsDropdown.value = false
   } catch (error) {
     console.error('打开通知失败:', error)
   }
@@ -758,20 +603,6 @@ const markAllAsRead = async () => {
 
 const refreshData = () => {
   loadDashboardData()
-}
-
-const toggleTheme = () => {
-  isDarkMode.value = !isDarkMode.value
-  document.documentElement.setAttribute('data-theme', isDarkMode.value ? 'dark' : 'light')
-  ElMessage.info(isDarkMode.value ? '已切换到深色模式' : '已切换到浅色模式')
-}
-
-const handleLogout = () => {
-  if (confirm('确定要退出登录吗？')) {
-    localStorage.clear()
-    sessionStorage.clear()
-    router.push('/login')
-  }
 }
 
 const clearSystemCache = async () => {
@@ -1117,13 +948,12 @@ const showMockData = () => {
   unreadCount.value = notifications.value.filter((n) => !n.read).length
 }
 
-// 组件生命周期
+let dashboardRefreshTimer: ReturnType<typeof setInterval> | null = null
+
 onMounted(() => {
   console.log('=== 初始化系统管理仪表板页面 ===')
 
-  // 先加载用户信息
   loadUserInfo().then(() => {
-    // 检查角色是否匹配
     const userRole = localStorage.getItem('userRole')
     if (userRole?.toLowerCase() !== 'admin') {
       console.warn(`⚠️ 警告：当前用户角色 "${userRole}" 不匹配管理员角色`)
@@ -1139,40 +969,30 @@ onMounted(() => {
         router.push(targetPath)
       }, 2000)
     } else {
-      // 然后加载仪表板数据
       loadDashboardData()
     }
   })
 
-  // 设置定时刷新
-  const refreshInterval = setInterval(() => {
+  dashboardRefreshTimer = setInterval(() => {
     if (document.visibilityState === 'visible') {
       refreshData()
     }
-  }, 300000) // 5分钟刷新一次
+  }, 300000)
+})
 
-  // 清理定时器
-  onUnmounted(() => {
-    clearInterval(refreshInterval)
-  })
-
-  // 点击外部关闭通知下拉
-  document.addEventListener('click', (e) => {
-    if (showNotificationsDropdown.value && !e.target.closest('.notifications-dropdown')) {
-      showNotificationsDropdown.value = false
-    }
-  })
+onUnmounted(() => {
+  if (dashboardRefreshTimer) {
+    clearInterval(dashboardRefreshTimer)
+    dashboardRefreshTimer = null
+  }
 })
 </script>
 
 <style scoped>
-.admin-dashboard {
-  min-height: 100vh;
-  background: #f5f7fa;
+.admin-dashboard-inner {
+  min-height: 0;
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  display: flex;
-  flex-direction: column;
 }
 
 /* 顶部导航栏 - 管理员主题色 */

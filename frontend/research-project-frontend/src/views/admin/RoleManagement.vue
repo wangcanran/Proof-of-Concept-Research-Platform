@@ -970,9 +970,7 @@ onMounted(() => {
 
 <style scoped>
 .role-management {
-  padding: 24px;
-  min-height: 100vh;
-  background: #f5f7fa;
+  min-height: 0;
 }
 
 /* 页面标题 */

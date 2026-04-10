@@ -97,7 +97,7 @@
             </div>
 
             <div class="info-item">
-              <label>??????/label>
+              <label>??????</label>
               <span class="research-field">{{ project.research_field }}</span>
             </div>
 
@@ -107,17 +107,17 @@
             </div>
 
             <div class="info-item">
-              <label>??????/label>
+              <label>??????</label>
               <span>{{ project.duration_months }}??</span>
             </div>
 
             <div class="info-item">
-              <label>??????/label>
+              <label>??????</label>
               <span>{{ formatDate(project.submit_date) }}</span>
             </div>
 
             <div class="info-item">
-              <label>??????/label>
+              <label>??????</label>
               <span :class="getDeadlineClass(project.review_deadline)">
                 {{ formatDate(project.review_deadline) }}
               </span>
@@ -125,7 +125,7 @@
 
             <div class="info-item">
               <label>????</label>
-              <span class="keywords">{{ project.keywords || '???? }}</span>
+              <span class="keywords">{{ project.keywords || '暂无关键词' }}</span>
             </div>
           </div>
         </el-card>
@@ -182,7 +182,7 @@
               <h3>
                 <el-icon><User /></el-icon> ????
               </h3>
-              <span class="count-badge">{{ members.length }}??/span>
+              <span class="count-badge">{{ members.length }} 人</span>
             </div>
           </template>
 
@@ -245,14 +245,14 @@
 
           <div class="budget-summary">
             <div class="summary-row">
-              <span class="summary-label">??????/span>
+              <span class="summary-label">分项合计</span>
               <span class="summary-value">{{ formatCurrency(totalBudget) }}</span>
             </div>
             <div
               class="summary-row"
               v-if="project.budget_total && totalBudget !== project.budget_total"
             >
-              <span class="summary-label">??????/span>
+              <span class="summary-label">与申报差额</span>
               <span class="summary-diff" :class="getDiffClass(project.budget_total - totalBudget)">
                 {{ formatCurrency(project.budget_total - totalBudget) }}
               </span>
@@ -267,7 +267,7 @@
               <h3>
                 <el-icon><ChatLineRound /></el-icon> ??????
               </h3>
-              <span class="count-badge">{{ reviews.length }}??/span>
+              <span class="count-badge">{{ reviews.length }} 条</span>
             </div>
           </template>
 
@@ -295,7 +295,7 @@
 
               <div class="review-scores">
                 <div class="score-item" v-if="review.innovation_score">
-                  <span class="score-label">????/span>
+                  <span class="score-label">创新性</span>
                   <div class="score-bar">
                     <div
                       class="score-fill"
@@ -307,7 +307,7 @@
                 </div>
 
                 <div class="score-item" v-if="review.feasibility_score">
-                  <span class="score-label">????/span>
+                  <span class="score-label">可行性</span>
                   <div class="score-bar">
                     <div
                       class="score-fill"
@@ -319,7 +319,7 @@
                 </div>
 
                 <div class="score-total">
-                  <span class="total-label">??????/span>
+                  <span class="total-label">总分</span>
                   <span class="total-value">{{ review.total_score.toFixed(1) }}</span>
                   <el-rate
                     v-model="review.total_score"
@@ -342,7 +342,7 @@
 
               <div class="confidential-notice" v-else-if="review.is_confidential">
                 <el-alert
-                  title="????????????
+                  title="该评审意见为保密内容，完整内容请通过管理渠道查看。"
                   type="warning"
                   :closable="false"
                   center
@@ -387,7 +387,7 @@ import request from '@/utils/request'
 const router = useRouter()
 const route = useRoute()
 
-// ?????const loading = ref(false)
+const loading = ref(false)
 const project = ref<any>({
   id: '',
   project_code: '',
@@ -416,11 +416,10 @@ const reviews = ref<any[]>([])
 const myReview = ref<any>(null)
 const stages = ref<any[]>([])
 
-// ?????const totalBudget = computed(() => {
+const totalBudget = computed(() => {
   return budget.value.reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
 })
 
-// ??
 const loadProjectDetail = async () => {
   loading.value = true
   try {
@@ -437,22 +436,22 @@ const loadProjectDetail = async () => {
       myReview.value = response.data.myReview
       stages.value = response.data.stages || []
 
-      console.log('??????????????')
+      console.log('已加载评审项目详情')
     } else {
-      ElMessage.error('????????')
+      ElMessage.error(response.message || '加载项目详情失败')
     }
   } catch (error) {
-    console.error('????????:', error)
-    ElMessage.error('????????')
+    console.error('加载项目详情失败:', error)
+    ElMessage.error('加载项目详情失败')
   } finally {
     loading.value = false
   }
 }
 
 const startReview = () => {
-  ElMessageBox.confirm('?????????, '???????, {
-    confirmButtonText: '?????,
-    cancelButtonText: '??',
+  ElMessageBox.confirm('将跳转到评审页面，是否继续？', '开始评审', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
     type: 'info',
   }).then(() => {
     router.push({
@@ -487,7 +486,7 @@ const viewFullReview = (review: any) => {
 
 const refreshData = () => {
   loadProjectDetail()
-  ElMessage.success('??????)
+  ElMessage.success('已刷新')
 }
 
 const goBack = () => {
@@ -510,22 +509,22 @@ const getStatusType = (status: string) => {
 
 const getStatusText = (status: string) => {
   const map: Record<string, string> = {
-    draft: '??',
-    submitted: '????,
-    under_review: '????,
-    approved: '????,
-    in_progress: '????,
-    completed: '????,
-    rejected: '????,
+    draft: '草稿',
+    submitted: '已提交',
+    under_review: '评审中',
+    approved: '已通过',
+    in_progress: '进行中',
+    completed: '已完成',
+    rejected: '已驳回',
   }
   return map[status] || status
 }
 
 const getReviewStatusText = (status: string) => {
   const map: Record<string, string> = {
-    draft: '??',
-    submitted: '????,
-    locked: '????,
+    draft: '草稿',
+    submitted: '已提交',
+    locked: '已锁定',
   }
   return map[status] || status
 }
@@ -543,11 +542,11 @@ const getRoleType = (role: string) => {
 
 const getRoleText = (role: string) => {
   const map: Record<string, string> = {
-    principal: '????,
-    co_researcher: '??????,
-    research_assistant: '????',
-    student: '??',
-    other: '??',
+    principal: '负责人',
+    co_researcher: '合作研究者',
+    research_assistant: '科研助理',
+    student: '学生',
+    other: '其他',
   }
   return map[role] || role
 }
@@ -564,10 +563,10 @@ const getConclusionType = (conclusion: string) => {
 
 const getConclusionText = (conclusion: string) => {
   const map: Record<string, string> = {
-    approve: '??',
-    approve_with_revision: '?????',
-    reject: '???',
-    resubmit: '????',
+    approve: '通过',
+    approve_with_revision: '修改后通过',
+    reject: '不通过',
+    resubmit: '退回修改',
   }
   return map[conclusion] || conclusion
 }
@@ -597,15 +596,15 @@ const getDiffClass = (diff: number) => {
 }
 
 const formatCurrency = (amount: number) => {
-  if (!amount) return '?0'
+  if (!amount) return '¥0'
   const num = Number(amount)
-  if (num >= 100000000) return '?' + (num / 100000000).toFixed(2) + '??
-  if (num >= 10000) return '?' + (num / 10000).toFixed(2) + '??
-  return '?' + num.toFixed(2)
+  if (num >= 100000000) return '¥' + (num / 100000000).toFixed(2) + '亿'
+  if (num >= 10000) return '¥' + (num / 10000).toFixed(2) + '万'
+  return '¥' + num.toFixed(2)
 }
 
 const formatDate = (dateString: string) => {
-  if (!dateString) return '????
+  if (!dateString) return '—'
   try {
     const date = new Date(dateString)
     return date.toLocaleDateString('zh-CN')
@@ -622,10 +621,10 @@ const formatTime = (dateString: string) => {
     const diff = now.getTime() - date.getTime()
     const diffDays = Math.floor(diff / (1000 * 60 * 60 * 24))
 
-    if (diffDays === 0) return '??'
-    if (diffDays === 1) return '??'
-    if (diffDays < 7) return `${diffDays}??`
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)}??`
+    if (diffDays === 0) return '今天'
+    if (diffDays === 1) return '昨天'
+    if (diffDays < 7) return `${diffDays}天前`
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)}周前`
     return formatDate(dateString)
   } catch {
     return dateString

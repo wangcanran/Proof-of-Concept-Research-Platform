@@ -15,7 +15,7 @@
           正在编辑：{{ currentProject.title }} ({{ currentProject.project_code }})
         </div>
         <div class="header-actions">
-          <button class="secondary-btn" @click="saveDraft" :disabled="saving">
+          <button class="secondary-btn" @click="() => saveDraft()" :disabled="saving">
             {{ saving ? '保存中...' : '💾 保存草稿' }}
           </button>
           <button class="primary-btn" @click="handleSubmit" :disabled="!canSubmit || submitting">
@@ -109,10 +109,31 @@
             </button>
           </div>
           <div class="form-hint">
-            <span>✅ 已选择 {{ selectedDomains.length }} 个研究领域</span>
+            <span
+              >✅ 已选择 {{ selectedDomains.length }} 个研究领域<span
+                v-if="needsDomainOther"
+                class="required-hint"
+              >
+                （已选「其他」须填写具体方向）</span
+              ></span
+            >
             <span v-if="selectedDomains.length === 0" class="required-hint"
               >（请至少选择一个）</span
             >
+          </div>
+          <div v-if="needsDomainOther" class="other-input">
+            <label
+              >请说明具体研究领域 <span class="required">*</span>
+              <span class="hint-inline">（请简要写出实际方向，与上方「其他」选项对应）</span></label
+            >
+            <textarea
+              v-model="formData.project_domain_other_text"
+              rows="3"
+              maxlength="500"
+              placeholder="例如：体育科技、交叉学科方向等，请简要说明"
+              :disabled="loading"
+            />
+            <div class="char-counter">{{ formData.project_domain_other_text.length }}/500</div>
           </div>
         </div>
 
@@ -578,7 +599,7 @@
           v-if="currentStep < steps.length"
           class="nav-btn primary"
           @click="nextStep"
-          :disabled="!canProceed || loading"
+          :disabled="loading"
         >
           下一步
         </button>
@@ -687,6 +708,8 @@ const formData = reactive({
   title: '',
   tech_maturity: '',
   achievement_transform_other_text: '',
+  /** 选「其他」研究领域时填写，对应表字段 project_domain_other_text */
+  project_domain_other_text: '',
   poc_multi_stage_note: '',
   keywords: '',
   abstract: '',
@@ -729,22 +752,54 @@ const keywordsArray = computed(() =>
   formData.keywords ? formData.keywords.split(',').filter((k) => k.trim()) : [],
 )
 
-const canProceed = computed(() => {
-  switch (currentStep.value) {
-    case 1:
-      return formData.title && selectedDomains.value.length > 0
-    case 2:
-      return formData.abstract
-    case 3:
-      return teamMembers.value.every((m) => m.name && m.name.trim())
-    case 4:
-      return totalBudget.value > 0
-    case 5:
-      return true
-    default:
-      return true
-  }
+/** 字典中「其他」项 id（code=OTHER 或 name=其他） */
+const otherResearchDomainId = computed(() => {
+  const list = researchDomains.value
+  const found = list.find((d) => d.code === 'OTHER' || d.name === '其他')
+  return found?.id ?? ''
 })
+
+const needsDomainOther = computed(() => {
+  const oid = otherResearchDomainId.value
+  return !!oid && selectedDomains.value.includes(oid)
+})
+
+/** 当前步骤未满足的必填项（与 canProceed 规则一致，用于「下一步」提示） */
+const getMissingForStep = (step: number): string[] => {
+  const missing: string[] = []
+  switch (step) {
+    case 1: {
+      if (!formData.title?.trim()) missing.push('项目标题')
+      if (selectedDomains.value.length === 0) missing.push('研究领域（至少选一项）')
+      if (needsDomainOther.value && !formData.project_domain_other_text?.trim()) {
+        missing.push('「其他」研究领域具体说明')
+      }
+      if (!formData.keywords?.trim()) missing.push('关键词（至少一个）')
+      break
+    }
+    case 2: {
+      if (!formData.abstract?.trim()) missing.push('项目摘要')
+      break
+    }
+    case 3: {
+      teamMembers.value.forEach((m, i) => {
+        if (!m.name?.trim()) missing.push(`成员 ${i + 1} 的姓名`)
+      })
+      break
+    }
+    case 4: {
+      if (totalBudget.value <= 0) missing.push('经费预算（合计金额需大于 0）')
+      break
+    }
+    default:
+      break
+  }
+  return missing
+}
+
+const canProceed = computed(
+  () => getMissingForStep(currentStep.value).length === 0,
+)
 
 const canSubmit = computed(() => canProceed.value && currentStep.value === steps.length)
 
@@ -803,10 +858,18 @@ const removeBudgetItem = (index: number) => {
 const calculateTotal = () => {}
 
 const nextStep = () => {
-  if (canProceed.value && currentStep.value < steps.length) {
-    currentStep.value++
-    window.scrollTo(0, 0)
+  if (currentStep.value >= steps.length) return
+  const missing = getMissingForStep(currentStep.value)
+  if (missing.length > 0) {
+    ElMessage.warning({
+      message: `请完善以下必填项后再进入下一步：${missing.join('、')}`,
+      duration: 5500,
+      showClose: true,
+    })
+    return
   }
+  currentStep.value++
+  window.scrollTo(0, 0)
 }
 const prevStep = () => {
   if (currentStep.value > 1) {
@@ -920,13 +983,43 @@ const removeAttachment = (index: number) => {
   attachments.value.splice(index, 1)
 }
 
-// 保存草稿
-const saveDraft = async () => {
+// 保存草稿（提交前静默保存用 { silent: true }，避免重复提示）
+// 新建项目时后端要求至少：标题 + 一个研究领域，否则会 400
+const saveDraft = async (options?: { silent?: boolean }): Promise<boolean> => {
+  const silent = options?.silent === true
+  const isNewProject = !currentProject.value?.id
+
+  if (isNewProject) {
+    if (!formData.title?.trim()) {
+      ElMessage.warning(
+        silent ? '提交失败：请先填写项目标题' : '保存草稿前请先填写项目标题',
+      )
+      return false
+    }
+    if (selectedDomains.value.length === 0) {
+      ElMessage.warning(
+        silent
+          ? '提交失败：请至少选择一个研究领域'
+          : '请至少选择一个研究领域后再保存草稿',
+      )
+      return false
+    }
+    if (needsDomainOther.value && !formData.project_domain_other_text.trim()) {
+      ElMessage.warning(
+        silent
+          ? '提交失败：已选择「其他」时请填写具体研究领域说明'
+          : '已选择「其他」研究领域时，请填写具体方向说明后再保存',
+      )
+      return false
+    }
+  }
+
   saving.value = true
   try {
     const payload = {
       title: formData.title,
       research_domains: selectedDomains.value,
+      project_domain_other_text: formData.project_domain_other_text.trim() || null,
       tech_maturity: formData.tech_maturity,
       achievement_transform: achievementTransform.value,
       achievement_transform_other_text: formData.achievement_transform_other_text,
@@ -951,18 +1044,25 @@ const saveDraft = async () => {
       })),
     }
 
-    const response =
-      isEditing.value && currentProject.value
-        ? await api.put(`/projects/${currentProject.value.id}`, payload)
-        : await api.post('/projects', payload)
+    const response = currentProject.value?.id
+      ? await api.put(`/projects/${currentProject.value.id}`, payload)
+      : await api.post('/projects', payload)
 
     if (response.success) {
       if (response.data?.id) currentProject.value = response.data
       isEditing.value = true
-      ElMessage.success('草稿保存成功')
+      if (!silent) ElMessage.success('草稿保存成功')
+      return true
     }
-  } catch (error: any) {
-    ElMessage.error(error.message || '保存失败')
+    if (!silent && (response as any)?.error)
+      ElMessage.error((response as any).error)
+    return false
+  } catch (error: unknown) {
+    const err = error as { message?: string; response?: { data?: { error?: string } } }
+    const msg =
+      err.response?.data?.error || err.message || '保存失败'
+    ElMessage.error(msg)
+    return false
   } finally {
     saving.value = false
   }
@@ -971,6 +1071,13 @@ const saveDraft = async () => {
 const handleSubmit = () => {
   if (selectedDomains.value.length === 0) {
     ElMessage.warning('请至少选择一个研究领域')
+    return
+  }
+  if (
+    needsDomainOther.value &&
+    !formData.project_domain_other_text.trim()
+  ) {
+    ElMessage.warning('已选择「其他」研究领域时，请在下方填写具体方向说明')
     return
   }
   if (!canSubmit.value) {
@@ -983,9 +1090,9 @@ const handleSubmit = () => {
 const confirmSubmit = async () => {
   submitting.value = true
   try {
-    if (!currentProject.value?.id) {
-      await saveDraft()
-      if (!currentProject.value?.id) throw new Error('项目保存失败')
+    const saved = await saveDraft({ silent: true })
+    if (!saved || !currentProject.value?.id) {
+      return
     }
 
     const response = await api.put(`/projects/${currentProject.value.id}`, {
@@ -1061,13 +1168,87 @@ const toggleDebugInfo = () => {
   showDebugInfo.value = !showDebugInfo.value
 }
 
+const loadProjectForEdit = async (projectId: string) => {
+  loading.value = true
+  try {
+    const res = await api.get(`/projects/${projectId}`)
+    if (!res?.success || !res.data) {
+      ElMessage.error((res as any)?.error || '加载项目失败')
+      return
+    }
+    const d = res.data
+    isEditing.value = true
+    currentProject.value = { id: d.id, project_code: d.project_code, title: d.title }
+    formData.title = d.title || ''
+    formData.tech_maturity = d.tech_maturity || ''
+    formData.achievement_transform_other_text = d.achievement_transform_other_text || ''
+    formData.poc_multi_stage_note = d.poc_multi_stage_note || ''
+    formData.project_domain_other_text = d.project_domain_other_text || ''
+    formData.keywords = d.keywords || ''
+    formData.abstract = d.abstract || ''
+    formData.detailed_introduction_part1 = d.detailed_introduction_part1 || ''
+    formData.detailed_introduction_part2 = d.detailed_introduction_part2 || ''
+    formData.detailed_introduction_part3 = d.detailed_introduction_part3 || ''
+    formData.implementation_plan = d.implementation_plan || ''
+    formData.supplementary_info = d.supplementary_info || ''
+    const at = d.achievement_transform
+    achievementTransform.value = Array.isArray(at)
+      ? at
+      : String(at || '')
+          .split(',')
+          .filter(Boolean)
+    const pocs = d.poc_stage_requirement
+    pocStageRequirement.value = Array.isArray(pocs)
+      ? pocs
+      : String(pocs || '')
+          .split(',')
+          .filter(Boolean)
+    selectedDomains.value = (d.research_domains || []).map((x: { id: string }) => x.id)
+    if (d.team_members?.length) {
+      teamMembers.value = d.team_members.map((m: Record<string, unknown>) => ({
+        name: (m.name as string) || '',
+        email: (m.email as string) || '',
+        organization: (m.organization as string) || '',
+        title: (m.title as string) || '',
+        role: (m.role as string) || 'other',
+      }))
+    }
+    if (d.budget_items?.length) {
+      budgetItems.value = d.budget_items.map((b: Record<string, unknown>) => ({
+        category: (b.category as string) || '',
+        item_name: (b.item_name as string) || '',
+        description: (b.description as string) || '',
+        amount: Number(b.amount) || 0,
+      }))
+    }
+    if (d.attachments?.length) {
+      attachments.value = d.attachments.map((a: Record<string, unknown>) => ({
+        id: a.id,
+        file_name: a.file_name,
+        originalName: a.file_name,
+        file_path: a.file_path,
+        file_size: a.file_size,
+        mime_type: a.mime_type,
+        description: a.description,
+        uploading: false,
+        progress: 100,
+      }))
+    }
+  } catch (e: unknown) {
+    const err = e as { message?: string }
+    ElMessage.error(err?.message || '加载项目失败')
+  } finally {
+    loading.value = false
+  }
+}
+
 onMounted(async () => {
   formData.submit_date = new Date().toISOString().split('T')[0]
   await loadCurrentUser()
   await loadResearchDomains()
   const id = route.query.id as string
   if (id) {
-    isEditing.value = true
+    await loadProjectForEdit(id)
   }
 })
 </script>
@@ -1515,7 +1696,21 @@ onMounted(async () => {
 
 .other-input {
   width: 100%;
-  margin-top: 8px;
+  margin-top: 12px;
+}
+
+.other-input label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  color: #34495e;
+}
+
+.hint-inline {
+  font-weight: normal;
+  font-size: 12px;
+  color: #909399;
+  margin-left: 6px;
 }
 
 /* 关键词标签 */

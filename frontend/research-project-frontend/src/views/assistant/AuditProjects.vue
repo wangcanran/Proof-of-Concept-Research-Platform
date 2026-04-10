@@ -352,8 +352,8 @@
                   <span class="info-value">{{ currentProject.department }}</span>
                 </div>
                 <div class="info-item">
-                  <span class="info-label">项目标题：</span>
-                  <span class="info-value">{{ currentProject.title || '未设置' }}</span>
+                  <span class="info-label">职称：</span>
+                  <span class="info-value">{{ currentProject.job_title || '未设置' }}</span>
                 </div>
                 <div class="info-item">
                   <span class="info-label">联系方式：</span>
@@ -1049,7 +1049,7 @@ const showMockData = () => {
       abstract: '研究人工智能技术在医疗影像诊断中的应用，提高诊断准确率...',
       applicant_name: '张三教授',
       department: '计算机学院',
-      title: '教授',
+      job_title: '教授',
       email: 'zhangsan@university.edu',
       phone: '13800138000',
       budget_total: 500000,

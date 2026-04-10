@@ -14256,7 +14256,8 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
         const allowedFields = [
           'title', 'domain_id', 'keywords', 'abstract', 'background',
           'objectives', 'methodology', 'expected_outcomes', 'budget_total',
-          'duration_months', 'start_date', 'end_date', 'status', 'remarks'
+          'duration_months', 'start_date', 'end_date', 'status', 'remarks',
+          'project_domain_other_text',
         ];
         
         allowedFields.forEach(field => {
@@ -15254,7 +15255,8 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
           'title', 'domain_id', 'keywords', 'abstract', 'background',
           'objectives', 'methodology', 'expected_outcomes', 'budget_total',
           'duration_months', 'status', 'start_date', 'end_date',
-          'support_level', 'approved_budget', 'remarks'
+          'support_level', 'approved_budget', 'remarks',
+          'project_domain_other_text',
         ];
         
         allowedFields.forEach(field => {
@@ -15741,6 +15743,7 @@ if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/
         p.detailed_introduction_part1,
         p.detailed_introduction_part2,
         p.detailed_introduction_part3,
+        p.project_domain_other_text,
         p.status,
         p.approved_budget,
         p.submit_date,
@@ -15869,6 +15872,7 @@ if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/
         detailed_introduction_part1: project.detailed_introduction_part1,
         detailed_introduction_part2: project.detailed_introduction_part2,
         detailed_introduction_part3: project.detailed_introduction_part3,
+        project_domain_other_text: project.project_domain_other_text,
         status: project.status,
         approved_budget: project.approved_budget,
         submit_date: project.submit_date,

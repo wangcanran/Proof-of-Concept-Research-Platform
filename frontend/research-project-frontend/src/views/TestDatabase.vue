@@ -32,7 +32,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { apiService } from '@/api/index.js'
+import api from '@/api/index.js'
 
 const loading = ref(false)
 const message = ref('')
@@ -45,13 +45,13 @@ const testConnection = async () => {
   message.value = ''
 
   try {
-    const result = await apiService.testDbConnection()
+    const result = await api.get('/api/db/test')
     connectionResult.value = result
     message.value = '✅ 数据库连接成功！'
     isError.value = false
     console.log('Database connection test:', result)
   } catch (error) {
-    message.value = `❌ 数据库连接失败: ${error.message}`
+    message.value = `❌ 数据库连接失败: ${error?.message ?? error}`
     isError.value = true
     console.error('Database connection error:', error)
   } finally {
@@ -63,12 +63,13 @@ const getProjects = async () => {
   loading.value = true
 
   try {
-    const response = await apiService.projects.getAll()
-    projects.value = response.data || []
+    const res = await api.get('/api/projects')
+    const list = Array.isArray(res?.data) ? res.data : []
+    projects.value = list
     message.value = `✅ 成功获取 ${projects.value.length} 个项目`
     isError.value = false
   } catch (error) {
-    message.value = `❌ 获取项目失败: ${error.message}`
+    message.value = `❌ 获取项目失败: ${error?.message ?? error}`
     isError.value = true
   } finally {
     loading.value = false
@@ -79,20 +80,26 @@ const createSampleProject = async () => {
   loading.value = true
 
   try {
-    const projectData = {
-      title: `示例项目 ${new Date().toLocaleTimeString()}`,
-      description: '这是一个通过前端创建的示例项目',
-      status: 'active',
+    const domainsRes = await api.get('/api/research-domains')
+    const domains = domainsRes?.data ?? []
+    const firstDomainId = domains[0]?.id
+    if (!firstDomainId) {
+      message.value = '❌ 未获取到研究领域，无法创建示例项目'
+      isError.value = true
+      return
     }
 
-    const response = await apiService.projects.create(projectData)
+    await api.post('/api/projects', {
+      title: `示例项目 ${new Date().toLocaleTimeString()}`,
+      abstract: '这是一个通过前端创建的示例项目',
+      research_domains: [firstDomainId],
+    })
     message.value = '✅ 项目创建成功！'
     isError.value = false
-
-    // 刷新项目列表
     await getProjects()
   } catch (error) {
-    message.value = `❌ 创建项目失败: ${error.message}`
+    const msg = error?.response?.data?.message || error?.response?.data?.error || error?.message
+    message.value = `❌ 创建项目失败: ${msg ?? error}`
     isError.value = true
   } finally {
     loading.value = false
