@@ -632,7 +632,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
@@ -943,20 +943,19 @@ const uploadFiles = async (files: File[]) => {
       const formData = new FormData()
       formData.append('file', file)
 
-      const response = await axios.post(`${API_BASE_URL}/projects/upload-attachment`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      const response = (await api.post('/projects/upload-attachment', formData, {
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total && attachments.value[index]) {
             const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
             attachments.value[index].progress = percentCompleted
           }
         },
-      })
+      })) as { success?: boolean; data?: Record<string, unknown>; error?: string }
 
-      if (response.data.success && response.data.data) {
+      if (response.success && response.data) {
         attachments.value[index] = {
           ...attachments.value[index],
-          ...response.data.data,
+          ...response.data,
           uploading: false,
           progress: 100,
         }
@@ -1168,6 +1167,17 @@ const toggleDebugInfo = () => {
   showDebugInfo.value = !showDebugInfo.value
 }
 
+/** 编辑草稿：路由可能是 /projects/edit/:id（params）或 /projects/create?id=（query） */
+const resolveRouteProjectId = (): string | undefined => {
+  const p = route.params.id
+  const fromParam = Array.isArray(p) ? p[0] : p
+  if (fromParam != null && String(fromParam).trim() !== '') return String(fromParam)
+  const q = route.query.id
+  const fromQuery = Array.isArray(q) ? q[0] : q
+  if (fromQuery != null && String(fromQuery).trim() !== '') return String(fromQuery)
+  return undefined
+}
+
 const loadProjectForEdit = async (projectId: string) => {
   loading.value = true
   try {
@@ -1203,7 +1213,9 @@ const loadProjectForEdit = async (projectId: string) => {
       : String(pocs || '')
           .split(',')
           .filter(Boolean)
-    selectedDomains.value = (d.research_domains || []).map((x: { id: string }) => x.id)
+    selectedDomains.value = (d.research_domains || []).map((x: string | { id: string }) =>
+      typeof x === 'string' ? x : x.id,
+    )
     if (d.team_members?.length) {
       teamMembers.value = d.team_members.map((m: Record<string, unknown>) => ({
         name: (m.name as string) || '',
@@ -1246,11 +1258,20 @@ onMounted(async () => {
   formData.submit_date = new Date().toISOString().split('T')[0]
   await loadCurrentUser()
   await loadResearchDomains()
-  const id = route.query.id as string
+  const id = resolveRouteProjectId()
   if (id) {
     await loadProjectForEdit(id)
   }
 })
+
+watch(
+  () => resolveRouteProjectId(),
+  async (id, prev) => {
+    if (!id || id === prev) return
+    await loadResearchDomains()
+    await loadProjectForEdit(id)
+  },
+)
 </script>
 
 <style scoped>

@@ -1,6 +1,6 @@
 -- =============================================
 -- 数据库: research_system
--- 创建时间: 2026-04-05
+-- 创建时间: 2026-04-10
 -- 说明: 科研项目管理系统数据库
 -- =============================================
 
@@ -121,16 +121,11 @@ CREATE TABLE IF NOT EXISTS `Project` (
         'draft',
         'submitted',
         'under_review',
-        'revision',
-        'batch_review',
         'approved',
         'incubating',
         'rejected',
-        'completed',
-        'terminated'
+        'completed'
     ) DEFAULT 'draft' COMMENT '项目状态',
-    `support_level` TEXT COMMENT '批准的支持方案',
-    `approved_budget` DECIMAL(12,2) COMMENT '批准预算',
     `submit_date` DATE COMMENT '提交日期',
     `approval_date` DATE COMMENT '批准日期',
     `start_date` DATE COMMENT '开始日期',
@@ -156,7 +151,7 @@ CREATE TABLE IF NOT EXISTS `ProjectResearchDomain` (
     INDEX idx_project_rd_domain (`research_domain_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='项目所属领域（多选）';
 
--- 8. 项目附件表（成果图片/材料为「成果合集」，用 section=achievement_collection 区分）
+-- 8. 项目附件表
 CREATE TABLE IF NOT EXISTS `ProjectAttachment` (
     `id` VARCHAR(36) PRIMARY KEY,
     `project_id` VARCHAR(36) NOT NULL COMMENT '项目ID',
@@ -215,7 +210,7 @@ CREATE TABLE IF NOT EXISTS `ExpertAssignment` (
     `expert_id` VARCHAR(36) NOT NULL,
     `assigned_by` VARCHAR(36),
     `assigned_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    `status` ENUM('reviewing', 'accepted', 'declined', 'expired') DEFAULT 'reviewing',
+    `status` ENUM('reviewing', 'accepted', 'declined') DEFAULT 'reviewing' COMMENT '进行中/通过/不通过；超期由 deadline 判断，不设单独状态',
     `comment` TEXT,
     `deadline` DATETIME,
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -230,40 +225,47 @@ CREATE TABLE IF NOT EXISTS `ExpertAssignment` (
 -- 四、孵化服务相关
 -- =============================================
 
--- 12. 孵化跟进记录表（直接关联项目；原孵化记录/阶段评审已合并删除）
-CREATE TABLE IF NOT EXISTS `IncubationProgress` (
+-- 12. 孵化服务记录表
+CREATE TABLE `IncubationProgress` (
     `id` VARCHAR(36) PRIMARY KEY,
     `project_id` VARCHAR(36) NOT NULL COMMENT '项目ID',
-    `recorded_by` VARCHAR(36) NOT NULL,
-    `progress_date` DATE NOT NULL,
-    `title` VARCHAR(200) NOT NULL,
-    `abstract` TEXT NOT NULL,
-    `content` TEXT NOT NULL,
-    `next_steps` TEXT,
-    `comment` TEXT,
-    `reviewed_by` VARCHAR(36),
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `applicant_id` VARCHAR(36) NOT NULL COMMENT '申请人ID',
+    `application_date` DATETIME DEFAULT NULL COMMENT '申请日期',
+    `service_requirement` TEXT NOT NULL COMMENT '服务需求描述',
+    `feedback_date` DATETIME DEFAULT NULL COMMENT '反馈日期',
+    `feedback_by` VARCHAR(36) DEFAULT NULL COMMENT '反馈人（项目经理）ID',
+    `feedback_action` ENUM('approved', 'rejected') DEFAULT NULL COMMENT '反馈动作：approved=给予服务，rejected=拒绝服务',
+    `feedback_comment` TEXT DEFAULT NULL COMMENT '反馈文字说明',
+    `result_date` DATETIME DEFAULT NULL COMMENT '成果提交日期',
+    `result_description` TEXT DEFAULT NULL COMMENT '成果描述',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    `status` ENUM('pending', 'feedback_given', 'result_submitted') NOT NULL DEFAULT 'pending' COMMENT '状态：待反馈/已反馈/已提交成果',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后更新时间',
     FOREIGN KEY (`project_id`) REFERENCES `Project`(`id`) ON DELETE CASCADE,
-    FOREIGN KEY (`recorded_by`) REFERENCES `User`(`id`) ON DELETE RESTRICT,
-    FOREIGN KEY (`reviewed_by`) REFERENCES `User`(`id`) ON DELETE SET NULL,
-    INDEX idx_incubation_progress_project (`project_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='孵化跟进记录表';
+    FOREIGN KEY (`applicant_id`) REFERENCES `User`(`id`) ON DELETE RESTRICT,
+    FOREIGN KEY (`feedback_by`) REFERENCES `User`(`id`) ON DELETE SET NULL,
+    INDEX idx_project (`project_id`),
+    INDEX idx_applicant (`applicant_id`),
+    INDEX idx_status (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='孵化服务记录表（申请-反馈-成果）';
 
--- 13. 跟进记录附件表
-CREATE TABLE IF NOT EXISTS `IncubationProgressFile` (
+-- 13. 孵化服务记录附件表
+CREATE TABLE `IncubationProgressFile` (
     `id` VARCHAR(36) PRIMARY KEY,
     `progress_id` VARCHAR(36) NOT NULL,
-    `file_name` VARCHAR(500) NOT NULL,
-    `file_path` VARCHAR(1000) NOT NULL,
-    `file_size` BIGINT NOT NULL,
-    `mime_type` VARCHAR(100) NOT NULL,
-    `sort_order` INT DEFAULT 0,
-    `uploaded_by` VARCHAR(36) NOT NULL,
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `attachment_type` ENUM('application', 'feedback', 'result') NOT NULL COMMENT '附件类型：申请附件/反馈附件/成果附件',
+    `file_name` VARCHAR(500) NOT NULL COMMENT '原始文件名',
+    `file_path` VARCHAR(1000) NOT NULL COMMENT '存储路径',
+    `file_size` BIGINT NOT NULL COMMENT '文件大小（字节）',
+    `mime_type` VARCHAR(100) NOT NULL COMMENT 'MIME类型',
+    `sort_order` INT DEFAULT 0 COMMENT '排序序号',
+    `uploaded_by` VARCHAR(36) NOT NULL COMMENT '上传人ID',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间',
     FOREIGN KEY (`progress_id`) REFERENCES `IncubationProgress`(`id`) ON DELETE CASCADE,
     FOREIGN KEY (`uploaded_by`) REFERENCES `User`(`id`) ON DELETE RESTRICT,
-    INDEX idx_progress (`progress_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='跟进记录附件表';
+    INDEX idx_progress (`progress_id`),
+    INDEX idx_type (`attachment_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='孵化服务记录附件表';
 
 -- =============================================
 -- 五、项目成果
@@ -314,7 +316,7 @@ CREATE TABLE IF NOT EXISTS `Notice` (
     `id` VARCHAR(36) PRIMARY KEY COMMENT '公告ID',
     `title` VARCHAR(200) NOT NULL COMMENT '公告标题',
     `abstract` TEXT NOT NULL COMMENT '公告摘要',
-    `category` ENUM('notice', 'news', 'result', 'recruitment', 'other') NOT NULL COMMENT '公告类别',
+    `category` ENUM('notice', 'news', 'demand', 'service', 'other') NOT NULL COMMENT '公告类别',
     `created_by` VARCHAR(36) COMMENT '发布人',
     `is_top` ENUM('yes', 'no') NOT NULL DEFAULT 'no' COMMENT '是否置顶：yes-是 no-否',
     `show_on_homepage` ENUM('yes', 'no') NOT NULL DEFAULT 'no' COMMENT '是否首页展示：yes-是 no-否',
@@ -414,36 +416,3 @@ CREATE TABLE IF NOT EXISTS `ExportLog` (
     INDEX idx_user (`user_id`),
     INDEX idx_type (`export_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据导出日志表';
-
--- 22. 支出申请记录表
-CREATE TABLE IF NOT EXISTS `ExpenditureRecord` (
-    `id` VARCHAR(36) PRIMARY KEY,
-    `project_id` VARCHAR(36) NOT NULL,
-    `budget_id` VARCHAR(36) NOT NULL,
-    `expense_no` VARCHAR(50) NOT NULL COMMENT '申请单号',
-    `category` VARCHAR(50) NOT NULL COMMENT '支出类别',
-    `item_name` VARCHAR(200) NOT NULL COMMENT '支出事项',
-    `amount` DECIMAL(12,2) NOT NULL COMMENT '申请金额',
-    `description` TEXT COMMENT '支出说明',
-    `calculation_method` VARCHAR(500) COMMENT '计算方法',
-    `payee_name` VARCHAR(100) COMMENT '收款方名称',
-    `payee_type` ENUM('company', 'personal') DEFAULT 'company' COMMENT '收款方类型',
-    `bank_account` VARCHAR(50) COMMENT '银行账号',
-    `bank_name` VARCHAR(100) COMMENT '开户银行',
-    `status` ENUM('draft', 'submitted', 'approved', 'rejected', 'paid') DEFAULT 'draft' COMMENT '状态',
-    `applicant_id` VARCHAR(36) NOT NULL COMMENT '申请人ID',
-    `reviewer_id` VARCHAR(36) COMMENT '审核人ID',
-    `review_comment` TEXT COMMENT '审核意见',
-    `review_date` DATETIME COMMENT '审核时间',
-    `paid_date` DATETIME COMMENT '支付时间',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (`project_id`) REFERENCES `Project`(`id`) ON DELETE CASCADE,
-    FOREIGN KEY (`budget_id`) REFERENCES `ProjectBudget`(`id`) ON DELETE CASCADE,
-    FOREIGN KEY (`applicant_id`) REFERENCES `User`(`id`),
-    FOREIGN KEY (`reviewer_id`) REFERENCES `User`(`id`),
-    INDEX idx_project (`project_id`),
-    INDEX idx_budget (`budget_id`),
-    INDEX idx_status (`status`),
-    INDEX idx_applicant (`applicant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='支出申请记录表';

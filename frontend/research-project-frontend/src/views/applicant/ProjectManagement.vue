@@ -122,8 +122,8 @@
               >
             </div>
             <div class="meta-item">
-              <span class="meta-label">批准预算：</span>
-              <span class="meta-value">¥ {{ formatAmount(project.approved_budget || 0) }}</span>
+              <span class="meta-label">申报预算：</span>
+              <span class="meta-value">¥ {{ formatAmount(projectBudgetTotal(project)) }}</span>
             </div>
             <div class="meta-item">
               <span class="meta-label">技术成熟度：</span>
@@ -341,6 +341,8 @@ interface Project {
   status: string
   tech_maturity: string
   approved_budget: number
+  /** 申报预算合计：`ProjectBudget.amount` 按 project_id 汇总（与 research_system_db.sql 中 ProjectBudget 表一致） */
+  budget_total?: number
   submit_date: string
   start_date: string
   end_date: string
@@ -495,6 +497,12 @@ const formatAmount = (amount: number) => {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount)
+}
+
+/** 仅来自 ProjectBudget 明细表 amount 字段汇总（与库表定义一致），非 Project.approved_budget */
+const projectBudgetTotal = (p: Project) => {
+  const total = parseFloat(String(p.budget_total ?? ''))
+  return Number.isNaN(total) ? 0 : total
 }
 
 const formatDate = (dateString?: string) => {

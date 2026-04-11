@@ -544,9 +544,7 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
-  if (config.data instanceof FormData) {
-    config.headers['Content-Type'] = 'multipart/form-data'
-  }
+  // FormData 勿手动设置 Content-Type，需由浏览器带 boundary
   return config
 })
 
@@ -929,21 +927,20 @@ const uploadFiles = async (files: File[]) => {
       formData.append('file', file)
       formData.append('project_id', project.value.id)
 
-      const response = await axios.post(`${API_BASE_URL}/projects/upload-attachment`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      const response = (await api.post('/projects/upload-attachment', formData, {
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {
             const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
             uploadProgress.value = Math.round((i * 100 + percentCompleted) / files.length)
           }
         },
-      })
+      })) as { success?: boolean; data?: Record<string, unknown>; error?: string }
 
-      if (response.data.success) {
-        attachments.value.push(response.data.data)
+      if (response.success && response.data) {
+        attachments.value.push(response.data as Attachment)
         ElMessage.success(`文件 ${file.name} 上传成功`)
       } else {
-        ElMessage.error(`文件 ${file.name} 上传失败: ${response.data.error}`)
+        ElMessage.error(`文件 ${file.name} 上传失败: ${response.error || '未知错误'}`)
       }
     }
   } catch (error: any) {

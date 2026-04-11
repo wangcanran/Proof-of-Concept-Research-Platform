@@ -516,15 +516,11 @@ const tableOptions = [
   { value: 'Project', label: '项目表' },
   { value: 'ProjectMember', label: '项目成员' },
   { value: 'ProjectBudget', label: '项目预算' },
-  { value: 'FundingApplication', label: '经费申请' },
-  { value: 'ExpenditureRecord', label: '支出记录' },
   { value: 'ProjectAchievement', label: '项目成果' },
-  { value: 'AchievementTransfer', label: '成果转化' },
   { value: 'ProjectReview', label: '项目评审' },
   { value: 'ProjectStage', label: '项目阶段' },
   { value: 'Notification', label: '通知' },
   { value: 'FileStorage', label: '文件存储' },
-  { value: 'AuditTask', label: '审核任务' },
 ]
 
 // 计算属性：按日期分组的时间线数据
@@ -601,15 +597,11 @@ const getTableText = (table: string) => {
     Project: '项目',
     ProjectMember: '项目成员',
     ProjectBudget: '项目预算',
-    FundingApplication: '经费申请',
-    ExpenditureRecord: '支出记录',
     ProjectAchievement: '项目成果',
-    AchievementTransfer: '成果转化',
     ProjectReview: '项目评审',
     ProjectStage: '项目阶段',
     Notification: '通知',
     FileStorage: '文件',
-    AuditTask: '审核任务',
     AuditLog: '审计日志',
   }
   return map[table] || table

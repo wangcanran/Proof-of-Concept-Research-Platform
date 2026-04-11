@@ -255,9 +255,9 @@
                   >
                 </div>
                 <div class="meta-item">
-                  <span class="meta-icon">⏱️</span>
-                  <span class="meta-label">周期：</span>
-                  <span class="meta-value">{{ application.duration_months }}个月</span>
+                  <span class="meta-icon">🔬</span>
+                  <span class="meta-label">技术成熟度：</span>
+                  <span class="meta-value">{{ getTechMaturityText(application.tech_maturity) }}</span>
                 </div>
                 <div v-if="application.manager_name" class="meta-item">
                   <span class="meta-icon">📌</span>
@@ -275,11 +275,12 @@
               </div>
 
               <div class="application-tags">
-                <span class="category-tag">{{ application.category }}</span>
-                <span class="field-tag">{{ application.research_field }}</span>
-                <span v-if="application.keywords" class="keyword-tag">
-                  {{ application.keywords.split(',')[0] }}
-                </span>
+                <span v-if="application.research_field" class="field-tag">{{
+                  truncateText(application.research_field, 40)
+                }}</span>
+                <span v-if="application.keywords" class="keyword-tag">{{
+                  truncateText(application.keywords, 28)
+                }}</span>
               </div>
             </div>
 
@@ -418,12 +419,12 @@
               <span class="info-value code">{{ currentApplication.project_code }}</span>
             </div>
             <div class="info-item">
-              <span class="info-label">项目类别：</span>
-              <span class="info-value">{{ currentApplication.category }}</span>
+              <span class="info-label">关键词：</span>
+              <span class="info-value">{{ currentApplication.keywords || '—' }}</span>
             </div>
             <div class="info-item">
               <span class="info-label">研究领域：</span>
-              <span class="info-value">{{ currentApplication.research_field }}</span>
+              <span class="info-value">{{ currentApplication.research_field || '—' }}</span>
             </div>
             <div class="info-item">
               <span class="info-label">预算总额：</span>
@@ -432,12 +433,18 @@
               >
             </div>
             <div class="info-item">
-              <span class="info-label">研究周期：</span>
-              <span class="info-value">{{ currentApplication.duration_months }}个月</span>
+              <span class="info-label">技术成熟度：</span>
+              <span class="info-value">{{
+                getTechMaturityText(currentApplication.tech_maturity)
+              }}</span>
             </div>
             <div class="info-item">
               <span class="info-label">提交时间：</span>
-              <span class="info-value">{{ formatDateTime(currentApplication.created_at) }}</span>
+              <span class="info-value">{{
+                currentApplication.submit_date
+                  ? formatDateTime(currentApplication.submit_date)
+                  : formatDateTime(currentApplication.created_at)
+              }}</span>
             </div>
             <div v-if="currentApplication.approval_date" class="info-item">
               <span class="info-label">批准时间：</span>
@@ -1060,6 +1067,18 @@ const formatDateTime = (dateString: string | Date) => {
   }
 }
 
+/** 与库表 Project.tech_maturity、申报页 CreateProject 选项一致 */
+const getTechMaturityText = (maturity?: string | null) => {
+  const map: Record<string, string> = {
+    rd: '研发阶段',
+    pilot: '小试阶段',
+    intermediate_trial: '中试阶段',
+    small_batch_prod: '小批量生产',
+  }
+  if (!maturity) return '—'
+  return map[maturity] || maturity
+}
+
 const formatFileSize = (bytes: number) => {
   if (!bytes) return '0 B'
   const k = 1024
@@ -1264,7 +1283,7 @@ const showMockData = () => {
       applicant_email: 'zhangsan@university.edu',
       applicant_phone: '13800138000',
       budget_total: 500000,
-      duration_months: 24,
+      tech_maturity: 'pilot',
       status: 'submitted',
       submit_date: '2024-01-25',
       created_at: '2024-01-25T09:30:00',
@@ -1279,7 +1298,7 @@ const showMockData = () => {
       applicant_name: '李四博士',
       department: '材料学院',
       budget_total: 800000,
-      duration_months: 36,
+      tech_maturity: 'rd',
       status: 'under_review',
       submit_date: '2024-01-24',
       created_at: '2024-01-24T14:20:00',
@@ -1522,7 +1541,9 @@ const copyApplicationInfo = () => {
     `部门: ${currentApplication.value.department}`,
     `预算: ¥${formatCurrency(currentApplication.value.budget_total)}`,
     `状态: ${pmStatusLabelForCard(currentApplication.value)}`,
-    `提交时间: ${formatDateTime(currentApplication.value.created_at)}`,
+    `提交时间: ${formatDateTime(
+      currentApplication.value.submit_date || currentApplication.value.created_at,
+    )}`,
   ].join('\n')
 
   navigator.clipboard

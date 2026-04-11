@@ -429,7 +429,6 @@ const getReviewerStatusType = (status: string) => {
     reviewing: 'warning',
     accepted: 'success',
     declined: 'danger',
-    expired: 'info',
     submitted: 'success',
   }
   return typeMap[status] || 'info'
@@ -441,7 +440,6 @@ const getReviewerStatusText = (status: string) => {
     reviewing: '评审中',
     accepted: '已接受',
     declined: '已拒绝',
-    expired: '已过期',
     submitted: '已提交',
   }
   return textMap[status] || status

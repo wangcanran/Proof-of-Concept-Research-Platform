@@ -52,24 +52,6 @@
           </div>
 
           <div class="nav-section">
-            <h4 v-if="!sidebarCollapsed" class="nav-section-title">经费管理</h4>
-            <router-link to="/audit/funding" class="nav-link" active-class="active">
-              <span class="nav-icon">💰</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">经费审核</span>
-              <span v-if="!sidebarCollapsed && pendingStats.funding > 0" class="nav-badge">
-                {{ pendingStats.funding }}
-              </span>
-            </router-link>
-            <router-link to="/audit/expenditures" class="nav-link" active-class="active">
-              <span class="nav-icon">💸</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">支出审核</span>
-              <span v-if="!sidebarCollapsed && pendingStats.expenditures > 0" class="nav-badge">
-                {{ pendingStats.expenditures }}
-              </span>
-            </router-link>
-          </div>
-
-          <div class="nav-section">
             <h4 v-if="!sidebarCollapsed" class="nav-section-title">成果管理</h4>
             <router-link to="/audit/achievements" class="nav-link" active-class="active">
               <span class="nav-icon">🏆</span>
@@ -182,8 +164,8 @@
                   <span class="stat-label">进行中项目</span>
                 </div>
                 <div class="stat-badge">
-                  <span class="stat-value">{{ overview.pending_expenditures || 0 }}</span>
-                  <span class="stat-label">待审核支出</span>
+                  <span class="stat-value">{{ overview.unreadMessages || 0 }}</span>
+                  <span class="stat-label">未读通知</span>
                 </div>
                 <div class="stat-badge">
                   <span class="stat-value">{{ overview.pending_achievements || 0 }}</span>
@@ -305,20 +287,6 @@
                   <div class="action-content">
                     <h4>领取项目</h4>
                     <p>领取待受理申请并分配专家</p>
-                  </div>
-                </button>
-                <button class="action-card" @click="navigateTo('review-funding')">
-                  <div class="action-icon">💰</div>
-                  <div class="action-content">
-                    <h4>经费审核</h4>
-                    <p>审批经费申请</p>
-                  </div>
-                </button>
-                <button class="action-card" @click="navigateTo('review-expenditures')">
-                  <div class="action-icon">💸</div>
-                  <div class="action-content">
-                    <h4>支出审核</h4>
-                    <p>审核经费支出</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('review-achievements')">
@@ -500,7 +468,6 @@ const userInfo = ref({
 const overview = ref({
   pendingApplications: 0,
   activeProjects: 0,
-  pending_expenditures: 0,
   pending_achievements: 0,
   unreadMessages: 0,
   activeUsers: 0,
@@ -518,18 +485,14 @@ const notifications = ref([])
 
 const pendingTasks = ref({
   projects: 0,
-  funding: 0,
-  expenditures: 0,
   achievements: 0,
   get total() {
-    return this.projects + this.funding + this.expenditures + this.achievements
+    return this.projects + this.achievements
   },
 })
 
 const pendingStats = computed(() => ({
   projects: pendingTasks.value.projects,
-  funding: pendingTasks.value.funding,
-  expenditures: pendingTasks.value.expenditures,
   achievements: pendingTasks.value.achievements,
 }))
 
@@ -624,8 +587,6 @@ const navigateTo = (action: string) => {
     activities: '/assistant/activities',
     notifications: '/notifications',
     'review-projects': '/audit/projects',
-    'review-funding': '/audit/funding',
-    'review-expenditures': '/audit/expenditures',
     'review-achievements': '/audit/achievements',
   }
   if (routes[action]) router.push(routes[action])
@@ -896,11 +857,6 @@ const loadPendingTasksData = async () => {
     if (unassignedRes.success && unassignedRes.data?.pagination) {
       pendingTasks.value.projects = unassignedRes.data.pagination.total ?? 0
     }
-    // 获取待处理支出申请
-    const expendituresRes = await api.get('/expenditures', { params: { status: 'submitted' } })
-    if (expendituresRes.success && expendituresRes.data) {
-      pendingTasks.value.expenditures = expendituresRes.data.length
-    }
     // 获取待处理成果
     const achievementsRes = await api.get('/achievements', { params: { status: 'submitted' } })
     if (achievementsRes.success && achievementsRes.data) {
@@ -955,7 +911,6 @@ const showMockData = () => {
   overview.value = {
     pendingApplications: 8,
     activeProjects: 15,
-    pending_expenditures: 7,
     pending_achievements: 4,
     unreadMessages: 3,
     activeUsers: 42,
@@ -995,7 +950,7 @@ const showMockData = () => {
       is_read: false,
     },
   ]
-  pendingTasks.value = { projects: 8, funding: 3, expenditures: 5, achievements: 2 }
+  pendingTasks.value = { projects: 8, achievements: 2 }
   unreadCount.value = notifications.value.filter((n) => !n.is_read).length
 }
 

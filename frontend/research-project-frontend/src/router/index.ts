@@ -204,28 +204,6 @@ const routes: Array<RouteRecordRaw> = [
     },
   },
 
-  // ============ 成果转化模块 ============
-  {
-    path: '/achievements/:id/transfer',
-    name: 'AchievementTransfer',
-    component: () => import('../views/AchievementManagement/AchievementTransfer.vue'),
-    meta: {
-      requiresAuth: true,
-      role: 'APPLICANT',
-      permissions: ['create_transfer'],
-    },
-  },
-  {
-    path: '/transfers',
-    name: 'TransferManagement',
-    component: () => import('../views/AchievementManagement/AchievementTransfer.vue'),
-    meta: {
-      requiresAuth: true,
-      role: 'APPLICANT',
-      permissions: ['view_transfers'],
-    },
-  },
-
   // ============ 评审专家路由 ============
   // 评审专家路由
   {
@@ -339,17 +317,6 @@ const routes: Array<RouteRecordRaw> = [
     },
   },
   {
-    path: '/assistant/expenditures',
-    name: 'AssistantExpenditures',
-    component: () => import('@/views/assistant/Expenditures.vue'),
-    meta: {
-      title: '支出审核',
-      requiresAuth: true,
-      role: ['project_manager'],
-      permissions: ['view_expenditures', 'review_expenditures'],
-    },
-  },
-  {
     path: '/assistant/achievements',
     name: 'AssistantAchievements',
     component: () => import('@/views/assistant/Achievements.vue'),
@@ -383,16 +350,6 @@ const routes: Array<RouteRecordRaw> = [
     },
   },
   {
-    path: '/audit/tasks',
-    name: 'AuditTasks',
-    component: () => import('../views/assistant/AuditTask.vue'),
-    meta: {
-      requiresAuth: true,
-      role: ['project_manager'],
-      permissions: ['view_audit_tasks'],
-    },
-  },
-  {
     path: '/audit/projects',
     name: 'AuditProjects',
     component: () => import('../views/assistant/AuditProjects.vue'),
@@ -403,16 +360,6 @@ const routes: Array<RouteRecordRaw> = [
     },
   },
   {
-    path: '/audit/funding',
-    name: 'AuditFunding',
-    component: () => import('../views/assistant/AuditFunding.vue'),
-    meta: {
-      requiresAuth: true,
-      role: ['project_manager'],
-      permissions: ['audit_funding'],
-    },
-  },
-  {
     path: '/audit/achievements',
     name: 'AuditAchievements',
     component: () => import('../views/assistant/Achievements.vue'),
@@ -420,16 +367,6 @@ const routes: Array<RouteRecordRaw> = [
       requiresAuth: true,
       role: ['project_manager'],
       permissions: ['audit_achievements'],
-    },
-  },
-  {
-    path: '/audit/expenditures',
-    name: 'AuditExpenditures',
-    component: () => import('../views/assistant/AuditExpenditures.vue'),
-    meta: {
-      requiresAuth: true,
-      role: ['project_manager'],
-      permissions: ['audit_expenditures'],
     },
   },
   {

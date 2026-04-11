@@ -1,6 +1,9 @@
 -- =============================================
 -- 示例数据插入脚本
 -- =============================================
+-- Windows 下 mysql 客户端默认可能为 GBK，请用 UTF-8 导入，否则会乱码或 ENUM 报错：
+--   mysql -u root -p --default-character-set=utf8mb4 < sample_data.sql
+-- 建库建表脚本 research_system_db.sql 也请同样加上 --default-character-set=utf8mb4
 
 USE research_system;
 
@@ -65,16 +68,16 @@ INSERT INTO `Invitation` (`id`, `inviter_id`, `target_role`, `invitation_code`, 
 -- =============================================
 
 -- 6. 项目数据
-INSERT INTO `Project` (`id`, `applicant_id`, `manager_id`, `project_code`, `title`, `tech_maturity`, `achievement_transform`, `poc_stage_requirement`, `implementation_plan`, `abstract`, `detailed_introduction_part1`, `detailed_introduction_part2`, `detailed_introduction_part3`, `status`, `approved_budget`, `submit_date`, `approval_date`, `start_date`, `end_date`, `created_at`) VALUES
-('prj-001', 'usr-app1', 'usr-pm1', 'PRJ-2026-001', '基于深度学习的医学影像智能诊断系统研发', 'pilot', 'tech_transfer,tech_license', 'feasibility_verify', '第一阶段：算法模型开发（1-6月）；第二阶段：系统平台搭建（7-12月）；第三阶段：临床试点应用（13-18月）', '本项目旨在开发一套基于深度学习的医学影像智能诊断系统，辅助医生进行肺结节、乳腺癌等疾病的早期筛查和诊断。', '成果简介：针对当前医学影像诊断依赖医生经验、效率低的问题，本项目采用最新的深度学习算法，开发智能诊断系统。技术方案包括：多模态影像处理、病灶自动检测、良恶性分类等。创新点在于提出了一种新型的注意力机制网络，显著提高了检测准确率。', '知识产权：本项目已申请发明专利2项（申请号：202410000001.X、202410000002.8），软件著作权1项（2024SR000001）。核心知识产权为基于注意力机制的医学影像分割方法。', '已有应用/试点情况：已在某三甲医院进行小范围试点，处理了500余例肺部CT影像，检测准确率达到92%。', 'approved', 1500000.00, '2026-01-15', '2026-02-01', '2026-03-01', '2027-02-28', '2026-01-10 10:00:00'),
+INSERT INTO `Project` (`id`, `applicant_id`, `manager_id`, `project_code`, `title`, `tech_maturity`, `achievement_transform`, `poc_stage_requirement`, `implementation_plan`, `abstract`, `detailed_introduction_part1`, `detailed_introduction_part2`, `detailed_introduction_part3`, `status`, `submit_date`, `approval_date`, `start_date`, `end_date`, `created_at`) VALUES
+('prj-001', 'usr-app1', 'usr-pm1', 'PRJ-2026-001', '基于深度学习的医学影像智能诊断系统研发', 'pilot', 'tech_transfer,tech_license', 'feasibility_verify', '第一阶段：算法模型开发（1-6月）；第二阶段：系统平台搭建（7-12月）；第三阶段：临床试点应用（13-18月）', '本项目旨在开发一套基于深度学习的医学影像智能诊断系统，辅助医生进行肺结节、乳腺癌等疾病的早期筛查和诊断。', '成果简介：针对当前医学影像诊断依赖医生经验、效率低的问题，本项目采用最新的深度学习算法，开发智能诊断系统。技术方案包括：多模态影像处理、病灶自动检测、良恶性分类等。创新点在于提出了一种新型的注意力机制网络，显著提高了检测准确率。', '知识产权：本项目已申请发明专利2项（申请号：202410000001.X、202410000002.8），软件著作权1项（2024SR000001）。核心知识产权为基于注意力机制的医学影像分割方法。', '已有应用/试点情况：已在某三甲医院进行小范围试点，处理了500余例肺部CT影像，检测准确率达到92%。', 'approved', '2026-01-15', '2026-02-01', '2026-03-01', '2027-02-28', '2026-01-10 10:00:00'),
 
-('prj-002', 'usr-app2', 'usr-pm1', 'PRJ-2026-002', '新型CAR-T细胞治疗技术开发及临床应用研究', 'intermediate_trial', 'equity_investment,joint_dev', 'commercial_verify', '1-12月：CAR载体设计与优化；13-24月：临床前研究及IND申报准备', '开发针对实体瘤的新型CAR-T细胞治疗产品，解决现有CAR-T治疗实体瘤效果不佳的问题。', '背景：CAR-T细胞治疗在血液肿瘤中效果显著，但在实体瘤中效果有限。本项目开发新型CAR结构，增强T细胞浸润和杀伤能力。竞争优势：独特的肿瘤微环境响应元件。', '知识产权：核心技术已申请发明专利3项，其中1项已授权（ZL202310000001.X）。拥有自主知识产权的CAR载体平台。', '已有应用/试点情况：已完成动物实验验证，在荷瘤小鼠模型中肿瘤抑制率达到80%。', 'approved', 2800000.00, '2026-01-20', '2026-02-10', '2026-03-15', '2028-03-14', '2026-01-15 14:30:00'),
+('prj-002', 'usr-app2', 'usr-pm1', 'PRJ-2026-002', '新型CAR-T细胞治疗技术开发及临床应用研究', 'intermediate_trial', 'equity_investment,joint_dev', 'commercial_verify', '1-12月：CAR载体设计与优化；13-24月：临床前研究及IND申报准备', '开发针对实体瘤的新型CAR-T细胞治疗产品，解决现有CAR-T治疗实体瘤效果不佳的问题。', '背景：CAR-T细胞治疗在血液肿瘤中效果显著，但在实体瘤中效果有限。本项目开发新型CAR结构，增强T细胞浸润和杀伤能力。竞争优势：独特的肿瘤微环境响应元件。', '知识产权：核心技术已申请发明专利3项，其中1项已授权（ZL202310000001.X）。拥有自主知识产权的CAR载体平台。', '已有应用/试点情况：已完成动物实验验证，在荷瘤小鼠模型中肿瘤抑制率达到80%。', 'approved', '2026-01-20', '2026-02-10', '2026-03-15', '2028-03-14', '2026-01-15 14:30:00'),
 
-('prj-003', 'usr-app3', 'usr-pm2', 'PRJ-2026-003', '高性能碳纤维复合材料制备关键技术研究', 'rd', 'tech_transfer,other', 'creative_verify', '1-18月：碳纤维表面改性技术研究；19-30月：复合材料界面优化及性能评价', '研究高性能碳纤维复合材料的制备工艺，开发新型界面增强技术。', '成果简介：针对航空航天等领域对高性能复合材料的需求，本项目研究碳纤维表面改性新方法。技术方案：等离子体处理结合纳米材料接枝。创新点：绿色环保的改性工艺。', '知识产权：相关技术正在申请专利2项，已发表SCI论文5篇。核心知识产权为碳纤维表面接枝改性技术。', '已有应用/试点情况：已完成实验室小试，制备的复合材料力学性能提升30%。', 'submitted', NULL, '2026-02-10', NULL, NULL, NULL, '2026-02-05 09:00:00'),
+('prj-003', 'usr-app3', 'usr-pm2', 'PRJ-2026-003', '高性能碳纤维复合材料制备关键技术研究', 'rd', 'tech_transfer,other', 'creative_verify', '1-18月：碳纤维表面改性技术研究；19-30月：复合材料界面优化及性能评价', '研究高性能碳纤维复合材料的制备工艺，开发新型界面增强技术。', '成果简介：针对航空航天等领域对高性能复合材料的需求，本项目研究碳纤维表面改性新方法。技术方案：等离子体处理结合纳米材料接枝。创新点：绿色环保的改性工艺。', '知识产权：相关技术正在申请专利2项，已发表SCI论文5篇。核心知识产权为碳纤维表面接枝改性技术。', '已有应用/试点情况：已完成实验室小试，制备的复合材料力学性能提升30%。', 'submitted', '2026-02-10', NULL, NULL, NULL, '2026-02-05 09:00:00'),
 
-('prj-004', 'usr-app1', NULL, NULL, '智能语音识别与情感分析系统', 'rd', 'tech_license', 'feasibility_verify', '项目计划12个月内完成原型系统开发', '开发多语种智能语音识别系统，集成情感分析功能。', '面向智能客服场景，开发高精度语音识别和情感理解系统。', '拥有相关软件著作权2项。', '暂无', 'draft', NULL, NULL, NULL, NULL, NULL, '2026-03-01 11:00:00'),
+('prj-004', 'usr-app1', NULL, NULL, '智能语音识别与情感分析系统', 'rd', 'tech_license', 'feasibility_verify', '项目计划12个月内完成原型系统开发', '开发多语种智能语音识别系统，集成情感分析功能。', '面向智能客服场景，开发高精度语音识别和情感理解系统。', '拥有相关软件著作权2项。', '暂无', 'draft', NULL, NULL, NULL, NULL, '2026-03-01 11:00:00'),
 
-('prj-005', 'usr-app2', 'usr-pm2', 'PRJ-2026-005', '生物可降解医用材料研发', 'pilot', 'tech_transfer', 'commercial_verify', '1年完成材料配方优化，第2年完成中试生产', '开发用于骨科植入物的可降解医用材料。', '项目介绍：开发新型聚乳酸基复合材料，具有良好的生物相容性和可调控的降解速率。', '已申请发明专利1项。', '已完成动物实验初步验证。', 'under_review', NULL, '2026-02-20', NULL, NULL, NULL, '2026-02-18 15:00:00');
+('prj-005', 'usr-app2', 'usr-pm2', 'PRJ-2026-005', '生物可降解医用材料研发', 'pilot', 'tech_transfer', 'commercial_verify', '1年完成材料配方优化，第2年完成中试生产', '开发用于骨科植入物的可降解医用材料。', '项目介绍：开发新型聚乳酸基复合材料，具有良好的生物相容性和可调控的降解速率。', '已申请发明专利1项。', '已完成动物实验初步验证。', 'under_review', '2026-02-20', NULL, NULL, NULL, '2026-02-18 15:00:00');
 
 -- 7. 项目-研究领域关联
 INSERT INTO `ProjectResearchDomain` (`project_id`, `research_domain_id`) VALUES
@@ -140,18 +143,18 @@ INSERT INTO `ExpertAssignment` (`id`, `project_id`, `expert_id`, `assigned_by`, 
 -- 四、孵化服务数据示例
 -- =============================================
 
--- 12. 孵化跟进记录
-INSERT INTO `IncubationProgress` (`id`, `project_id`, `recorded_by`, `progress_date`, `title`, `abstract`, `content`, `next_steps`, `comment`, `reviewed_by`) VALUES
-('inc-001', 'prj-001', 'usr-pm1', '2026-03-15', '项目启动会及团队组建完成', '项目团队已组建，召开项目启动会，明确各成员分工', '2026年3月15日召开项目启动会，参会人员包括项目负责人王强教授、核心成员5人及项目管理办公室代表。会议明确了项目目标、技术路线和人员分工。已建立项目沟通机制，每周召开例会。', '1. 完成GPU服务器采购招标\n2. 启动医学影像数据收集工作\n3. 安排算法团队进行前期调研', '团队组建顺利，建议加快设备采购流程', 'usr-pm1'),
+-- 12. 孵化服务记录（与 research_system_db.sql 中 IncubationProgress 结构一致）
+INSERT INTO `IncubationProgress` (`id`, `project_id`, `applicant_id`, `application_date`, `service_requirement`, `feedback_date`, `feedback_by`, `feedback_action`, `feedback_comment`, `result_date`, `result_description`, `status`) VALUES
+('inc-001', 'prj-001', 'usr-app1', '2026-03-15 10:00:00', '申请项目启动期孵化服务支持与协调。', '2026-03-16 14:00:00', 'usr-pm1', 'approved', '团队组建顺利，建议加快设备采购流程', NULL, NULL, 'feedback_given'),
 
-('inc-002', 'prj-001', 'usr-pm1', '2026-04-05', '数据收集及标注工作进展', '已完成首批1000例影像数据收集，标注工作正在进行', '本月数据收集进展：\n- 已从合作医院获取肺部CT影像1000例\n- 已安排3名放射科医生进行标注，完成300例\n- 数据预处理流程已建立', '1. 继续收集数据至2000例\n2. 开发数据增强工具\n3. 搭建模型训练环境', '数据质量良好，标注一致性需要定期校验', NULL),
+('inc-002', 'prj-001', 'usr-app1', '2026-04-05 09:00:00', '数据收集及标注阶段进展沟通。', NULL, NULL, NULL, NULL, NULL, NULL, 'pending'),
 
-('inc-003', 'prj-002', 'usr-pm1', '2026-03-20', 'CAR载体构建进展', '已完成第三代CAR载体设计，进入质粒构建阶段', '项目团队已完成CAR结构的序列设计和优化，采用慢病毒载体系统。目前正在进行质粒构建和测序验证。预计4月中旬完成载体构建。', '1. 完成质粒大量制备\n2. 包装慢病毒\n3. 进行T细胞转导效率测试', '技术路线可行，建议同时准备备选方案', 'usr-pm1');
+('inc-003', 'prj-002', 'usr-app2', '2026-03-20 11:00:00', 'CAR载体构建阶段技术咨询与资源协调。', '2026-03-21 10:00:00', 'usr-pm1', 'approved', '技术路线可行，建议同时准备备选方案', NULL, NULL, 'feedback_given');
 
--- 13. 跟进记录附件
-INSERT INTO `IncubationProgressFile` (`id`, `progress_id`, `file_name`, `file_path`, `file_size`, `mime_type`, `uploaded_by`, `sort_order`) VALUES
-('incfile-001', 'inc-001', '启动会会议纪要.pdf', '/uploads/incubation/inc-001/会议纪要.pdf', 245760, 'application/pdf', 'usr-pm1', 1),
-('incfile-002', 'inc-001', '团队分工表.xlsx', '/uploads/incubation/inc-001/分工表.xlsx', 51200, 'application/vnd.ms-excel', 'usr-pm1', 2);
+-- 13. 孵化服务记录附件
+INSERT INTO `IncubationProgressFile` (`id`, `progress_id`, `attachment_type`, `file_name`, `file_path`, `file_size`, `mime_type`, `sort_order`, `uploaded_by`) VALUES
+('incfile-001', 'inc-001', 'feedback', '启动会会议纪要.pdf', '/uploads/incubation/inc-001/会议纪要.pdf', 245760, 'application/pdf', 1, 'usr-pm1'),
+('incfile-002', 'inc-001', 'feedback', '团队分工表.xlsx', '/uploads/incubation/inc-001/分工表.xlsx', 51200, 'application/vnd.ms-excel', 2, 'usr-pm1');
 
 -- =============================================
 -- 五、项目成果数据示例
@@ -183,9 +186,9 @@ INSERT INTO `Notice` (`id`, `title`, `abstract`, `category`, `created_by`, `is_t
 
 ('not-002', '关于召开项目中期检查会的通知', '定于2026年4月20日召开2025年度立项项目中期检查会，请各项目负责人准备汇报材料', 'notice', 'usr-pm1', 'no', 'yes', 'published', 89, '2026-03-20 10:30:00'),
 
-('not-003', '祝贺我中心3个项目获得省级科技奖励', '在刚刚公布的省级科技奖励名单中，我中心推荐的3个项目分别获得一等奖1项、二等奖2项', 'result', 'usr-admin', 'yes', 'yes', 'published', 245, '2026-02-15 14:00:00'),
+('not-003', '祝贺我中心3个项目获得省级科技奖励', '在刚刚公布的省级科技奖励名单中，我中心推荐的3个项目分别获得一等奖1项、二等奖2项', 'news', 'usr-admin', 'yes', 'yes', 'published', 245, '2026-02-15 14:00:00'),
 
-('not-004', '关于征集产学研合作项目的通知', '为促进科技成果转化，现面向全校征集可转化的产业化项目，将优先推荐给合作企业', 'recruitment', 'usr-pm2', 'no', 'yes', 'published', 67, '2026-03-10 11:00:00'),
+('not-004', '关于征集产学研合作项目的通知', '为促进科技成果转化，现面向全校征集可转化的产业化项目，将优先推荐给合作企业', 'demand', 'usr-pm2', 'no', 'yes', 'published', 67, '2026-03-10 11:00:00'),
 
 ('not-005', '2026年第一季度项目经费执行情况通报', '截至2026年3月31日，各类项目经费执行率总体良好，具体数据见附件', 'notice', 'usr-admin', 'no', 'no', 'published', 45, '2026-04-01 16:30:00'),
 
@@ -235,7 +238,7 @@ INSERT INTO `Notification` (`id`, `user_id`, `type`, `title`, `content`, `relate
 INSERT INTO `AuditLog` (`user_id`, `action`, `table_name`, `record_id`, `old_values`, `new_values`, `ip_address`, `user_agent`) VALUES
 ('usr-app1', 'INSERT', 'Project', 'prj-001', NULL, '{"title":"基于深度学习的医学影像智能诊断系统研发","applicant":"usr-app1"}', '192.168.1.100', 'Mozilla/5.0 Chrome/120.0'),
 
-('usr-pm1', 'UPDATE', 'Project', 'prj-001', '{"status":"submitted"}', '{"status":"approved","approved_budget":1500000}', '192.168.1.50', 'Mozilla/5.0 Chrome/120.0'),
+('usr-pm1', 'UPDATE', 'Project', 'prj-001', '{"status":"submitted"}', '{"status":"approved"}', '192.168.1.50', 'Mozilla/5.0 Chrome/120.0'),
 
 ('usr-admin', 'INSERT', 'User', 'usr-exp1', NULL, '{"username":"liuyang","role":"reviewer"}', '192.168.1.1', 'Mozilla/5.0 Safari/17.0'),
 
@@ -251,20 +254,9 @@ INSERT INTO `ExportLog` (`id`, `user_id`, `export_type`, `export_params`, `file_
 
 ('exp-003', 'usr-app1', 'achievement_export', '{"project_id":"prj-001"}', '我的成果列表.xlsx', '/exports/2026-04-01/成果列表.xlsx', 102400, 3, 'completed', '2026-04-01 09:00:00');
 
--- 22. 支出申请记录
-INSERT INTO `ExpenditureRecord` (`id`, `project_id`, `budget_id`, `expense_no`, `category`, `item_name`, `amount`, `description`, `calculation_method`, `payee_name`, `payee_type`, `bank_account`, `bank_name`, `status`, `applicant_id`, `reviewer_id`, `review_comment`, `review_date`, `paid_date`) VALUES
-('exp-rec-001', 'prj-001', 'bud-001', 'EXP-2026-001', '设备费', 'GPU服务器采购', 450000.00, '采购用于深度学习模型训练的高性能GPU服务器，配置：2颗Intel Xeon Gold处理器、256GB内存、4块NVIDIA A100显卡', '市场询价，比价后选择最优方案', '浪潮电子信息产业股份有限公司', 'company', '123456789012345', '中国银行北京分行', 'paid', 'usr-app1', 'usr-pm1', '预算合理，同意采购', '2026-02-20 10:00:00', '2026-03-01 14:30:00'),
+-- （库表无 ExpenditureRecord，示例支出数据已省略，经费以 ProjectBudget 为准）
 
-('exp-rec-002', 'prj-001', 'bud-002', 'EXP-2026-002', '材料费', '数据采集与标注', 100000.00, '支付合作医院数据采集费及医生标注费（第一批）', '按合同约定，首付款50%', '某某医院', 'company', '987654321098765', '工商银行', 'approved', 'usr-app1', 'usr-pm1', '同意支付首期款', '2026-03-10 09:00:00', NULL),
-
-('exp-rec-003', 'prj-001', 'bud-004', 'EXP-2026-003', '劳务费', '研究生劳务费', 30000.00, '3月份参与项目的研究生劳务报酬发放', '按参与工时计算，共5名研究生', '王强等', 'personal', NULL, NULL, 'approved', 'usr-app1', 'usr-pm1', '核实无误，同意发放', '2026-04-01 11:00:00', NULL),
-
-('exp-rec-004', 'prj-002', 'bud-010', 'EXP-2026-004', '材料费', '试剂耗材采购', 150000.00, '采购细胞培养试剂、抗体等实验耗材', '根据实验进度分批采购', '赛默飞世尔科技', 'company', '555555555555555', '招商银行', 'submitted', 'usr-app2', NULL, NULL, NULL, NULL),
-
-('exp-rec-005', 'prj-002', 'bud-011', 'EXP-2026-005', '测试费', '动物实验费用', 200000.00, '支付合作单位动物实验服务费（小鼠模型构建及药效评价）', '按合同约定支付中期款', '某某生物技术有限公司', 'company', '444444444444444', '建设银行', 'draft', 'usr-app2', NULL, NULL, NULL, NULL);
-
-
-use research_system;
+USE research_system;
 -- 孙殿森（校外用户）
 INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `department`, `title`, `phone`, `status`, `created_at`) VALUES
 ('usr-sundiansen', 'sundiansen', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '孙殿森', 'diansensun@gmail.com', 'applicant', 'CodeNexus.AI', 'CEO', '13693675505', 'active', NOW());

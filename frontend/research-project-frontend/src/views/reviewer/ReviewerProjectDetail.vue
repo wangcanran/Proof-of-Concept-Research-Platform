@@ -1,12 +1,11 @@
 <!-- src/views/reviewer/ReviewerProjectDetail.vue -->
 <template>
   <div class="reviewer-project-detail">
-    <!-- ???? -->
     <header class="detail-header">
       <div class="header-content">
         <div class="back-btn" @click="goBack">
           <el-icon><ArrowLeft /></el-icon>
-          ??
+          返回
         </div>
         <div class="header-info">
           <h1 class="project-title">{{ project.title }}</h1>
@@ -24,12 +23,13 @@
         <div class="action-buttons">
           <el-button
             type="primary"
-            @click="startReview"
-            v-if="!myReview && project.status === 'under_review'"
+            @click="continueReview"
+            v-if="myReview && myReview.status === 'draft' && project.status === 'under_review'"
             class="review-btn"
           >
             <el-icon><EditPen /></el-icon>
-            ?????          </el-button>
+            开始评审
+          </el-button>
 
           <el-button
             type="success"
@@ -38,26 +38,15 @@
             class="my-review-btn"
           >
             <el-icon><View /></el-icon>
-            ??????
-          </el-button>
-
-          <el-button
-            type="warning"
-            @click="continueReview"
-            v-if="myReview && myReview.status === 'draft'"
-            class="continue-btn"
-          >
-            <el-icon><Edit /></el-icon>
-            ????
+            查看我的评审
           </el-button>
 
           <el-button @click="refreshData" class="refresh-btn">
             <el-icon><Refresh /></el-icon>
-            ??
+            刷新
           </el-button>
         </div>
 
-        <!-- ??????? -->
         <div class="review-status" v-if="myReview">
           <div class="status-indicator" :class="myReview.status">
             <span class="status-text">
@@ -71,71 +60,69 @@
       </div>
     </header>
 
-    <!-- ??????-->
     <div class="detail-content">
-      <!-- ?????? -->
       <div class="left-column">
-        <!-- ?????? -->
         <el-card class="info-card" shadow="hover">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><InfoFilled /></el-icon> ??????
+                <el-icon><InfoFilled /></el-icon>
+                基本信息
               </h3>
             </div>
           </template>
 
           <div class="info-grid">
             <div class="info-item">
-              <label>????</label>
+              <label>申请人</label>
               <span class="applicant">{{ project.applicant_name }}</span>
             </div>
 
             <div class="info-item">
-              <label>?????</label>
+              <label>所属单位</label>
               <span>{{ project.applicant_department }}</span>
             </div>
 
             <div class="info-item">
-              <label>??????</label>
+              <label>研究领域</label>
               <span class="research-field">{{ project.research_field }}</span>
             </div>
 
             <div class="info-item">
-              <label>????</label>
+              <label>经费预算</label>
               <span class="budget">{{ formatCurrency(project.budget_total) }}</span>
             </div>
 
             <div class="info-item">
-              <label>??????</label>
-              <span>{{ project.duration_months }}??</span>
+              <label>项目周期</label>
+              <span>{{ project.duration_months != null ? project.duration_months + ' 个月' : '—' }}</span>
             </div>
 
             <div class="info-item">
-              <label>??????</label>
+              <label>提交日期</label>
               <span>{{ formatDate(project.submit_date) }}</span>
             </div>
 
             <div class="info-item">
-              <label>??????</label>
+              <label>评审截止</label>
               <span :class="getDeadlineClass(project.review_deadline)">
                 {{ formatDate(project.review_deadline) }}
               </span>
             </div>
 
             <div class="info-item">
-              <label>????</label>
+              <label>关键词</label>
               <span class="keywords">{{ project.keywords || '暂无关键词' }}</span>
             </div>
           </div>
         </el-card>
 
-        <!-- ???? -->
         <el-card class="abstract-card" shadow="hover">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><Document /></el-icon> ????
+                <el-icon><Document /></el-icon>
+                项目摘要
               </h3>
             </div>
           </template>
@@ -145,42 +132,42 @@
           </div>
         </el-card>
 
-        <!-- ??????????-->
         <el-card class="goals-card" shadow="hover">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><Flag /></el-icon> ??????????              </h3>
+                <el-icon><Flag /></el-icon>
+                研究内容与方案
+              </h3>
             </div>
           </template>
 
           <div class="goals-content">
             <div class="section" v-if="project.objectives">
-              <h4>????</h4>
+              <h4>实施计划</h4>
               <div class="content-text" v-html="formatText(project.objectives)"></div>
             </div>
 
             <div class="section" v-if="project.expected_outcomes">
-              <h4>????</h4>
+              <h4>已有应用/试点</h4>
               <div class="content-text" v-html="formatText(project.expected_outcomes)"></div>
             </div>
 
             <div class="section" v-if="project.methodology">
-              <h4>????</h4>
+              <h4>知识产权</h4>
               <div class="content-text" v-html="formatText(project.methodology)"></div>
             </div>
           </div>
         </el-card>
       </div>
 
-      <!-- ???????? -->
       <div class="right-column">
-        <!-- ???? -->
         <el-card class="members-card" shadow="hover">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><User /></el-icon> ????
+                <el-icon><User /></el-icon>
+                项目成员
               </h3>
               <span class="count-badge">{{ members.length }} 人</span>
             </div>
@@ -206,7 +193,7 @@
                   <span class="member-department">{{ member.department }}</span>
                 </div>
                 <div class="member-workload" v-if="member.workload_percentage">
-                  <span class="workload-label">????</span>
+                  <span class="workload-label">工作量</span>
                   <span class="workload-value">{{ member.workload_percentage }}%</span>
                 </div>
                 <div class="member-responsibility" v-if="member.responsibility">
@@ -217,12 +204,12 @@
           </div>
         </el-card>
 
-        <!-- ???? -->
         <el-card class="budget-card" shadow="hover">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><Coin /></el-icon> ????
+                <el-icon><Coin /></el-icon>
+                经费预算
               </h3>
               <span class="budget-total">{{ formatCurrency(totalBudget) }}</span>
             </div>
@@ -260,12 +247,12 @@
           </div>
         </el-card>
 
-        <!-- ?????? -->
         <el-card class="reviews-card" shadow="hover" v-if="reviews.length > 0">
           <template #header>
             <div class="card-header">
               <h3>
-                <el-icon><ChatLineRound /></el-icon> ??????
+                <el-icon><ChatLineRound /></el-icon>
+                其他专家意见
               </h3>
               <span class="count-badge">{{ reviews.length }} 条</span>
             </div>
@@ -318,11 +305,11 @@
                   <span class="score-value">{{ review.feasibility_score.toFixed(1) }}</span>
                 </div>
 
-                <div class="score-total">
+                <div class="score-total" v-if="review.total_score != null">
                   <span class="total-label">总分</span>
-                  <span class="total-value">{{ review.total_score.toFixed(1) }}</span>
+                  <span class="total-value">{{ Number(review.total_score).toFixed(1) }}</span>
                   <el-rate
-                    v-model="review.total_score"
+                    :model-value="Number(review.total_score)"
                     disabled
                     :max="10"
                     :allow-half="true"
@@ -335,7 +322,7 @@
                 <div class="comment-text">{{ truncateText(review.comments, 150) }}</div>
                 <div class="comment-more" v-if="review.comments.length > 150">
                   <el-button type="text" size="small" @click="viewFullReview(review)">
-                    ??????
+                    查看全文
                   </el-button>
                 </div>
               </div>
@@ -355,11 +342,10 @@
       </div>
     </div>
 
-    <!-- ?????-->
     <div v-if="loading" class="loading-overlay">
       <div class="loading-content">
         <div class="loading-spinner"></div>
-        <div class="loading-text">????????...</div>
+        <div class="loading-text">正在加载项目详情...</div>
       </div>
     </div>
   </div>
@@ -368,12 +354,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   ArrowLeft,
   EditPen,
   View,
-  Edit,
   Refresh,
   InfoFilled,
   Document,
@@ -423,45 +408,62 @@ const totalBudget = computed(() => {
 const loadProjectDetail = async () => {
   loading.value = true
   try {
-    const projectId = route.params.id
+    const projectId = route.params.id as string
+    // 后端提供的是 GET /api/reviewer/project-for-review?projectId=
+    const response = await request.get('/api/reviewer/project-for-review', {
+      params: { projectId },
+    })
 
-    const response = await request.get(`/api/reviewer/projects/${projectId}`)
-
-    if (response.success) {
-      project.value = response.data.project || {}
-      members.value = response.data.members || []
-      budget.value = response.data.budget || []
-      achievements.value = response.data.achievements || []
-      reviews.value = response.data.reviews || []
-      myReview.value = response.data.myReview
-      stages.value = response.data.stages || []
+    if (response.success && response.data) {
+      const d = response.data as any
+      const p = d.project || {}
+      const fields = (p.research_field || '').split(',').map((s: string) => s.trim()).filter(Boolean)
+      project.value = {
+        ...p,
+        category: fields[0] || '—',
+        research_field: p.research_field || '—',
+        review_deadline: d.existingReview?.deadline || '',
+      }
+      members.value = (d.members || []).map((m: any) => ({
+        ...m,
+        department: m.organization || m.department || '',
+      }))
+      budget.value = d.budget || []
+      achievements.value = d.achievements || []
+      const other = d.otherReviews || []
+      reviews.value = other.map((r: any) => ({
+        ...r,
+        innovation_score: r.innovation_score,
+        feasibility_score: r.feasibility_score,
+        total_score: r.total_score,
+      }))
+      const ex = d.existingReview
+      if (ex) {
+        const ast = ex.status as string
+        myReview.value = {
+          id: ex.id,
+          status: ast === 'reviewing' ? 'draft' : 'submitted',
+          submitted_at: ex.deadline,
+        }
+      } else {
+        myReview.value = null
+      }
+      stages.value = d.stages || []
 
       console.log('已加载评审项目详情')
     } else {
-      ElMessage.error(response.message || '加载项目详情失败')
+      ElMessage.error((response as any).error || (response as any).message || '加载项目详情失败')
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('加载项目详情失败:', error)
-    ElMessage.error('加载项目详情失败')
+    const msg =
+      error?.response?.data?.error ||
+      error?.response?.data?.message ||
+      '加载项目详情失败'
+    ElMessage.error(msg)
   } finally {
     loading.value = false
   }
-}
-
-const startReview = () => {
-  ElMessageBox.confirm('将跳转到评审页面，是否继续？', '开始评审', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'info',
-  }).then(() => {
-    router.push({
-      path: '/reviewer/review',
-      query: {
-        projectId: project.value.id,
-        projectCode: project.value.project_code,
-      },
-    })
-  })
 }
 
 const continueReview = () => {
@@ -500,6 +502,7 @@ const getStatusType = (status: string) => {
     submitted: '',
     under_review: 'warning',
     approved: 'success',
+    incubating: 'primary',
     in_progress: 'primary',
     completed: 'success',
     rejected: 'danger',
@@ -513,6 +516,7 @@ const getStatusText = (status: string) => {
     submitted: '已提交',
     under_review: '评审中',
     approved: '已通过',
+    incubating: '孵化中',
     in_progress: '进行中',
     completed: '已完成',
     rejected: '已驳回',
@@ -543,6 +547,7 @@ const getRoleType = (role: string) => {
 const getRoleText = (role: string) => {
   const map: Record<string, string> = {
     principal: '负责人',
+    contact: '联系人',
     co_researcher: '合作研究者',
     research_assistant: '科研助理',
     student: '学生',

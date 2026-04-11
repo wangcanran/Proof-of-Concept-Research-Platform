@@ -37,8 +37,8 @@
             <span class="info-value">{{ application.title }}</span>
           </div>
           <div class="info-item">
-            <label class="info-label">申请类别：</label>
-            <span class="info-value">{{ getCategoryText(application.category) }}</span>
+            <label class="info-label">关键词：</label>
+            <span class="info-value">{{ application.keywords || '—' }}</span>
           </div>
           <div class="info-item">
             <label class="info-label">研究领域：</label>
@@ -53,8 +53,8 @@
             <span class="info-value">{{ formatDate(application.created_at) }}</span>
           </div>
           <div class="info-item">
-            <label class="info-label">研究周期：</label>
-            <span class="info-value">{{ application.duration_months }}个月</span>
+            <label class="info-label">技术成熟度：</label>
+            <span class="info-value">{{ getTechMaturityText(application.tech_maturity) }}</span>
           </div>
           <div class="info-item">
             <label class="info-label">总预算：</label>
@@ -249,18 +249,6 @@ const getStatusTagType = (status: string) => {
   return map[status] || 'info'
 }
 
-const getCategoryText = (category: string) => {
-  const map: Record<string, string> = {
-    基础研究: '基础研究',
-    应用研究: '应用研究',
-    技术开发: '技术开发',
-    成果转化: '成果转化',
-    平台建设: '平台建设',
-    其他: '其他',
-  }
-  return map[category] || category
-}
-
 const getBudgetCategoryText = (category: string) => {
   const map: Record<string, string> = {
     设备费: '设备费',
@@ -290,6 +278,17 @@ const formatAmount = (amount: number) => {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount)
+}
+
+const getTechMaturityText = (maturity?: string | null) => {
+  const map: Record<string, string> = {
+    rd: '研发阶段',
+    pilot: '小试阶段',
+    intermediate_trial: '中试阶段',
+    small_batch_prod: '小批量生产',
+  }
+  if (!maturity) return '—'
+  return map[maturity] || maturity
 }
 
 const getHistoryActionText = (action: string) => {

@@ -22,6 +22,61 @@ const DB_CONFIG = {
 
 // 创建连接池
 const pool = mysql.createPool(DB_CONFIG);
+
+/**
+ * multipart 文件名：浏览器以 UTF-8 发送，multer 等常按 latin1 解析为 JS 字符串，导致中文乱码。
+ * 若字符串无 BMP 外字符，则尝试 latin1 字节按 UTF-8 还原；已是正确 Unicode 的中文名不会被误改。
+ */
+function fixMultipartFilename(name) {
+  if (!name || typeof name !== 'string') return name;
+  if ([...name].some((ch) => ch.charCodeAt(0) > 255)) {
+    return name;
+  }
+  try {
+    const decoded = Buffer.from(name, 'latin1').toString('utf8');
+    if (decoded.includes('\uFFFD')) return name;
+    return decoded === name ? name : decoded;
+  } catch {
+    return name;
+  }
+}
+
+// 项目附件上传（须在 createServer 路由之前定义，供 /api/projects/upload-attachment 使用）
+const projectUploadsDir = path.join(__dirname, 'uploads', 'projects');
+if (!fs.existsSync(projectUploadsDir)) {
+  fs.mkdirSync(projectUploadsDir, { recursive: true });
+}
+const projectUploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, projectUploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const safe = fixMultipartFilename(file.originalname || '');
+    const ext = path.extname(safe) || path.extname(file.originalname || '');
+    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+  }
+});
+const projectUploadFileFilter = (req, file, cb) => {
+  const allowedTypes = [
+    'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/zip'
+  ];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('不支持的文件类型'), false);
+  }
+};
+const projectUpload = multer({
+  storage: projectUploadStorage,
+  fileFilter: projectUploadFileFilter,
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
 function getTaskTypeLabel(type) {
   switch(type) {
     case 1: return '审批任务'
@@ -137,6 +192,20 @@ function assertProjectManagerProjectOwnership(project, user) {
     };
   }
   return { ok: true };
+}
+
+/** 与 database/research_system_db.sql 一致：Project 表无 approved_budget 列，申报总额为 ProjectBudget.amount 汇总 */
+function sqlProjectBudgetTotal(alias = 'p') {
+  return `(SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = ${alias}.id)`;
+}
+
+/** 库表 Project.status ENUM 无 revision/batch_review/terminated，映射为可写入值 */
+function normalizeProjectStatusForDb(status) {
+  const s = String(status || '').trim();
+  if (s === 'revision' || s === 'returned') return 'draft';
+  if (s === 'batch_review') return 'under_review';
+  if (s === 'terminated') return 'rejected';
+  return s;
 }
 
 // 辅助函数：解析请求体
@@ -442,7 +511,7 @@ if (pathname === '/api/home/stats' && req.method === 'GET') {
         COUNT(*) AS total_projects,
         SUM(CASE WHEN status IN ('approved', 'incubating', 'completed') THEN 1 ELSE 0 END) AS approved_projects,
         SUM(CASE WHEN status = 'incubating' THEN 1 ELSE 0 END) AS incubating_projects,
-        COALESCE(SUM(COALESCE(approved_budget, 0)), 0) AS total_budget_yuan
+        COALESCE((SELECT SUM(amount) FROM \`ProjectBudget\`), 0) AS total_budget_yuan
       FROM \`Project\`
     `);
     const [reviewerRows] = await pool.query(`
@@ -919,15 +988,19 @@ if (pathname === '/api/dashboard/applicant' && req.method === 'GET') {
     const [projectStats] = await pool.query(`
       SELECT 
         COUNT(*) as total_projects,
-        SUM(CASE WHEN status IN ('draft', 'submitted', 'under_review', 'revision', 'batch_review') THEN 1 ELSE 0 END) as pending_reviews,
+        SUM(CASE WHEN status IN ('draft', 'submitted', 'under_review') THEN 1 ELSE 0 END) as pending_reviews,
         SUM(CASE WHEN status = 'incubating' THEN 1 ELSE 0 END) as ongoing_projects,
         SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted_projects,
         SUM(CASE WHEN status IN ('approved', 'incubating') THEN 1 ELSE 0 END) as approved_projects,
-        SUM(CASE WHEN status IN ('under_review', 'revision', 'batch_review') THEN 1 ELSE 0 END) as reviewing_projects,
-        COALESCE(SUM(approved_budget), 0) as total_funds
+        SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as reviewing_projects,
+        COALESCE((
+          SELECT SUM(pb.amount) FROM \`ProjectBudget\` pb
+          INNER JOIN \`Project\` px ON pb.project_id = px.id
+          WHERE px.applicant_id = ?
+        ), 0) as total_funds
       FROM \`Project\`
       WHERE applicant_id = ?
-    `, [userId]);
+    `, [userId, userId]);
     
     const statsData = projectStats[0] || {
       total_projects: 0,
@@ -939,15 +1012,8 @@ if (pathname === '/api/dashboard/applicant' && req.method === 'GET') {
       total_funds: 0
     };
     
-    // 2. 获取已使用经费（从支出记录表）
-    const [usedFundsResult] = await pool.query(`
-      SELECT COALESCE(SUM(amount), 0) as used_funds
-      FROM \`ExpenditureRecord\` er
-      INNER JOIN \`Project\` p ON er.project_id = p.id
-      WHERE p.applicant_id = ? AND er.status IN ('approved', 'paid')
-    `, [userId]);
-    
-    const usedFunds = usedFundsResult[0]?.used_funds || 0;
+    // 2. 已使用经费（库表无 ExpenditureRecord，占位为 0）
+    const usedFunds = 0;
     
     // 3. 获取待办事项
     const pendingTasks = [];
@@ -961,7 +1027,7 @@ if (pathname === '/api/dashboard/applicant' && req.method === 'GET') {
         DATE_FORMAT(created_at, '%Y-%m-%d') as deadline
       FROM \`Project\`
       WHERE applicant_id = ? 
-        AND status IN ('draft', 'revision')
+        AND status IN ('draft')
       ORDER BY created_at DESC
       LIMIT 5
     `, [userId]);
@@ -981,21 +1047,9 @@ if (pathname === '/api/dashboard/applicant' && req.method === 'GET') {
       LIMIT 5
     `, [userId]);
     
-    // 3.3 待处理的经费申请
-    const [expenditureTasks] = await pool.query(`
-      SELECT 
-        er.id,
-        er.item_name as title,
-        'expenditure' as type,
-        DATE_FORMAT(er.created_at, '%Y-%m-%d') as deadline
-      FROM \`ExpenditureRecord\` er
-      INNER JOIN \`Project\` p ON er.project_id = p.id
-      WHERE p.applicant_id = ?
-        AND er.status = 'submitted'
-      ORDER BY er.created_at DESC
-      LIMIT 5
-    `, [userId]);
-    
+    // 3.3 经费申请待办（库表无 ExpenditureRecord）
+    const expenditureTasks = [];
+
     pendingTasks.push(
       ...projectTasks.map(task => ({ 
         id: `proj_${task.id}`, 
@@ -1054,7 +1108,7 @@ if (pathname === '/api/dashboard/applicant' && req.method === 'GET') {
       FROM \`Project\` p
       LEFT JOIN \`User\` u ON p.applicant_id = u.id
       WHERE p.applicant_id = ?
-        AND p.status NOT IN ('rejected', 'terminated')
+        AND p.status NOT IN ('rejected')
       ORDER BY p.created_at DESC
       LIMIT 5
     `, [userId]);
@@ -1101,28 +1155,8 @@ if (pathname === '/api/dashboard/applicant' && req.method === 'GET') {
       ? ((currentApprovedStats[0]?.count - lastApprovedStats[0]?.count) / lastApprovedStats[0]?.count * 100).toFixed(1)
       : (currentApprovedStats[0]?.count > 0 ? 100 : 0);
     
-    // 本月经费使用趋势
-    const [currentFundStats] = await pool.query(`
-      SELECT COALESCE(SUM(er.amount), 0) as total
-      FROM \`ExpenditureRecord\` er
-      INNER JOIN \`Project\` p ON er.project_id = p.id
-      WHERE p.applicant_id = ?
-        AND er.status IN ('approved', 'paid')
-        AND DATE_FORMAT(er.created_at, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m')
-    `, [userId]);
-    
-    const [lastFundStats] = await pool.query(`
-      SELECT COALESCE(SUM(er.amount), 0) as total
-      FROM \`ExpenditureRecord\` er
-      INNER JOIN \`Project\` p ON er.project_id = p.id
-      WHERE p.applicant_id = ?
-        AND er.status IN ('approved', 'paid')
-        AND DATE_FORMAT(er.created_at, '%Y-%m') = DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m')
-    `, [userId]);
-    
-    const fundTrend = lastFundStats[0]?.total > 0 
-      ? ((currentFundStats[0]?.total - lastFundStats[0]?.total) / lastFundStats[0]?.total * 100).toFixed(1)
-      : (currentFundStats[0]?.total > 0 ? 100 : 0);
+    // 本月经费使用趋势（库表无 ExpenditureRecord，占位为 0）
+    const fundTrend = 0;
     
     // 7. 获取未读通知数量
     const [unreadCountResult] = await pool.query(`
@@ -1223,19 +1257,17 @@ if (pathname === '/api/dashboard/applicant' && req.method === 'GET') {
 }
 // 计算项目进度（基于状态）
 function calculateProjectProgress(status) {
+  /** 与 `Project`.status ENUM 一致 */
   const progressMap = {
-    'draft': 20,
-    'submitted': 40,
-    'under_review': 50,
-    'revision': 45,
-    'batch_review': 55,
-    'approved': 70,
-    'incubating': 85,
-    'completed': 100,
-    'rejected': 0,
-    'terminated': 0
+    draft: 20,
+    submitted: 40,
+    under_review: 50,
+    approved: 70,
+    incubating: 85,
+    completed: 100,
+    rejected: 0,
   };
-  return progressMap[status] || 10;
+  return progressMap[status] ?? 10;
 }
 
 // 获取任务类型标签
@@ -1312,17 +1344,15 @@ function formatRelativeTime(dateString) {
       try {
         console.log('📊 获取管理员仪表板数据，用户ID:', user.id);
         
-        // 1. 获取系统统计
-        const [systemStats] = await pool.query(`
+        const [systemStatsRows] = await pool.query(`
           SELECT 
-            COUNT(*) as total_projects,
-            COUNT(CASE WHEN status = 'under_review' THEN 1 END) as pending_reviews,
-            COUNT(CASE WHEN status IN ('approved', 'in_progress') THEN 1 END) as ongoing_projects,
-            COUNT(DISTINCT applicant_id) as active_users,
-            COUNT(DISTINCT id) as total_users
-          FROM \`Project\`
-          CROSS JOIN (SELECT COUNT(*) as total_users FROM \`User\`) as user_stats
+            (SELECT COUNT(*) FROM \`Project\`) as total_projects,
+            (SELECT COUNT(*) FROM \`Project\` WHERE status = 'under_review') as pending_reviews,
+            (SELECT COUNT(*) FROM \`Project\` WHERE status IN ('approved', 'incubating')) as ongoing_projects,
+            (SELECT COUNT(DISTINCT applicant_id) FROM \`Project\`) as active_users,
+            (SELECT COUNT(*) FROM \`User\`) as total_users
         `);
+        const systemStats = systemStatsRows[0] || {};
         
         // 2. 获取待办事项
         const pendingTasks = [];
@@ -1342,20 +1372,7 @@ function formatRelativeTime(dateString) {
           LIMIT 5
         `);
         
-        // 待处理支出
-        const [expenditureTasks] = await pool.query(`
-          SELECT 
-            er.id,
-            CONCAT('审核支出: ', er.item_name) as title,
-            'expenditure_audit' as type,
-            DATE_FORMAT(er.created_at, '%Y-%m-%d') as deadline,
-            p.title as project_title
-          FROM \`ExpenditureRecord\` er
-          LEFT JOIN \`Project\` p ON er.project_id = p.id
-          WHERE er.status = 'submitted'
-          ORDER BY er.created_at ASC
-          LIMIT 5
-        `);
+        const expenditureTasks = [];
         
         // 待审核成果
         const [achievementTasks] = await pool.query(`
@@ -1367,7 +1384,7 @@ function formatRelativeTime(dateString) {
             p.title as project_title
           FROM \`ProjectAchievement\` pa
           LEFT JOIN \`Project\` p ON pa.project_id = p.id
-          WHERE pa.status = 'under_review'
+          WHERE pa.status = 'submitted'
           ORDER BY pa.created_at ASC
           LIMIT 5
         `);
@@ -1414,7 +1431,7 @@ function formatRelativeTime(dateString) {
             COUNT(CASE WHEN status = 'submitted' THEN 1 END) as submitted,
             COUNT(CASE WHEN status = 'under_review' THEN 1 END) as under_review,
             COUNT(CASE WHEN status = 'approved' THEN 1 END) as approved,
-            COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress,
+            COUNT(CASE WHEN status = 'incubating' THEN 1 END) as incubating,
             COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
             COUNT(CASE WHEN status = 'rejected' THEN 1 END) as rejected
           FROM \`Project\`
@@ -1434,11 +1451,11 @@ function formatRelativeTime(dateString) {
           success: true,
           data: {
             stats: {
-              total_projects: systemStats[0]?.total_projects || 0,
-              pending_reviews: systemStats[0]?.pending_reviews || 0,
-              ongoing_projects: systemStats[0]?.ongoing_projects || 0,
-              active_users: systemStats[0]?.active_users || 0,
-              total_users: systemStats[0]?.total_users || 0,
+              total_projects: systemStats.total_projects || 0,
+              pending_reviews: systemStats.pending_reviews || 0,
+              ongoing_projects: systemStats.ongoing_projects || 0,
+              active_users: systemStats.active_users || 0,
+              total_users: systemStats.total_users || 0,
               ...projectOverview[0]
             },
             pending_tasks: pendingTasks.map((task, index) => ({
@@ -2075,11 +2092,8 @@ function getTableName(table) {
   const map = {
     'User': '用户',
     'Project': '项目',
-    'FundingApplication': '经费申请',
-    'ExpenditureRecord': '经费支出',
     'ProjectAchievement': '项目成果',
     'Notification': '通知',
-    'AuditTask': '审核任务',
     'System': '系统'
   };
   return map[table] || table;
@@ -2156,9 +2170,11 @@ if (pathname === '/api/admin/users' && req.method === 'GET') {
       queryParams.push(`%${query.title}%`);
     }
     
-    // 研究领域筛选
+    // 研究领域筛选（专家特长在 ExpertProfile.expertise_description）
     if (query.research_field) {
-      whereClauses.push('u.research_field LIKE ?');
+      whereClauses.push(
+        'EXISTS (SELECT 1 FROM `ExpertProfile` epf WHERE epf.id = u.id AND epf.expertise_description LIKE ?)'
+      );
       queryParams.push(`%${query.research_field}%`);
     }
     
@@ -2213,7 +2229,7 @@ if (pathname === '/api/admin/users' && req.method === 'GET') {
         u.role,
         u.department,
         u.title,
-        u.research_field,
+        ep.expertise_description AS research_field,
         u.phone,
         u.status,
         u.last_login,
@@ -2222,6 +2238,7 @@ if (pathname === '/api/admin/users' && req.method === 'GET') {
         (SELECT COUNT(*) FROM \`Project\` p WHERE p.applicant_id = u.id) as project_count,
         (SELECT COUNT(*) FROM \`ProjectAchievement\` pa WHERE pa.created_by = u.id) as achievement_count
       FROM \`User\` u
+      LEFT JOIN \`ExpertProfile\` ep ON ep.id = u.id
       WHERE ${whereClause}
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
@@ -2233,7 +2250,7 @@ if (pathname === '/api/admin/users' && req.method === 'GET') {
         COUNT(*) as totalCount,
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as activeCount,
         SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) as inactiveCount,
-        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pendingCount
+        0 as pendingCount
       FROM \`User\`
       WHERE ${whereClause}
     `, queryParams);
@@ -2313,11 +2330,12 @@ if (pathname === '/api/admin/users' && req.method === 'POST') {
     const newUserId = uuidv4();
     const now = new Date();
     
+    const userStatus = body.status === 'inactive' ? 'inactive' : 'active';
     await pool.query(
       `INSERT INTO \`User\` (
         id, username, password, name, email, role, department, title,
-        research_field, phone, bio, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        phone, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newUserId,
         body.username,
@@ -2325,16 +2343,22 @@ if (pathname === '/api/admin/users' && req.method === 'POST') {
         body.name,
         body.email,
         body.role,
-        body.department || '',
-        body.title || '',
-        body.research_field || '',
-        body.phone || '',
-        body.bio || '',
-        body.status || 'active',
+        body.department || null,
+        body.title || null,
+        body.phone || null,
+        userStatus,
         now,
         now
       ]
     );
+    if (body.role === 'reviewer') {
+      const desc = body.expertise_description != null ? body.expertise_description : body.research_field;
+      await pool.query(
+        `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
+         ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
+        [newUserId, desc || null]
+      );
+    }
     
     // 记录操作日志
     await pool.query(
@@ -2424,17 +2448,10 @@ if (pathname.startsWith('/api/admin/users/') && req.method === 'PUT') {
       }
     }
     
-    // 构建更新数据
+    const userCols = ['name', 'email', 'role', 'department', 'title', 'phone', 'status'];
     const updates = {};
-    const updateFields = [
-      'name', 'email', 'role', 'department', 'title', 
-      'research_field', 'phone', 'bio', 'status'
-    ];
-    
-    updateFields.forEach(field => {
-      if (body[field] !== undefined) {
-        updates[field] = body[field];
-      }
+    userCols.forEach((field) => {
+      if (body[field] !== undefined) updates[field] = body[field];
     });
     
     // 如果是更新角色，需要检查权限链
@@ -2448,11 +2465,26 @@ if (pathname.startsWith('/api/admin/users/') && req.method === 'PUT') {
       }
     }
     
-    // 更新用户信息
-    await pool.query(
-      'UPDATE `User` SET ?, updated_at = NOW() WHERE id = ?',
-      [updates, userId]
-    );
+    const setParts = [];
+    const setVals = [];
+    Object.keys(updates).forEach((k) => {
+      setParts.push(`\`${k}\` = ?`);
+      setVals.push(updates[k]);
+    });
+    if (setParts.length) {
+      await pool.query(`UPDATE \`User\` SET ${setParts.join(', ')}, updated_at = NOW() WHERE id = ?`, [...setVals, userId]);
+    }
+    const expertDesc = body.expertise_description !== undefined ? body.expertise_description : body.research_field;
+    if (expertDesc !== undefined || body.role === 'reviewer') {
+      const effRole = body.role !== undefined ? body.role : oldUser.role;
+      if (effRole === 'reviewer') {
+        await pool.query(
+          `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
+           ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
+          [userId, expertDesc != null ? expertDesc : null]
+        );
+      }
+    }
     
     // 记录操作日志
     await pool.query(
@@ -2733,7 +2765,7 @@ if (pathname.startsWith('/api/admin/users/') && req.method === 'DELETE') {
     
     // 检查用户是否有未完成的数据
     const [projects] = await pool.query(
-      'SELECT COUNT(*) as count FROM `Project` WHERE applicant_id = ? AND status IN ("in_progress", "stage_review")',
+      `SELECT COUNT(*) as count FROM \`Project\` WHERE applicant_id = ? AND status IN ('submitted','under_review','approved','incubating')`,
       [userId]
     );
     
@@ -2962,7 +2994,7 @@ if (pathname === '/api/admin/users/batch-delete' && req.method === 'POST') {
     const [activeProjects] = await pool.query(
       `SELECT COUNT(DISTINCT p.applicant_id) as count 
        FROM \`Project\` p 
-       WHERE p.applicant_id IN (?) AND p.status IN ("in_progress", "stage_review")`,
+       WHERE p.applicant_id IN (?) AND p.status IN ('submitted','under_review','approved','incubating')`,
       [body.userIds]
     );
     
@@ -3211,12 +3243,15 @@ async function getUserDataForAudit(userId) {
   const userData = user[0];
   
   // 获取用户相关的统计数据
-  const [stats] = await pool.query(`
+  const [stats] = await pool.query(
+    `
     SELECT 
       (SELECT COUNT(*) FROM \`Project\` WHERE applicant_id = ?) as project_count,
       (SELECT COUNT(*) FROM \`ProjectAchievement\` WHERE created_by = ?) as achievement_count,
-      (SELECT COUNT(*) FROM \`FundingApplication\` WHERE applicant_id = ?) as funding_count
-  `, [userId, userId, userId]);
+      0 as funding_count
+  `,
+    [userId, userId],
+  );
   
   return {
     ...userData,
@@ -4180,7 +4215,7 @@ if (pathname === '/api/dashboard/assistant/detailed' && req.method === 'GET') {
     const [pendingApps] = await pool.query(`
       SELECT COUNT(*) as count 
       FROM \`Project\` 
-      WHERE status IN ('submitted', 'under_review', 'revision', 'batch_review')
+      WHERE status IN ('submitted', 'under_review')
     `);
     overview.pendingApplications = pendingApps[0]?.count || 0;
     
@@ -4225,13 +4260,8 @@ if (pathname === '/api/dashboard/assistant/detailed' && req.method === 'GET') {
     `, [user.id]);
     overview.unreadMessages = unreadMessages[0]?.count || 0;
     
-    // 获取未处理支出申请
-    const [pendingExpenditures] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`ExpenditureRecord\` 
-      WHERE status = 'submitted'
-    `);
-    overview.pending_expenditures = pendingExpenditures[0]?.count || 0;
+    // 库表无 ExpenditureRecord
+    overview.pending_expenditures = 0;
     
     // 获取未审核成果
     const [pendingAchievements] = await pool.query(`
@@ -4253,13 +4283,11 @@ if (pathname === '/api/dashboard/assistant/detailed' && req.method === 'GET') {
         u.email as applicant_email
       FROM \`Project\` p
       LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      WHERE p.status IN ('submitted', 'under_review', 'revision', 'batch_review')
+      WHERE p.status IN ('submitted', 'under_review')
       ORDER BY 
         CASE p.status 
           WHEN 'under_review' THEN 1
           WHEN 'submitted' THEN 2
-          WHEN 'revision' THEN 3
-          WHEN 'batch_review' THEN 4
           ELSE 5
         END,
         p.created_at ASC
@@ -4283,13 +4311,10 @@ if (pathname === '/api/dashboard/assistant/detailed' && req.method === 'GET') {
         SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft,
         SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted,
         SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as under_review,
-        SUM(CASE WHEN status = 'revision' THEN 1 ELSE 0 END) as revision,
-        SUM(CASE WHEN status = 'batch_review' THEN 1 ELSE 0 END) as batch_review,
         SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
         SUM(CASE WHEN status = 'incubating' THEN 1 ELSE 0 END) as incubating,
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(CASE WHEN status = 'terminated' THEN 1 ELSE 0 END) as terminated
+        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
       FROM \`Project\`
     `);
     
@@ -4300,13 +4325,10 @@ if (pathname === '/api/dashboard/assistant/detailed' && req.method === 'GET') {
     const statusList = [
       { status: 'submitted', label: '已提交', color: '#e6f7ff', textColor: '#1890ff' },
       { status: 'under_review', label: '评审中', color: '#fff7e6', textColor: '#fa8c16' },
-      { status: 'revision', label: '修改中', color: '#ffe7ba', textColor: '#d46b00' },
-      { status: 'batch_review', label: '集中评审', color: '#ffd591', textColor: '#ad4e00' },
       { status: 'approved', label: '已批准', color: '#f6ffed', textColor: '#52c41a' },
       { status: 'incubating', label: '孵化中', color: '#1890ff', textColor: 'white' },
       { status: 'completed', label: '已完成', color: '#f6ffed', textColor: '#52c41a' },
       { status: 'rejected', label: '已驳回', color: '#fff2f0', textColor: '#ff4d4f' },
-      { status: 'terminated', label: '已终止', color: '#f5f5f5', textColor: '#8c8c8c' },
       { status: 'draft', label: '草稿', color: '#f5f5f5', textColor: '#8c8c8c' }
     ];
     
@@ -4352,7 +4374,7 @@ if (pathname === '/api/dashboard/assistant/detailed' && req.method === 'GET') {
       const tableName = log.table_name === 'Project' ? '项目' :
                         log.table_name === 'User' ? '用户' :
                         log.table_name === 'ProjectAchievement' ? '成果' :
-                        log.table_name === 'ExpenditureRecord' ? '支出申请' : log.table_name;
+                        log.table_name;
       return `${log.user_name || '系统'} ${actionText}${tableName}`;
     };
     
@@ -4520,19 +4542,13 @@ if (pathname === '/api/assistant/dashboard/overview' && req.method === 'GET') {
       WHERE status = 'submitted' AND manager_id IS NULL
     `);
     
-    // 获取进行中项目数量
     const [activeProjectsResult] = await pool.query(`
       SELECT COUNT(*) as count 
       FROM \`Project\` 
-      WHERE status IN ('in_progress', 'stage_review')
+      WHERE status IN ('approved', 'incubating', 'under_review')
     `);
-    
-    // 获取待审核支出数量
-    const [pendingExpendituresResult] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`ExpenditureRecord\` 
-      WHERE status = 'submitted'
-    `);
+
+    const pendingExpendituresResult = [{ count: 0 }];
     
     // 获取待审核成果数量
     const [pendingAchievementsResult] = await pool.query(`
@@ -4651,11 +4667,9 @@ if (pathname === '/api/assistant/stats/projects' && req.method === 'GET') {
           WHEN 'submitted' THEN 2
           WHEN 'under_review' THEN 3
           WHEN 'approved' THEN 4
-          WHEN 'in_progress' THEN 5
-          WHEN 'stage_review' THEN 6
-          WHEN 'completed' THEN 7
-          WHEN 'rejected' THEN 8
-          WHEN 'terminated' THEN 9
+          WHEN 'incubating' THEN 5
+          WHEN 'completed' THEN 6
+          WHEN 'rejected' THEN 7
           ELSE 10
         END
     `);
@@ -4667,11 +4681,9 @@ if (pathname === '/api/assistant/stats/projects' && req.method === 'GET') {
       submitted: '已提交',
       under_review: '审核中',
       approved: '已批准',
-      in_progress: '进行中',
-      stage_review: '阶段评审',
+      incubating: '孵化中',
       completed: '已完成',
       rejected: '已拒绝',
-      terminated: '已终止'
     };
     
     const statusColors = {
@@ -4679,11 +4691,9 @@ if (pathname === '/api/assistant/stats/projects' && req.method === 'GET') {
       submitted: '#e6f7ff',
       under_review: '#fff7e6',
       approved: '#f6ffed',
-      in_progress: '#1890ff',
-      stage_review: '#fa8c16',
+      incubating: '#1890ff',
       completed: '#52c41a',
       rejected: '#ffccc7',
-      terminated: '#ff4d4f'
     };
     
     const formattedStats = stats.map(stat => ({
@@ -4777,11 +4787,8 @@ if (pathname === '/api/assistant/activities/recent' && req.method === 'GET') {
     const tableTexts = {
       User: '用户',
       Project: '项目',
-      FundingApplication: '经费申请',
-      ExpenditureRecord: '经费支出',
       ProjectAchievement: '项目成果',
       Notification: '通知',
-      AuditTask: '审核任务'
     };
     
     const actionTexts = {
@@ -5009,62 +5016,36 @@ if (pathname === '/api/assistant/tasks/pending' && req.method === 'GET') {
   }
   
   try {
-    console.log('获取待处理任务统计，助理ID:', user.id);
-    
-    // 待审核项目数量
     const [projectsResult] = await pool.query(`
       SELECT COUNT(*) as count 
       FROM \`Project\` 
       WHERE status IN ('submitted', 'under_review')
     `);
-    
-    // 待审核经费申请数量
-    const [fundingResult] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`FundingApplication\` 
-      WHERE status IN ('submitted', 'under_review')
-    `);
-      // 获取需要分配专家的项目数量
-  const [reviewerAssignmentResult] = await pool.query(`
-    SELECT COUNT(*) as count 
-    FROM \`Project\` 
-    WHERE status IN ('submitted')
-  `);
 
-  const tasks = {
-    projects: projectsResult[0]?.count || 0,
-    funding: fundingResult[0]?.count || 0,
-    expenditures: expendituresResult[0]?.count || 0,
-    achievements: achievementsResult[0]?.count || 0,
-    reviewerAssignment: reviewerAssignmentResult[0]?.count || 0, // 新增
-    total: (projectsResult[0]?.count || 0) + 
-           (fundingResult[0]?.count || 0) + 
-           (expendituresResult[0]?.count || 0) + 
-           (achievementsResult[0]?.count || 0) +
-           (reviewerAssignmentResult[0]?.count || 0) // 更新总数
-  };
-    // 待审核支出数量
-    const [expendituresResult] = await pool.query(`
+    const [reviewerAssignmentResult] = await pool.query(`
       SELECT COUNT(*) as count 
-      FROM \`ExpenditureRecord\` 
-      WHERE status IN ('submitted', 'under_review')
+      FROM \`Project\` 
+      WHERE status IN ('submitted')
     `);
-    
-    // 待审核成果数量
+
     const [achievementsResult] = await pool.query(`
       SELECT COUNT(*) as count 
       FROM \`ProjectAchievement\` 
-      WHERE status IN ('submitted', 'under_review')
+      WHERE status = 'submitted'
     `);
-    
-    // 待处理审核任务数量
-    const [tasksResult] = await pool.query(`
-      SELECT COUNT(*) as count 
-      FROM \`AuditTask\` 
-      WHERE status IN ('pending', 'processing')
-    `);
-    
-    
+
+    const tasks = {
+      projects: projectsResult[0]?.count || 0,
+      funding: 0,
+      expenditures: 0,
+      achievements: achievementsResult[0]?.count || 0,
+      reviewerAssignment: reviewerAssignmentResult[0]?.count || 0,
+      total:
+        (projectsResult[0]?.count || 0) +
+        (achievementsResult[0]?.count || 0) +
+        (reviewerAssignmentResult[0]?.count || 0),
+    };
+
     sendResponse(res, 200, {
       success: true,
       data: tasks
@@ -5097,448 +5078,6 @@ if (pathname === '/api/db/test' && req.method === 'GET') {
     });
   }
   return;
-}
-// ==================== 科研助理任务相关API ====================
-
-// 获取审核任务列表
-if (pathname === '/api/assistant/tasks' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    const page = parseInt(query.page) || 1;
-    const pageSize = parseInt(query.pageSize) || 20;
-    const offset = (page - 1) * pageSize;
-    
-    console.log('获取审核任务列表，用户:', user.id);
-    
-    // 构建基础查询条件
-    let whereClauses = ['1=1'];
-    let queryParams = [];
-    
-    // 按任务类型筛选
-    if (query.taskTypes) {
-      const taskTypes = query.taskTypes.split(',');
-      const placeholders = taskTypes.map(() => '?').join(',');
-      whereClauses.push(`task_type IN (${placeholders})`);
-      queryParams.push(...taskTypes);
-    }
-    
-    // 按状态筛选
-    if (query.statuses) {
-      const statuses = query.statuses.split(',');
-      const placeholders = statuses.map(() => '?').join(',');
-      whereClauses.push(`status IN (${placeholders})`);
-      queryParams.push(...statuses);
-    }
-    
-    // 按优先级筛选
-    if (query.priorities) {
-      const priorities = query.priorities.split(',');
-      const placeholders = priorities.map(() => '?').join(',');
-      whereClauses.push(`priority IN (${placeholders})`);
-      queryParams.push(...priorities);
-    }
-    
-    // 按时间范围筛选
-    if (query.startDate && query.endDate) {
-      whereClauses.push('created_at BETWEEN ? AND ?');
-      queryParams.push(query.startDate, `${query.endDate} 23:59:59`);
-    }
-    
-    // 关键词搜索
-    if (query.keyword) {
-      whereClauses.push('(title LIKE ? OR description LIKE ? OR project_code LIKE ?)');
-      const keyword = `%${query.keyword}%`;
-      queryParams.push(keyword, keyword, keyword);
-    }
-    
-    const whereClause = whereClauses.join(' AND ');
-    
-    // 获取任务总数
-    const [totalResult] = await pool.query(`
-      SELECT COUNT(*) as total 
-      FROM \`AuditTask\`
-      WHERE ${whereClause}
-    `, queryParams);
-    
-    const total = totalResult[0]?.total || 0;
-    
-    // 获取任务数据
-    const [tasks] = await pool.query(`
-      SELECT 
-        at.*,
-        u.name as applicant_name,
-        u.email as applicant_email,
-        u.department as applicant_department,
-        p.project_code,
-        p.title as project_title
-      FROM \`AuditTask\` at
-      LEFT JOIN \`User\` u ON at.applicant_id = u.id
-      LEFT JOIN \`Project\` p ON at.project_id = p.id
-      WHERE ${whereClause}
-      ORDER BY 
-        CASE priority 
-          WHEN 'urgent' THEN 1
-          WHEN 'high' THEN 2
-          WHEN 'medium' THEN 3
-          WHEN 'low' THEN 4
-          ELSE 5
-        END,
-        created_at DESC
-      LIMIT ? OFFSET ?
-    `, [...queryParams, pageSize, offset]);
-    
-    // 获取统计数据
-    const [statsResult] = await pool.query(`
-      SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN status IN ('pending', 'processing') THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed
-      FROM \`AuditTask\`
-      WHERE ${whereClause}
-    `, queryParams);
-    
-    const stats = {
-      total: statsResult[0]?.total || 0,
-      pending: statsResult[0]?.pending || 0,
-      completed: statsResult[0]?.completed || 0
-    };
-    
-    // 格式化任务数据
-    const formattedTasks = tasks.map(task => ({
-      id: task.id,
-      task_type: task.task_type,
-      title: task.title,
-      description: task.description,
-      priority: task.priority,
-      status: task.status,
-      applicant_name: task.applicant_name,
-      applicant_email: task.applicant_email,
-      applicant_department: task.applicant_department,
-      project_code: task.project_code,
-      project_title: task.project_title,
-      created_at: task.created_at,
-      deadline: task.deadline,
-      processed_at: task.processed_at,
-      processed_by: task.processed_by,
-      review_result: task.review_result,
-      review_comment: task.review_comment,
-      attachments: task.attachments ? JSON.parse(task.attachments) : []
-    }));
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: {
-        tasks: formattedTasks,
-        pagination: {
-          current: page,
-          pageSize,
-          total
-        },
-        stats
-      }
-    });
-    
-  } catch (error) {
-    console.error('获取审核任务列表失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '获取任务列表失败'
-    });
-  }
-  return;
-}
-
-// 获取单个任务详情
-if (pathname.startsWith('/api/assistant/tasks/') && req.method === 'GET') {
-  const match = pathname.match(/\/api\/assistant\/tasks\/(.+)/);
-  if (!match) return;
-  
-  const taskId = match[1];
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    console.log('获取任务详情，任务ID:', taskId);
-    
-    const [tasks] = await pool.query(`
-      SELECT 
-        at.*,
-        u.name as applicant_name,
-        u.email as applicant_email,
-        u.department as applicant_department,
-        u.phone as applicant_phone,
-        p.project_code,
-        p.title as project_title,
-        p.status as project_status
-      FROM \`AuditTask\` at
-      LEFT JOIN \`User\` u ON at.applicant_id = u.id
-      LEFT JOIN \`Project\` p ON at.project_id = p.id
-      WHERE at.id = ?
-    `, [taskId]);
-    
-    if (tasks.length === 0) {
-      sendResponse(res, 404, { success: false, error: '任务不存在' });
-      return;
-    }
-    
-    const task = tasks[0];
-    
-    // 获取相关文件
-    const [files] = await pool.query(`
-      SELECT 
-        id,
-        original_name as name,
-        file_size as size,
-        created_at as date
-      FROM \`FileStorage\`
-      WHERE related_table = 'AuditTask' AND related_id = ?
-      ORDER BY created_at DESC
-    `, [taskId]);
-    
-    // 获取处理人信息
-    let processedByName = '';
-    if (task.processed_by) {
-      const [processor] = await pool.query(
-        'SELECT name FROM `User` WHERE id = ?',
-        [task.processed_by]
-      );
-      processedByName = processor[0]?.name || '';
-    }
-    
-    // 获取审核历史
-    const [history] = await pool.query(`
-      SELECT 
-        action,
-        old_values,
-        new_values,
-        created_at
-      FROM \`AuditLog\`
-      WHERE table_name = 'AuditTask' AND record_id = ?
-      ORDER BY created_at DESC
-    `, [taskId]);
-    
-    const taskDetail = {
-      id: task.id,
-      task_type: task.task_type,
-      title: task.title,
-      description: task.description,
-      detailed_description: task.detailed_description,
-      priority: task.priority,
-      status: task.status,
-      applicant_name: task.applicant_name,
-      applicant_email: task.applicant_email,
-      applicant_department: task.applicant_department,
-      applicant_phone: task.applicant_phone,
-      project_code: task.project_code,
-      project_title: task.project_title,
-      project_status: task.project_status,
-      created_at: task.created_at,
-      deadline: task.deadline,
-      processed_at: task.processed_at,
-      processed_by_name: processedByName,
-      review_result: task.review_result,
-      review_comment: task.review_comment,
-      attachments: files,
-      audit_history: history,
-      comments: task.comments ? JSON.parse(task.comments) : []
-    };
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: taskDetail
-    });
-    
-  } catch (error) {
-    console.error('获取任务详情失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '获取任务详情失败'
-    });
-  }
-  return;
-}
-
-// 更新任务状态
-if (pathname.startsWith('/api/assistant/tasks/') && req.method === 'PUT') {
-  const match = pathname.match(/\/api\/assistant\/tasks\/(.+)/);
-  if (!match) return;
-  
-  const taskId = match[1];
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const { action, status, comment, result } = body;
-    
-    console.log('更新任务状态，任务ID:', taskId, '操作:', action);
-    
-    // 获取当前任务
-    const [tasks] = await pool.query(
-      'SELECT * FROM `AuditTask` WHERE id = ?',
-      [taskId]
-    );
-    
-    if (tasks.length === 0) {
-      sendResponse(res, 404, { success: false, error: '任务不存在' });
-      return;
-    }
-    
-    const task = tasks[0];
-    let updates = {};
-    let message = '';
-    
-    switch (action) {
-      case 'start':
-        updates = {
-          status: 'processing',
-          processed_by: user.id,
-          updated_at: new Date()
-        };
-        message = '任务已开始处理';
-        break;
-        
-      case 'complete':
-        if (!result) {
-          sendResponse(res, 400, { 
-            success: false, 
-            error: '请提供审核结果' 
-          });
-          return;
-        }
-        
-        updates = {
-          status: 'completed',
-          review_result: result,
-          review_comment: comment,
-          processed_at: new Date(),
-          updated_at: new Date()
-        };
-        message = '任务已完成';
-        break;
-        
-      case 'cancel':
-        updates = {
-          status: 'cancelled',
-          review_comment: comment,
-          updated_at: new Date()
-        };
-        message = '任务已取消';
-        break;
-        
-      default:
-        if (status) {
-          updates = { status, updated_at: new Date() };
-          message = '任务状态已更新';
-        } else {
-          sendResponse(res, 400, { 
-            success: false, 
-            error: '无效的操作' 
-          });
-          return;
-        }
-    }
-    
-    // 更新任务
-    await pool.query(
-      'UPDATE `AuditTask` SET ? WHERE id = ?',
-      [updates, taskId]
-    );
-    
-    // 记录操作日志
-    await pool.query(
-      `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
-       VALUES (?, ?, 'AuditTask', ?, ?, NOW())`,
-      [user.id, action, taskId, JSON.stringify(updates)]
-    );
-    
-    // 如果是项目相关的任务，更新对应表的审核状态
-    if (action === 'complete' && task.related_table && task.related_id) {
-      await updateRelatedRecord(task, result, comment, user.id);
-    }
-    
-    sendResponse(res, 200, {
-      success: true,
-      message,
-      data: { taskId, ...updates }
-    });
-    
-  } catch (error) {
-    console.error('更新任务状态失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '更新任务状态失败'
-    });
-  }
-  return;
-}
-
-// 辅助函数：更新相关记录的审核状态
-async function updateRelatedRecord(task, result, comment, userId) {
-  const statusMap = {
-    'approved': 'approved',
-    'rejected': 'rejected',
-    'returned': 'returned'
-  };
-  
-  const newStatus = statusMap[result] || result;
-  
-  switch (task.task_type) {
-    case 'project_review':
-      await pool.query(
-        'UPDATE `Project` SET status = ?, updated_at = NOW() WHERE id = ?',
-        [newStatus, task.related_id]
-      );
-      
-      // 创建通知
-      await createNotification(
-        task.applicant_id,
-        '项目审核结果',
-        `您的项目"${task.project_title}"审核结果为：${result === 'approved' ? '通过' : '不通过'}`,
-        'project',
-        task.related_id
-      );
-      break;
-      
-    case 'funding_review':
-      await pool.query(
-        'UPDATE `FundingApplication` SET status = ?, reviewer_id = ?, review_date = NOW(), review_comment = ? WHERE id = ?',
-        [newStatus, userId, comment, task.related_id]
-      );
-      break;
-      
-    case 'expenditure_review':
-      await pool.query(
-        'UPDATE `ExpenditureRecord` SET status = ?, reviewer_id = ?, review_date = NOW(), review_comment = ? WHERE id = ?',
-        [newStatus, userId, comment, task.related_id]
-      );
-      break;
-      
-    case 'achievement_review':
-      await pool.query(
-        'UPDATE `ProjectAchievement` SET status = ?, verified_by = ?, verified_date = NOW(), verification_comment = ? WHERE id = ?',
-        [newStatus, userId, comment, task.related_id]
-      );
-      break;
-  }
 }
 // ==================== 科研助理项目审核相关API ====================
 
@@ -5575,11 +5114,14 @@ if (pathname === '/api/assistant/projects/review' && req.method === 'GET') {
       queryParams.push(...statuses);
     }
     
-    // 按项目类别筛选
     if (query.category) {
       const categories = query.category.split(',');
       const placeholders = categories.map(() => '?').join(',');
-      whereClauses.push(`p.category IN (${placeholders})`);
+      whereClauses.push(`EXISTS (
+        SELECT 1 FROM \`ProjectResearchDomain\` prd
+        INNER JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+        WHERE prd.project_id = p.id AND rd.id IN (${placeholders})
+      )`);
       queryParams.push(...categories);
     }
     
@@ -5589,15 +5131,14 @@ if (pathname === '/api/assistant/projects/review' && req.method === 'GET') {
       queryParams.push(query.startDate, query.endDate);
     }
     
-    // 按预算范围筛选
     if (query.minBudget) {
-      whereClauses.push('p.budget_total >= ?');
-      queryParams.push(query.minBudget);
+      whereClauses.push(`${sqlProjectBudgetTotal('p')} >= ?`);
+      queryParams.push(parseFloat(query.minBudget));
     }
-    
+
     if (query.maxBudget) {
-      whereClauses.push('p.budget_total <= ?');
-      queryParams.push(query.maxBudget);
+      whereClauses.push(`${sqlProjectBudgetTotal('p')} <= ?`);
+      queryParams.push(parseFloat(query.maxBudget));
     }
     
     // 关键词搜索
@@ -5736,36 +5277,30 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/review') && req
     
     const project = projects[0];
     
-    // 检查是否已经评审过
-    const [existingReviews] = await pool.query(`
-      SELECT * FROM \`ProjectReview\`
-      WHERE project_id = ? AND reviewer_id = ? AND review_type = 'initial'
-    `, [projectId, user.id]);
-    
+    const [existingReviews] = await pool.query(
+      `SELECT id FROM \`AuditLog\` WHERE table_name = 'Project' AND record_id = ? AND user_id = ? AND action = 'expert_project_review'`,
+      [projectId, user.id],
+    );
     if (existingReviews.length > 0) {
-      sendResponse(res, 400, { 
-        success: false, 
-        error: '您已经评审过此项目' 
+      sendResponse(res, 400, {
+        success: false,
+        error: '您已经评审过此项目',
       });
       return;
     }
     
-    // 插入评审记录
     const reviewId = generateUUID();
-    await pool.query(`
-      INSERT INTO \`ProjectReview\` (
-        id, project_id, reviewer_id, review_type,
+    await pool.query(
+      `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+       VALUES (?, 'expert_project_review', 'Project', ?, ?, NOW())`,
+      [user.id, projectId, JSON.stringify({
+        id: reviewId,
+        review_type: 'initial',
         innovation_score, feasibility_score, significance_score,
         team_score, budget_score, strengths, weaknesses,
         recommendation, comments, suggestions, is_confidential,
-        status, review_date, submitted_at
-      ) VALUES (?, ?, ?, 'initial', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', CURDATE(), NOW())
-    `, [
-      reviewId, projectId, user.id,
-      innovation_score, feasibility_score, significance_score,
-      team_score, budget_score, strengths, weaknesses,
-      recommendation, comments, suggestions, is_confidential ? 1 : 0
-    ]);
+      })],
+    );
     
     // 根据评审结论更新项目状态
     let newStatus = project.status;
@@ -5794,13 +5329,6 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/review') && req
       `您的项目"${project.title}"收到了新的评审意见，结果为：${recommendationText[recommendation] || recommendation}`,
       'review',
       projectId
-    );
-    
-    // 记录操作日志
-    await pool.query(
-      `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
-       VALUES (?, 'project_review', 'ProjectReview', ?, ?, NOW())`,
-      [user.id, reviewId, JSON.stringify(body)]
     );
     
     sendResponse(res, 200, {
@@ -5873,14 +5401,12 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/approve') && re
       [projectId]
     );
     
-    // 插入简化的评审记录
     const reviewId = generateUUID();
-    await pool.query(`
-      INSERT INTO \`ProjectReview\` (
-        id, project_id, reviewer_id, review_type,
-        recommendation, comments, status, review_date, submitted_at
-      ) VALUES (?, ?, ?, 'initial', 'approve', ?, 'submitted', CURDATE(), NOW())
-    `, [reviewId, projectId, user.id, comment || '快速审核通过']);
+    await pool.query(
+      `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+       VALUES (?, 'pm_quick_approve', 'Project', ?, ?, NOW())`,
+      [user.id, projectId, JSON.stringify({ reviewId, recommendation: 'approve', comment: comment || '快速审核通过' })],
+    );
     
     // 创建通知
     await createNotification(
@@ -5943,7 +5469,7 @@ if (pathname === '/api/assistant/projects/batch-review' && req.method === 'POST'
     const statusMap = {
       approve: 'approved',
       reject: 'rejected',
-      returned: 'returned'
+      returned: 'draft',
     };
     
     const newStatus = statusMap[result] || result;
@@ -6005,14 +5531,20 @@ if (pathname === '/api/assistant/projects/batch-review' && req.method === 'POST'
           );
         }
         
-        // 插入评审记录
         const reviewId = generateUUID();
-        await pool.query(`
-          INSERT INTO \`ProjectReview\` (
-            id, project_id, reviewer_id, review_type,
-            recommendation, comments, status, review_date, submitted_at
-          ) VALUES (?, ?, ?, 'initial', ?, ?, 'submitted', CURDATE(), NOW())
-        `, [reviewId, project.id, user.id, result, comment || `批量审核：${resultText[result]}`]);
+        await pool.query(
+          `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+           VALUES (?, 'batch_project_review_item', 'Project', ?, ?, NOW())`,
+          [
+            user.id,
+            project.id,
+            JSON.stringify({
+              reviewId,
+              result,
+              comment: comment || `批量审核：${resultText[result]}`,
+            }),
+          ],
+        );
         
         // 创建通知
         await createNotification(
@@ -6094,14 +5626,20 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/reject') && req
       [projectId]
     );
     
-    // 插入评审记录
-    const reviewId = generateUUID();
-    await pool.query(`
-      INSERT INTO \`ProjectReview\` (
-        id, project_id, reviewer_id, review_type,
-        recommendation, comments, status, review_date, submitted_at
-      ) VALUES (?, ?, ?, 'initial', 'reject', ?, 'submitted', CURDATE(), NOW())
-    `, [reviewId, projectId, user.id, comment || reason || '项目被拒绝']);
+    /* 库表无 ProjectReview，评审意见写入 AuditLog */
+    await pool.query(
+      `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+       VALUES (?, 'project_reject', 'Project', ?, ?, NOW())`,
+      [
+        user.id,
+        projectId,
+        JSON.stringify({
+          reviewer_id: user.id,
+          recommendation: 'reject',
+          comments: comment || reason || '项目被拒绝',
+        }),
+      ],
+    );
     
     // 获取项目信息用于通知
     const [projects] = await pool.query(
@@ -6156,20 +5694,25 @@ if (pathname.startsWith('/api/projects/') && pathname.includes('/return') && req
     
     console.log('退回项目修改，项目ID:', projectId, '操作人:', user.id);
     
-    // 更新项目状态
     await pool.query(
-      'UPDATE `Project` SET status = "returned", updated_at = NOW() WHERE id = ?',
-      [projectId]
+      'UPDATE `Project` SET status = "draft", updated_at = NOW() WHERE id = ?',
+      [projectId],
     );
     
-    // 插入评审记录
-    const reviewId = generateUUID();
-    await pool.query(`
-      INSERT INTO \`ProjectReview\` (
-        id, project_id, reviewer_id, review_type,
-        recommendation, suggestions, comments, status, review_date, submitted_at
-      ) VALUES (?, ?, ?, 'initial', 'approve_with_revision', ?, ?, 'submitted', CURDATE(), NOW())
-    `, [reviewId, projectId, user.id, suggestions, comment || '请按照建议修改后重新提交']);
+    await pool.query(
+      `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+       VALUES (?, 'project_return', 'Project', ?, ?, NOW())`,
+      [
+        user.id,
+        projectId,
+        JSON.stringify({
+          reviewer_id: user.id,
+          recommendation: 'approve_with_revision',
+          suggestions,
+          comments: comment || '请按照建议修改后重新提交',
+        }),
+      ],
+    );
     
     // 获取项目信息用于通知
     const [projects] = await pool.query(
@@ -6250,12 +5793,12 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
     
     // 按预算范围筛选
     if (query.minBudget) {
-      whereClauses.push('p.approved_budget >= ?');
+      whereClauses.push(`${sqlProjectBudgetTotal('p')} >= ?`);
       queryParams.push(parseFloat(query.minBudget));
     }
-    
+
     if (query.maxBudget) {
-      whereClauses.push('p.approved_budget <= ?');
+      whereClauses.push(`${sqlProjectBudgetTotal('p')} <= ?`);
       queryParams.push(parseFloat(query.maxBudget));
     }
     
@@ -6291,7 +5834,7 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
     const orderByMap = {
       'created_at': 'p.created_at',
       'updated_at': 'p.updated_at',
-      'budget_total': 'p.approved_budget',
+      'budget_total': sqlProjectBudgetTotal('p'),
       'submit_date': 'p.submit_date',
       'approval_date': 'p.approval_date'
     };
@@ -6305,13 +5848,20 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
         p.id,
         p.project_code,
         p.title,
-        NULL AS category,
-        NULL AS research_field,
+        (SELECT rd.name FROM \`ProjectResearchDomain\` prd
+         INNER JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+         WHERE prd.project_id = p.id
+         ORDER BY rd.sort_order ASC
+         LIMIT 1) AS category,
+        (SELECT GROUP_CONCAT(rd.name ORDER BY rd.sort_order ASC SEPARATOR '、')
+         FROM \`ProjectResearchDomain\` prd
+         INNER JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+         WHERE prd.project_id = p.id) AS research_field,
         p.keywords,
         p.abstract,
         p.implementation_plan AS objectives,
-        p.approved_budget AS budget_total,
-        NULL AS duration_months,
+        ${sqlProjectBudgetTotal('p')} AS budget_total,
+        p.tech_maturity,
         p.status,
         NULL AS current_stage,
         p.submit_date,
@@ -6341,7 +5891,7 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
         SUM(CASE WHEN p.status IN ('submitted', 'under_review') THEN 1 ELSE 0 END) as pending,
         SUM(CASE WHEN p.status = 'approved' THEN 1 ELSE 0 END) as approved,
         SUM(CASE WHEN p.status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(CASE WHEN p.status = 'returned' THEN 1 ELSE 0 END) as returned
+        SUM(CASE WHEN p.status = 'draft' AND p.submit_date IS NOT NULL THEN 1 ELSE 0 END) as returned
       FROM \`Project\` p
       ${whereClause}
     `, queryParams);
@@ -6367,7 +5917,7 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
           abstract: app.abstract,
           objectives: app.objectives,
           budget_total: app.budget_total != null ? parseFloat(app.budget_total) : null,
-          duration_months: app.duration_months,
+          tech_maturity: app.tech_maturity || null,
           status: app.status,
           current_stage: app.current_stage,
           manager_id: app.manager_id,
@@ -6421,9 +5971,20 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
     console.log('获取申请详情，申请ID:', applicationId);
     
     // 获取申请基本信息（项目信息）
-    const [applications] = await pool.query(`
+    const [applications] = await pool.query(
+      `
       SELECT 
         p.*,
+        (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total,
+        (SELECT GROUP_CONCAT(rd.name ORDER BY rd.sort_order ASC SEPARATOR '、')
+         FROM \`ProjectResearchDomain\` prd
+         INNER JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+         WHERE prd.project_id = p.id) AS research_domains_concat,
+        (SELECT rd.name FROM \`ProjectResearchDomain\` prd
+         INNER JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+         WHERE prd.project_id = p.id
+         ORDER BY rd.sort_order ASC
+         LIMIT 1) AS first_domain_name,
         u.name as applicant_name,
         u.department,
         u.title as applicant_title,
@@ -6434,7 +5995,9 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
       LEFT JOIN \`User\` u ON p.applicant_id = u.id
       LEFT JOIN \`User\` mgr ON p.manager_id = mgr.id
       WHERE p.id = ?
-    `, [applicationId]);
+    `,
+      [applicationId],
+    );
     
     if (applications.length === 0) {
       sendResponse(res, 404, { success: false, error: '申请不存在' });
@@ -6442,6 +6005,16 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
     }
     
     const application = applications[0];
+
+    let researchFieldDisplay = application.research_domains_concat || '';
+    if (application.project_domain_other_text) {
+      researchFieldDisplay = researchFieldDisplay
+        ? `${researchFieldDisplay}（其他说明：${application.project_domain_other_text}）`
+        : `其他说明：${application.project_domain_other_text}`;
+    }
+    if (!researchFieldDisplay) researchFieldDisplay = null;
+
+    const categoryDisplay = application.first_domain_name || null;
     
     // 获取预算明细（表结构见 ProjectBudget：无 justification/sequence，用 description、sort_order）
     const [budgetItems] = await pool.query(`
@@ -6458,74 +6031,74 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
     `, [applicationId]);
     
     // 获取项目成员
-    const [members] = await pool.query(`
+    const [members] = await pool.query(
+      `
       SELECT 
         pm.id,
         pm.role,
-        pm.responsibility,
-        pm.workload_percentage,
-        pm.join_date,
-        u.name,
+        pm.name,
+        pm.title,
+        pm.organization,
+        pm.email,
+        pm.sort_order,
+        u.name AS linked_user_name,
         u.department,
-        u.title
+        u.title AS user_title
       FROM \`ProjectMember\` pm
       LEFT JOIN \`User\` u ON pm.user_id = u.id
       WHERE pm.project_id = ?
       ORDER BY 
+        pm.sort_order ASC,
         CASE pm.role
           WHEN 'principal' THEN 1
-          WHEN 'co_researcher' THEN 2
-          WHEN 'research_assistant' THEN 3
-          ELSE 4
+          WHEN 'contact' THEN 2
+          ELSE 3
         END
-    `, [applicationId]);
+    `,
+      [applicationId],
+    );
     
     // 获取附件文件
-    const [attachments] = await pool.query(`
+    const [attachments] = await pool.query(
+      `
       SELECT 
         id,
-        original_name as name,
-        stored_name,
-        file_path as path,
-        file_size as size,
-        mime_type as type,
-        category,
-        download_count,
-        created_at
-      FROM \`FileStorage\`
-      WHERE related_table = 'Project' AND related_id = ?
-      ORDER BY created_at DESC
-    `, [applicationId]);
-    
-    // 获取评审记录
-    const [reviews] = await pool.query(`
-      SELECT 
-        pr.*,
-        u.name as reviewer_name,
-        u.department as reviewer_department
-      FROM \`ProjectReview\` pr
-      LEFT JOIN \`User\` u ON pr.reviewer_id = u.id
-      WHERE pr.project_id = ?
-      ORDER BY pr.review_date DESC, pr.created_at DESC
-    `, [applicationId]);
-    
-    // 获取审核任务记录
-    const [tasks] = await pool.query(`
-      SELECT 
-        id,
-        task_type,
-        title,
+        file_name AS name,
+        file_name AS stored_name,
+        file_path AS path,
+        file_size AS size,
+        mime_type AS type,
+        type AS attachment_category,
         description,
-        priority,
-        status,
-        processed_at,
-        review_result,
-        review_comment,
+        sort_order,
         created_at
-      FROM \`AuditTask\`
-      WHERE related_table = 'Project' AND related_id = ?
-      ORDER BY created_at DESC
-    `, [applicationId]);
+      FROM \`ProjectAttachment\`
+      WHERE project_id = ?
+      ORDER BY sort_order ASC, created_at DESC
+    `,
+      [applicationId],
+    );
+
+    const [reviews] = await pool.query(
+      `
+      SELECT 
+        al.id,
+        al.user_id,
+        al.action,
+        al.new_values,
+        al.created_at,
+        u.name AS reviewer_name,
+        u.department AS reviewer_department
+      FROM \`AuditLog\` al
+      LEFT JOIN \`User\` u ON al.user_id = u.id
+      WHERE al.table_name = 'Project' AND al.record_id = ?
+        AND al.action IN ('project_reject', 'project_return', 'project_review', 'expert_project_review', 'batch_project_review_item')
+      ORDER BY al.created_at DESC
+    `,
+      [applicationId],
+    );
+
+    const tasks = [];
     
     sendResponse(res, 200, {
       success: true,
@@ -6534,25 +6107,25 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
           id: application.id,
           project_code: application.project_code,
           title: application.title,
-          category: application.category,
-          research_field: application.research_field,
+          category: categoryDisplay,
+          research_field: researchFieldDisplay,
           keywords: application.keywords,
           abstract: application.abstract,
-          background: application.background,
-          objectives: application.objectives,
-          methodology: application.methodology,
-          expected_outcomes: application.expected_outcomes,
-          budget_total: parseFloat(application.budget_total),
-          duration_months: application.duration_months,
+          background: application.detailed_introduction_part1 || null,
+          objectives: application.implementation_plan,
+          methodology: application.detailed_introduction_part2 || null,
+          expected_outcomes: application.detailed_introduction_part3 || null,
+          budget_total: application.budget_total != null ? parseFloat(application.budget_total) : null,
+          tech_maturity: application.tech_maturity || null,
           status: application.status,
-          current_stage: application.current_stage,
+          current_stage: null,
           manager_id: application.manager_id,
           manager_name: application.manager_name,
           submit_date: application.submit_date ? application.submit_date.toISOString().split('T')[0] : null,
           start_date: application.start_date ? application.start_date.toISOString().split('T')[0] : null,
           end_date: application.end_date ? application.end_date.toISOString().split('T')[0] : null,
           approval_date: application.approval_date ? application.approval_date.toISOString().split('T')[0] : null,
-          completion_date: application.completion_date ? application.completion_date.toISOString().split('T')[0] : null,
+          completion_date: application.end_date ? application.end_date.toISOString().split('T')[0] : null,
           remarks: application.remarks,
           created_at: application.created_at ? application.created_at.toISOString() : null,
           updated_at: application.updated_at ? application.updated_at.toISOString() : null,
@@ -6571,47 +6144,47 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
           justification: item.description,
           sequence: item.sort_order
         })),
-        members: members.map(member => ({
+        members: members.map((member) => ({
           id: member.id,
           role: member.role,
-          responsibility: member.responsibility,
-          workload_percentage: member.workload_percentage ? parseFloat(member.workload_percentage) : null,
-          join_date: member.join_date ? member.join_date.toISOString().split('T')[0] : null,
+          responsibility: null,
+          workload_percentage: null,
+          join_date: null,
           name: member.name,
-          department: member.department,
+          department: member.organization,
           title: member.title
         })),
-        attachments: attachments.map(file => ({
+        attachments: attachments.map((file) => ({
           id: file.id,
           name: file.name,
           stored_name: file.stored_name,
           path: file.path,
-          size: parseInt(file.size),
+          size: parseInt(file.size, 10),
           type: file.type,
-          category: file.category,
-          download_count: file.download_count,
+          category: file.attachment_category,
+          download_count: 0,
           created_at: file.created_at ? file.created_at.toISOString() : null
         })),
-        reviews: reviews.map(review => ({
+        reviews: reviews.map((review) => ({
           id: review.id,
           reviewer_name: review.reviewer_name,
           reviewer_department: review.reviewer_department,
-          review_type: review.review_type,
-          review_date: review.review_date ? review.review_date.toISOString().split('T')[0] : null,
-          innovation_score: review.innovation_score,
-          feasibility_score: review.feasibility_score,
-          significance_score: review.significance_score,
-          team_score: review.team_score,
-          budget_score: review.budget_score,
-          total_score: review.total_score ? parseFloat(review.total_score) : null,
-          strengths: review.strengths,
-          weaknesses: review.weaknesses,
-          recommendation: review.recommendation,
-          comments: review.comments,
-          suggestions: review.suggestions,
-          is_confidential: review.is_confidential === 1,
-          status: review.status,
-          submitted_at: review.submitted_at ? review.submitted_at.toISOString() : null,
+          review_type: review.action,
+          review_date: review.created_at ? review.created_at.toISOString().split('T')[0] : null,
+          innovation_score: null,
+          feasibility_score: null,
+          significance_score: null,
+          team_score: null,
+          budget_score: null,
+          total_score: null,
+          strengths: null,
+          weaknesses: null,
+          recommendation: null,
+          comments: review.new_values ? JSON.stringify(review.new_values) : '',
+          suggestions: null,
+          is_confidential: false,
+          status: review.action,
+          submitted_at: review.created_at ? review.created_at.toISOString() : null,
           created_at: review.created_at ? review.created_at.toISOString() : null
         })),
         tasks: tasks.map(task => ({
@@ -6696,33 +6269,22 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/a
       [finalApprovalDate, applicationId]
     );
     
-    // 插入简化的评审记录
     const reviewId = generateUUID();
-    await pool.query(`
-      INSERT INTO \`ProjectReview\` (
-        id, project_id, reviewer_id, review_type,
-        recommendation, comments, status, review_date, submitted_at
-      ) VALUES (?, ?, ?, 'initial', 'approve', ?, 'submitted', CURDATE(), NOW())
-    `, [reviewId, applicationId, user.id, comment || '科研助理快速审核通过']);
+    await pool.query(
+      `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+       VALUES (?, 'assistant_quick_approve', 'Project', ?, ?, NOW())`,
+      [
+        user.id,
+        applicationId,
+        JSON.stringify({
+          reviewId,
+          recommendation: 'approve',
+          comment: comment || '科研助理快速审核通过',
+        }),
+      ],
+    );
     
-    // 创建审核任务记录
     const taskId = generateUUID();
-    await pool.query(`
-      INSERT INTO \`AuditTask\` (
-        id, task_type, title, description,
-        applicant_id, project_id, related_table, related_id,
-        priority, status, processed_by, processed_at,
-        review_result, review_comment, created_at
-      ) VALUES (?, 'project_review', ?, ?, ?, ?, 'Project', ?, 'medium', 'completed', ?, NOW(), 'approved', ?, NOW())
-    `, [
-      taskId,
-      `申请快速审核：${application.title}`,
-      `科研助理快速审核通过申请"${application.title}"`,
-      application.applicant_id,
-      applicationId,
-      user.id,
-      comment || '快速审核通过'
-    ]);
     
     // 创建通知
     const notificationId = generateUUID();
@@ -6730,8 +6292,8 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/a
       INSERT INTO \`Notification\` (
         id, user_id, type, title, content,
         related_id, related_type, priority,
-        is_read, expires_at, created_at
-      ) VALUES (?, ?, 'project', ?, ?, ?, 'Project', 'high', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
+        is_read, created_at
+      ) VALUES (?, ?, 'project', ?, ?, ?, 'Project', 'high', FALSE, NOW())
     `, [
       notificationId,
       application.applicant_id,
@@ -6821,39 +6383,28 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/r
       return;
     }
     
-    // 更新申请状态
     await pool.query(
-      'UPDATE `Project` SET status = "returned", updated_at = NOW() WHERE id = ?',
-      [applicationId]
+      'UPDATE `Project` SET status = "draft", updated_at = NOW() WHERE id = ?',
+      [applicationId],
     );
     
-    // 插入评审记录
     const reviewId = generateUUID();
-    await pool.query(`
-      INSERT INTO \`ProjectReview\` (
-        id, project_id, reviewer_id, review_type,
-        recommendation, suggestions, comments, status, review_date, submitted_at
-      ) VALUES (?, ?, ?, 'initial', 'approve_with_revision', ?, ?, 'submitted', CURDATE(), NOW())
-    `, [reviewId, applicationId, user.id, suggestions, comment || '请按照建议修改后重新提交']);
+    await pool.query(
+      `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+       VALUES (?, 'assistant_application_return', 'Project', ?, ?, NOW())`,
+      [
+        user.id,
+        applicationId,
+        JSON.stringify({
+          reviewId,
+          recommendation: 'approve_with_revision',
+          suggestions,
+          comments: comment || '请按照建议修改后重新提交',
+        }),
+      ],
+    );
     
-    // 创建审核任务记录
     const taskId = generateUUID();
-    await pool.query(`
-      INSERT INTO \`AuditTask\` (
-        id, task_type, title, description,
-        applicant_id, project_id, related_table, related_id,
-        priority, status, processed_by, processed_at,
-        review_result, review_comment, created_at
-      ) VALUES (?, 'project_review', ?, ?, ?, ?, 'Project', ?, 'medium', 'completed', ?, NOW(), 'returned', ?, NOW())
-    `, [
-      taskId,
-      `申请退回修改：${application.title}`,
-      `科研助理退回申请"${application.title}"要求修改`,
-      application.applicant_id,
-      applicationId,
-      user.id,
-      comment || '退回修改'
-    ]);
     
     // 创建通知
     const notificationId = generateUUID();
@@ -6861,8 +6412,8 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/r
       INSERT INTO \`Notification\` (
         id, user_id, type, title, content,
         related_id, related_type, priority,
-        is_read, expires_at, created_at
-      ) VALUES (?, ?, 'project', ?, ?, ?, 'Project', 'high', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
+        is_read, created_at
+      ) VALUES (?, ?, 'project', ?, ?, ?, 'Project', 'high', FALSE, NOW())
     `, [
       notificationId,
       application.applicant_id,
@@ -6876,7 +6427,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/r
       INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
       VALUES (?, 'application_return', 'Project', ?, ?, NOW())
     `, [user.id, applicationId, JSON.stringify({ 
-      status: 'returned', 
+      status: 'draft', 
       suggestions,
       comment: comment || '',
       reviewer_id: user.id
@@ -6887,7 +6438,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/r
       message: '申请已退回修改',
       data: { 
         applicationId, 
-        status: 'returned',
+        status: 'draft',
         reviewId,
         taskId
       }
@@ -6957,60 +6508,44 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/r
       [applicationId]
     );
     
-    // 插入评审记录
     const reviewId = generateUUID();
-    await pool.query(`
-      INSERT INTO \`ProjectReview\` (
-        id, project_id, reviewer_id, review_type,
-        recommendation, comments, status, review_date, submitted_at
-      ) VALUES (?, ?, ?, 'initial', 'reject', ?, 'submitted', CURDATE(), NOW())
-    `, [reviewId, applicationId, user.id, comment || reason]);
-    
-    // 创建审核任务记录
-    const taskId = generateUUID();
-    await pool.query(`
-      INSERT INTO \`AuditTask\` (
-        id, task_type, title, description,
-        applicant_id, project_id, related_table, related_id,
-        priority, status, processed_by, processed_at,
-        review_result, review_comment, created_at
-      ) VALUES (?, 'project_review', ?, ?, ?, ?, 'Project', ?, 'medium', 'completed', ?, NOW(), 'rejected', ?, NOW())
-    `, [
-      taskId,
-      `申请拒绝：${application.title}`,
-      `科研助理拒绝申请"${application.title}"`,
-      application.applicant_id,
-      applicationId,
-      user.id,
-      comment || reason
-    ]);
-    
-    // 创建通知
+
+    // 创建通知（Notification 表无 expires_at）
     const notificationId = generateUUID();
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO \`Notification\` (
         id, user_id, type, title, content,
         related_id, related_type, priority,
-        is_read, expires_at, created_at
-      ) VALUES (?, ?, 'project', ?, ?, ?, 'Project', 'high', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-    `, [
-      notificationId,
-      application.applicant_id,
-      '申请审核拒绝',
-      `您的申请"${application.title}"审核结果为：拒绝`,
-      applicationId
-    ]);
-    
-    // 记录操作日志
-    await pool.query(`
+        is_read, created_at
+      ) VALUES (?, ?, 'project', ?, ?, ?, 'Project', 'high', FALSE, NOW())
+    `,
+      [
+        notificationId,
+        application.applicant_id,
+        '申请审核拒绝',
+        `您的申请"${application.title}"审核结果为：拒绝`,
+        applicationId,
+      ],
+    );
+
+    await pool.query(
+      `
       INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
-      VALUES (?, 'application_reject', 'Project', ?, ?, NOW())
-    `, [user.id, applicationId, JSON.stringify({ 
-      status: 'rejected', 
-      reason,
-      comment: comment || '',
-      reviewer_id: user.id
-    })]);
+      VALUES (?, 'project_reject', 'Project', ?, ?, NOW())
+    `,
+      [
+        user.id,
+        applicationId,
+        JSON.stringify({
+          reviewId,
+          status: 'rejected',
+          reason,
+          comment: comment || '',
+          reviewer_id: user.id,
+        }),
+      ],
+    );
     
     sendResponse(res, 200, {
       success: true,
@@ -7018,8 +6553,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/r
       data: { 
         applicationId, 
         status: 'rejected',
-        reviewId,
-        taskId
+        reviewId
       }
     });
     
@@ -7075,14 +6609,14 @@ if (pathname === '/api/assistant/applications/batch-process' && req.method === '
     let successCount = 0;
     const failedApplications = [];
     
-    // 状态映射
+    // 状态映射（Project.status ENUM 无 revision）
     const statusMap = {
       approve: 'approved',
       reject: 'rejected',
-      return: 'returned'
+      return: 'draft'
     };
     
-    const newStatus = statusMap[action] || action;
+    const newStatus = normalizeProjectStatusForDb(statusMap[action] || action);
     const actionText = {
       approve: '通过',
       reject: '拒绝',
@@ -7106,66 +6640,48 @@ if (pathname === '/api/assistant/applications/batch-process' && req.method === '
             [newStatus, application.id]
           );
         }
-        
-        // 插入评审记录
-        const reviewId = generateUUID();
+
         const comments = data?.comment || `批量处理：${actionText[action]}`;
-        
-        await pool.query(`
-          INSERT INTO \`ProjectReview\` (
-            id, project_id, reviewer_id, review_type,
-            recommendation, comments, status, review_date, submitted_at
-          ) VALUES (?, ?, ?, 'initial', ?, ?, 'submitted', CURDATE(), NOW())
-        `, [reviewId, application.id, user.id, action, comments]);
-        
-        // 创建审核任务记录
-        const taskId = generateUUID();
-        await pool.query(`
-          INSERT INTO \`AuditTask\` (
-            id, task_type, title, description,
-            applicant_id, project_id, related_table, related_id,
-            priority, status, processed_by, processed_at,
-            review_result, review_comment, created_at
-          ) VALUES (?, 'project_review', ?, ?, ?, ?, 'Project', ?, 'medium', 'completed', ?, NOW(), ?, ?, NOW())
-        `, [
-          taskId,
-          `批量申请处理：${application.title}`,
-          `科研助理批量处理申请"${application.title}"`,
-          application.applicant_id,
-          application.id,
-          user.id,
-          action,
-          comments
-        ]);
-        
-        // 创建通知
+        await pool.query(
+          `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+           VALUES (?, 'batch_project_review_item', 'Project', ?, ?, NOW())`,
+          [
+            user.id,
+            application.id,
+            JSON.stringify({
+              batchAction: action,
+              newStatus,
+              comment: comments,
+            }),
+          ],
+        );
+
         const notificationId = generateUUID();
-        const notificationTitle = action === 'approve' 
-          ? '申请审核通过' 
-          : action === 'reject' 
-            ? '申请审核拒绝' 
-            : '申请需要修改';
-        
-        const notificationContent = action === 'approve'
-          ? `您的申请"${application.title}"已通过批量审核并获得批准`
-          : action === 'reject'
-            ? `您的申请"${application.title}"批量审核结果为：拒绝`
-            : `您的申请"${application.title}"需要修改后才能继续审核`;
-        
-        await pool.query(`
+        const notificationTitle =
+          action === 'approve'
+            ? '申请审核通过'
+            : action === 'reject'
+              ? '申请审核拒绝'
+              : '申请需要修改';
+
+        const notificationContent =
+          action === 'approve'
+            ? `您的申请"${application.title}"已通过批量审核并获得批准`
+            : action === 'reject'
+              ? `您的申请"${application.title}"批量审核结果为：拒绝`
+              : `您的申请"${application.title}"需要修改后才能继续审核`;
+
+        await pool.query(
+          `
           INSERT INTO \`Notification\` (
             id, user_id, type, title, content,
             related_id, related_type, priority,
-            is_read, expires_at, created_at
-          ) VALUES (?, ?, 'project', ?, ?, ?, 'Project', 'high', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-        `, [
-          notificationId,
-          application.applicant_id,
-          notificationTitle,
-          notificationContent,
-          application.id
-        ]);
-        
+            is_read, created_at
+          ) VALUES (?, ?, 'project', ?, ?, ?, 'Project', 'high', FALSE, NOW())
+        `,
+          [notificationId, application.applicant_id, notificationTitle, notificationContent, application.id],
+        );
+
         successCount++;
         
       } catch (error) {
@@ -7233,21 +6749,23 @@ if (pathname === '/api/assistant/applications/stats' && req.method === 'GET') {
         SUM(CASE WHEN status IN ('submitted', 'under_review') THEN 1 ELSE 0 END) as pending,
         SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
         SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) as returned,
-        SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+        SUM(CASE WHEN status = 'draft' AND submit_date IS NOT NULL THEN 1 ELSE 0 END) as returned,
+        SUM(CASE WHEN status = 'incubating' THEN 1 ELSE 0 END) as in_progress,
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed
       FROM \`Project\`
     `);
     
-    // 获取按类别的统计
     const [categoryStats] = await pool.query(`
       SELECT 
-        category,
-        COUNT(*) as count,
-        SUM(CASE WHEN status = 'approved' THEN budget_total ELSE 0 END) as approved_budget,
-        AVG(CASE WHEN status = 'approved' THEN budget_total ELSE NULL END) as avg_budget
-      FROM \`Project\`
-      GROUP BY category
+        COALESCE(p.tech_maturity, '未填') AS category,
+        COUNT(*) AS count,
+        COALESCE(SUM(CASE WHEN p.status = 'approved' THEN bt.budget_sum ELSE 0 END), 0) AS approved_budget,
+        AVG(CASE WHEN p.status = 'approved' THEN bt.budget_sum ELSE NULL END) AS avg_budget
+      FROM \`Project\` p
+      LEFT JOIN (
+        SELECT project_id, SUM(amount) AS budget_sum FROM \`ProjectBudget\` GROUP BY project_id
+      ) bt ON bt.project_id = p.id
+      GROUP BY COALESCE(p.tech_maturity, '未填')
       ORDER BY count DESC
     `);
     
@@ -7267,12 +6785,15 @@ if (pathname === '/api/assistant/applications/stats' && req.method === 'GET') {
     // 获取申请人统计
     const [applicantStats] = await pool.query(`
       SELECT 
-        u.name as applicant_name,
-        COUNT(p.id) as total_applications,
-        SUM(CASE WHEN p.status = 'approved' THEN 1 ELSE 0 END) as approved_applications,
-        SUM(CASE WHEN p.status = 'approved' THEN p.budget_total ELSE 0 END) as total_budget
+        u.name AS applicant_name,
+        COUNT(p.id) AS total_applications,
+        SUM(CASE WHEN p.status = 'approved' THEN 1 ELSE 0 END) AS approved_applications,
+        COALESCE(SUM(CASE WHEN p.status = 'approved' THEN bt.budget_sum ELSE 0 END), 0) AS total_budget
       FROM \`Project\` p
       LEFT JOIN \`User\` u ON p.applicant_id = u.id
+      LEFT JOIN (
+        SELECT project_id, SUM(amount) AS budget_sum FROM \`ProjectBudget\` GROUP BY project_id
+      ) bt ON bt.project_id = p.id
       GROUP BY p.applicant_id, u.name
       ORDER BY total_applications DESC
       LIMIT 10
@@ -7315,2244 +6836,6 @@ if (pathname === '/api/assistant/applications/stats' && req.method === 'GET') {
   }
   return;
 }
-// ==================== 科研助理经费审核相关API ====================
-
-// 获取经费审核列表
-if (pathname === '/api/assistant/funding/list' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    const page = parseInt(query.page) || 1;
-    const pageSize = parseInt(query.pageSize) || 10;
-    const offset = (page - 1) * pageSize;
-    
-    console.log('科研助理获取经费审核列表，用户ID:', user.id);
-    
-    // 构建基础查询条件
-    let whereClauses = [];
-    let queryParams = [];
-    
-    // 按申请状态筛选
-    if (query.status && query.status !== 'all') {
-      const statuses = query.status.split(',');
-      const placeholders = statuses.map(() => '?').join(',');
-      whereClauses.push(`fa.status IN (${placeholders})`);
-      queryParams.push(...statuses);
-    }
-    
-    // 按申请时间筛选
-    if (query.dateRange) {
-      let dateCondition = '';
-      const now = new Date();
-      
-      switch (query.dateRange) {
-        case 'today':
-          dateCondition = 'DATE(fa.apply_date) = CURDATE()';
-          break;
-        case 'week':
-          dateCondition = 'fa.apply_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
-          break;
-        case 'month':
-          dateCondition = 'fa.apply_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)';
-          break;
-        default:
-          // 处理自定义日期范围
-          if (query.startDate && query.endDate) {
-            whereClauses.push('fa.apply_date BETWEEN ? AND ?');
-            queryParams.push(query.startDate, query.endDate);
-          }
-      }
-      
-      if (dateCondition) {
-        whereClauses.push(dateCondition);
-      }
-    }
-    
-    // 关键词搜索
-    if (query.search) {
-      whereClauses.push('(fa.application_no LIKE ? OR p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)');
-      const keyword = `%${query.search}%`;
-      queryParams.push(keyword, keyword, keyword, keyword);
-    }
-    
-    const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
-    
-    // 获取申请总数
-    const [totalResult] = await pool.query(`
-      SELECT COUNT(*) as total 
-      FROM \`FundingApplication\` fa
-      LEFT JOIN \`Project\` p ON fa.project_id = p.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      ${whereClause}
-    `, queryParams);
-    
-    const total = totalResult[0]?.total || 0;
-    
-    // 获取申请数据
-    const [applications] = await pool.query(`
-      SELECT 
-        fa.id,
-        fa.application_no,
-        fa.project_id,
-        fa.apply_amount,
-        fa.purpose,
-        fa.supporting_docs,
-        fa.status,
-        fa.apply_date,
-        fa.reviewer_id,
-        fa.review_date,
-        fa.review_comment,
-        fa.payment_date,
-        fa.payment_voucher,
-        
-        p.title as project_title,
-        p.project_code,
-        p.category as project_category,
-        
-        u.id as applicant_id,
-        u.name as applicant_name,
-        u.department as applicant_department,
-        
-        ur.name as reviewer_name
-      FROM \`FundingApplication\` fa
-      LEFT JOIN \`Project\` p ON fa.project_id = p.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      LEFT JOIN \`User\` ur ON fa.reviewer_id = ur.id
-      ${whereClause}
-      ORDER BY fa.apply_date DESC
-      LIMIT ? OFFSET ?
-    `, [...queryParams, pageSize, offset]);
-    
-    // 格式化数据
-    const formattedApplications = applications.map(app => ({
-      id: app.id,
-      application_no: app.application_no,
-      project_id: app.project_id,
-      apply_amount: parseFloat(app.apply_amount) || 0,
-      purpose: app.purpose,
-      supporting_docs: app.supporting_docs ? JSON.parse(app.supporting_docs) : [],
-      status: app.status,
-      apply_date: app.apply_date ? app.apply_date.toISOString().split('T')[0] : null,
-      reviewer_id: app.reviewer_id,
-      review_date: app.review_date ? app.review_date.toISOString().split('T')[0] : null,
-      review_comment: app.review_comment,
-      payment_date: app.payment_date ? app.payment_date.toISOString().split('T')[0] : null,
-      payment_voucher: app.payment_voucher,
-      project_info: {
-        id: app.project_id,
-        title: app.project_title,
-        project_code: app.project_code,
-        category: app.project_category
-      },
-      applicant_info: {
-        id: app.applicant_id,
-        name: app.applicant_name,
-        department: app.applicant_department
-      },
-      reviewer_info: app.reviewer_name ? {
-        id: app.reviewer_id,
-        name: app.reviewer_name
-      } : null
-    }));
-    
-    // 获取统计数据
-    const [statsResult] = await pool.query(`
-      SELECT 
-        SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as reviewing,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid
-      FROM \`FundingApplication\`
-    `);
-    
-    const stats = {
-      pending: statsResult[0]?.pending || 0,
-      reviewing: statsResult[0]?.reviewing || 0,
-      approved: statsResult[0]?.approved || 0,
-      rejected: statsResult[0]?.rejected || 0,
-      paid: statsResult[0]?.paid || 0
-    };
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: {
-        list: formattedApplications,
-        pagination: {
-          current: page,
-          pageSize,
-          total
-        },
-        stats
-      }
-    });
-    
-  } catch (error) {
-    console.error('获取经费审核列表失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '获取经费审核列表失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 获取经费申请详情
-if (pathname.startsWith('/api/assistant/funding/') && !pathname.includes('/review') && !pathname.includes('/payment') && req.method === 'GET') {
-  const match = pathname.match(/\/api\/assistant\/funding\/(.+)/);
-  if (!match) return;
-  
-  const fundingId = match[1];
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    console.log('获取经费申请详情，申请ID:', fundingId);
-    
-    // 获取经费申请基本信息
-    const [fundingApplications] = await pool.query(`
-      SELECT 
-        fa.*,
-        p.title as project_title,
-        p.project_code,
-        p.category as project_category,
-        p.status as project_status,
-        p.budget_total as project_budget_total,
-        
-        u.id as applicant_id,
-        u.name as applicant_name,
-        u.department,
-        u.email as applicant_email,
-        u.phone as applicant_phone,
-        
-        ur.name as reviewer_name,
-        ur.email as reviewer_email
-      FROM \`FundingApplication\` fa
-      LEFT JOIN \`Project\` p ON fa.project_id = p.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      LEFT JOIN \`User\` ur ON fa.reviewer_id = ur.id
-      WHERE fa.id = ?
-    `, [fundingId]);
-    
-    if (fundingApplications.length === 0) {
-      sendResponse(res, 404, { success: false, error: '经费申请不存在' });
-      return;
-    }
-    
-    const funding = fundingApplications[0];
-    
-    // 获取项目预算明细（用于参考）
-    const [budgetItems] = await pool.query(`
-      SELECT 
-        category,
-        item_name,
-        description,
-        amount,
-        sort_order
-      FROM \`ProjectBudget\`
-      WHERE project_id = ?
-      ORDER BY sort_order ASC, created_at ASC
-    `, [funding.project_id]);
-    
-    // 获取项目支出记录
-    const [expenditures] = await pool.query(`
-      SELECT 
-        expense_no,
-        category,
-        item_name,
-        amount,
-        expense_date,
-        payee,
-        description,
-        status,
-        review_comment
-      FROM \`ExpenditureRecord\`
-      WHERE project_id = ? AND funding_app_id = ?
-      ORDER BY expense_date DESC
-    `, [funding.project_id, fundingId]);
-    
-    // 获取审核任务记录
-    const [tasks] = await pool.query(`
-      SELECT 
-        id,
-        task_type,
-        title,
-        description,
-        priority,
-        status,
-        processed_at,
-        review_result,
-        review_comment,
-        created_at
-      FROM \`AuditTask\`
-      WHERE related_table = 'FundingApplication' AND related_id = ?
-      ORDER BY created_at DESC
-    `, [fundingId]);
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: {
-        funding: {
-          id: funding.id,
-          application_no: funding.application_no,
-          project_id: funding.project_id,
-          apply_amount: parseFloat(funding.apply_amount),
-          purpose: funding.purpose,
-          supporting_docs: funding.supporting_docs ? JSON.parse(funding.supporting_docs) : [],
-          status: funding.status,
-          apply_date: funding.apply_date ? funding.apply_date.toISOString().split('T')[0] : null,
-          reviewer_id: funding.reviewer_id,
-          review_date: funding.review_date ? funding.review_date.toISOString().split('T')[0] : null,
-          review_comment: funding.review_comment,
-          payment_date: funding.payment_date ? funding.payment_date.toISOString().split('T')[0] : null,
-          payment_voucher: funding.payment_voucher,
-          created_at: funding.created_at ? funding.created_at.toISOString() : null,
-          
-          project_info: {
-            id: funding.project_id,
-            title: funding.project_title,
-            project_code: funding.project_code,
-            category: funding.project_category,
-            status: funding.project_status,
-            budget_total: parseFloat(funding.project_budget_total)
-          },
-          
-          applicant_info: {
-            id: funding.applicant_id,
-            name: funding.applicant_name,
-            department: funding.department,
-            email: funding.applicant_email,
-            phone: funding.applicant_phone
-          },
-          
-          reviewer_info: funding.reviewer_name ? {
-            id: funding.reviewer_id,
-            name: funding.reviewer_name,
-            email: funding.reviewer_email
-          } : null
-        },
-        budget_items: budgetItems.map(item => ({
-          category: item.category,
-          item_name: item.item_name,
-          description: item.description,
-          amount: parseFloat(item.amount),
-          justification: item.description
-        })),
-        expenditures: expenditures.map(exp => ({
-          expense_no: exp.expense_no,
-          category: exp.category,
-          item_name: exp.item_name,
-          amount: parseFloat(exp.amount),
-          expense_date: exp.expense_date ? exp.expense_date.toISOString().split('T')[0] : null,
-          payee: exp.payee,
-          description: exp.description,
-          status: exp.status,
-          review_comment: exp.review_comment
-        })),
-        tasks: tasks.map(task => ({
-          id: task.id,
-          task_type: task.task_type,
-          title: task.title,
-          description: task.description,
-          priority: task.priority,
-          status: task.status,
-          processed_at: task.processed_at ? task.processed_at.toISOString() : null,
-          review_result: task.review_result,
-          review_comment: task.review_comment,
-          created_at: task.created_at ? task.created_at.toISOString() : null
-        }))
-      }
-    });
-    
-  } catch (error) {
-    console.error('获取经费申请详情失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '获取经费申请详情失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 审核经费申请
-if (pathname.startsWith('/api/assistant/funding/') && pathname.includes('/review') && req.method === 'POST') {
-  const match = pathname.match(/\/api\/assistant\/funding\/(.+)\/review/);
-  if (!match) return;
-  
-  const fundingId = match[1];
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const { recommendation, comment } = body;
-    
-    if (!recommendation) {
-      sendResponse(res, 400, { success: false, error: '请选择审核结果' });
-      return;
-    }
-    
-    if (!comment) {
-      sendResponse(res, 400, { success: false, error: '请填写审核意见' });
-      return;
-    }
-    
-    console.log('审核经费申请，申请ID:', fundingId, '操作人:', user.id, '审核结果:', recommendation);
-    
-    // 检查经费申请状态
-    const [fundingApplications] = await pool.query(
-      'SELECT * FROM `FundingApplication` WHERE id = ? AND status IN ("submitted", "under_review")',
-      [fundingId]
-    );
-    
-    if (fundingApplications.length === 0) {
-      sendResponse(res, 400, { 
-        success: false, 
-        error: '经费申请不存在或不能审核' 
-      });
-      return;
-    }
-    
-    const funding = fundingApplications[0];
-    
-    // 确定新状态
-    let newStatus = '';
-    if (recommendation === 'approve' || recommendation === 'approve_with_revision') {
-      newStatus = 'approved';
-    } else if (recommendation === 'reject') {
-      newStatus = 'rejected';
-    } else {
-      sendResponse(res, 400, { success: false, error: '无效的审核结果' });
-      return;
-    }
-    
-    // 更新经费申请状态
-    await pool.query(
-      'UPDATE `FundingApplication` SET status = ?, reviewer_id = ?, review_date = CURDATE(), review_comment = ?, updated_at = NOW() WHERE id = ?',
-      [newStatus, user.id, comment, fundingId]
-    );
-    
-    // 获取项目信息用于创建通知
-    const [projectInfo] = await pool.query(`
-      SELECT p.applicant_id, p.title 
-      FROM \`Project\` p
-      WHERE p.id = ?
-    `, [funding.project_id]);
-    
-    if (projectInfo.length > 0) {
-      const applicantId = projectInfo[0].applicant_id;
-      const projectTitle = projectInfo[0].title;
-      
-      // 创建审核任务记录
-      const taskId = generateUUID();
-      await pool.query(`
-        INSERT INTO \`AuditTask\` (
-          id, task_type, title, description,
-          applicant_id, project_id, related_table, related_id,
-          priority, status, processed_by, processed_at,
-          review_result, review_comment, created_at
-        ) VALUES (?, 'funding_review', ?, ?, ?, ?, 'FundingApplication', ?, 'medium', 'completed', ?, NOW(), ?, ?, NOW())
-      `, [
-        taskId,
-        `经费申请审核：${funding.application_no}`,
-        `科研助理审核经费申请"${funding.application_no}"，项目：${projectTitle}`,
-        applicantId,
-        funding.project_id,
-        fundingId,
-        user.id,
-        newStatus,
-        comment
-      ]);
-      
-      // 创建通知
-      const notificationId = generateUUID();
-      const notificationTitle = newStatus === 'approved' 
-        ? '经费申请审核通过' 
-        : '经费申请审核拒绝';
-      
-      const notificationContent = newStatus === 'approved'
-        ? `您的经费申请 ${funding.application_no}（项目：${projectTitle}）已通过审核`
-        : `您的经费申请 ${funding.application_no}（项目：${projectTitle}）审核结果为：拒绝`;
-      
-      await pool.query(`
-        INSERT INTO \`Notification\` (
-          id, user_id, type, title, content,
-          related_id, related_type, priority,
-          is_read, expires_at, created_at
-        ) VALUES (?, ?, 'funding', ?, ?, ?, 'FundingApplication', 'high', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-      `, [
-        notificationId,
-        applicantId,
-        notificationTitle,
-        notificationContent,
-        fundingId
-      ]);
-    }
-    
-    // 记录操作日志
-    await pool.query(`
-      INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
-      VALUES (?, 'funding_review', 'FundingApplication', ?, ?, NOW())
-    `, [user.id, fundingId, JSON.stringify({ 
-      status: newStatus, 
-      recommendation,
-      comment,
-      reviewer_id: user.id
-    })]);
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: `经费申请已${newStatus === 'approved' ? '批准' : '拒绝'}`,
-      data: { 
-        fundingId, 
-        status: newStatus,
-        taskId: taskId || null
-      }
-    });
-    
-  } catch (error) {
-    console.error('审核经费申请失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '审核经费申请失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 标记经费已拨款
-if (pathname.startsWith('/api/assistant/funding/') && pathname.includes('/payment') && req.method === 'POST') {
-  const match = pathname.match(/\/api\/assistant\/funding\/(.+)\/payment/);
-  if (!match) return;
-  
-  const fundingId = match[1];
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const { payment_date, payment_voucher } = body;
-    
-    if (!payment_date) {
-      sendResponse(res, 400, { success: false, error: '请选择拨款日期' });
-      return;
-    }
-    
-    console.log('标记经费已拨款，申请ID:', fundingId, '操作人:', user.id);
-    
-    // 检查经费申请状态
-    const [fundingApplications] = await pool.query(
-      'SELECT * FROM `FundingApplication` WHERE id = ? AND status = "approved"',
-      [fundingId]
-    );
-    
-    if (fundingApplications.length === 0) {
-      sendResponse(res, 400, { 
-        success: false, 
-        error: '经费申请不存在或未批准，不能标记拨款' 
-      });
-      return;
-    }
-    
-    const funding = fundingApplications[0];
-    
-    // 更新经费申请状态
-    await pool.query(
-      'UPDATE `FundingApplication` SET status = "paid", payment_date = ?, payment_voucher = ?, updated_at = NOW() WHERE id = ?',
-      [payment_date, payment_voucher || '', fundingId]
-    );
-    
-    // 获取项目信息
-    const [projectInfo] = await pool.query(`
-      SELECT p.applicant_id, p.title 
-      FROM \`Project\` p
-      WHERE p.id = ?
-    `, [funding.project_id]);
-    
-    if (projectInfo.length > 0) {
-      const applicantId = projectInfo[0].applicant_id;
-      const projectTitle = projectInfo[0].title;
-      
-      // 创建审核任务记录
-      const taskId = generateUUID();
-      await pool.query(`
-        INSERT INTO \`AuditTask\` (
-          id, task_type, title, description,
-          applicant_id, project_id, related_table, related_id,
-          priority, status, processed_by, processed_at,
-          review_result, review_comment, created_at
-        ) VALUES (?, 'funding_review', ?, ?, ?, ?, 'FundingApplication', ?, 'medium', 'completed', ?, NOW(), 'paid', ?, NOW())
-      `, [
-        taskId,
-        `经费拨款完成：${funding.application_no}`,
-        `科研助理标记经费申请"${funding.application_no}"（项目：${projectTitle}）已拨款`,
-        applicantId,
-        funding.project_id,
-        fundingId,
-        user.id,
-        `拨款日期：${payment_date}，凭证：${payment_voucher || '无'}`
-      ]);
-      
-      // 创建通知
-      const notificationId = generateUUID();
-      await pool.query(`
-        INSERT INTO \`Notification\` (
-          id, user_id, type, title, content,
-          related_id, related_type, priority,
-          is_read, expires_at, created_at
-        ) VALUES (?, ?, 'funding', ?, ?, ?, 'FundingApplication', 'high', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-      `, [
-        notificationId,
-        applicantId,
-        '经费已拨款',
-        `您的经费申请 ${funding.application_no}（项目：${projectTitle}，金额：¥${funding.apply_amount}）已完成拨款`,
-        fundingId
-      ]);
-    }
-    
-    // 记录操作日志
-    await pool.query(`
-      INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
-      VALUES (?, 'funding_payment', 'FundingApplication', ?, ?, NOW())
-    `, [user.id, fundingId, JSON.stringify({ 
-      status: 'paid', 
-      payment_date,
-      payment_voucher: payment_voucher || '',
-      processed_by: user.id
-    })]);
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: '经费申请已标记为已拨款',
-      data: { 
-        fundingId, 
-        status: 'paid',
-        payment_date,
-        taskId: taskId || null
-      }
-    });
-    
-  } catch (error) {
-    console.error('标记经费拨款失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '标记经费拨款失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 批量批准经费申请
-if (pathname === '/api/assistant/funding/batch-approve' && req.method === 'POST') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const { ids, comment } = body;
-    
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      sendResponse(res, 400, { success: false, error: '请选择要操作的经费申请' });
-      return;
-    }
-    
-    console.log('批量批准经费申请，数量:', ids.length, '操作人:', user.id);
-    
-    // 检查所有申请是否可操作
-    const placeholders = ids.map(() => '?').join(',');
-    const [applications] = await pool.query(`
-      SELECT * FROM \`FundingApplication\` 
-      WHERE id IN (${placeholders}) AND status IN ('submitted', 'under_review')
-    `, ids);
-    
-    if (applications.length === 0) {
-      sendResponse(res, 400, { success: false, error: '没有可操作的经费申请' });
-      return;
-    }
-    
-    let successCount = 0;
-    const failedApplications = [];
-    
-    // 逐个处理经费申请
-    for (const funding of applications) {
-      try {
-        // 更新经费申请状态
-        await pool.query(
-          'UPDATE `FundingApplication` SET status = "approved", reviewer_id = ?, review_date = CURDATE(), review_comment = ?, updated_at = NOW() WHERE id = ?',
-          [user.id, comment || '批量批准', funding.id]
-        );
-        
-        // 获取项目信息
-        const [projectInfo] = await pool.query(`
-          SELECT p.applicant_id, p.title 
-          FROM \`Project\` p
-          WHERE p.id = ?
-        `, [funding.project_id]);
-        
-        if (projectInfo.length > 0) {
-          const applicantId = projectInfo[0].applicant_id;
-          const projectTitle = projectInfo[0].title;
-          
-          // 创建审核任务记录
-          const taskId = generateUUID();
-          await pool.query(`
-            INSERT INTO \`AuditTask\` (
-              id, task_type, title, description,
-              applicant_id, project_id, related_table, related_id,
-              priority, status, processed_by, processed_at,
-              review_result, review_comment, created_at
-            ) VALUES (?, 'funding_review', ?, ?, ?, ?, 'FundingApplication', ?, 'medium', 'completed', ?, NOW(), 'approved', ?, NOW())
-          `, [
-            taskId,
-            `批量经费申请审核：${funding.application_no}`,
-            `科研助理批量审核经费申请"${funding.application_no}"，项目：${projectTitle}`,
-            applicantId,
-            funding.project_id,
-            funding.id,
-            user.id,
-            comment || '批量批准'
-          ]);
-          
-          // 创建通知
-          const notificationId = generateUUID();
-          await pool.query(`
-            INSERT INTO \`Notification\` (
-              id, user_id, type, title, content,
-              related_id, related_type, priority,
-              is_read, expires_at, created_at
-            ) VALUES (?, ?, 'funding', ?, ?, ?, 'FundingApplication', 'medium', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-          `, [
-            notificationId,
-            applicantId,
-            '经费申请批量审核通过',
-            `您的经费申请 ${funding.application_no}（项目：${projectTitle}）已通过批量审核`,
-            funding.id
-          ]);
-        }
-        
-        successCount++;
-        
-      } catch (error) {
-        console.error(`批量批准经费申请 ${funding.id} 失败:`, error);
-        failedApplications.push({
-          funding_id: funding.id,
-          application_no: funding.application_no,
-          error: error.message
-        });
-      }
-    }
-    
-    // 记录操作日志
-    await pool.query(`
-      INSERT INTO \`AuditLog\` (user_id, action, table_name, new_values, created_at)
-      VALUES (?, 'batch_funding_approve', 'FundingApplication', ?, NOW())
-    `, [user.id, JSON.stringify({
-      ids,
-      comment,
-      successCount,
-      failedCount: failedApplications.length,
-      totalCount: applications.length
-    })]);
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: `批量批准完成，成功处理 ${successCount} 个经费申请`,
-      data: {
-        successCount,
-        failedApplications,
-        failedCount: failedApplications.length,
-        totalCount: applications.length
-      }
-    });
-    
-  } catch (error) {
-    console.error('批量批准经费申请失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '批量批准失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 批量拒绝经费申请
-if (pathname === '/api/assistant/funding/batch-reject' && req.method === 'POST') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const { ids, comment } = body;
-    
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      sendResponse(res, 400, { success: false, error: '请选择要操作的经费申请' });
-      return;
-    }
-    
-    if (!comment) {
-      sendResponse(res, 400, { success: false, error: '请填写拒绝原因' });
-      return;
-    }
-    
-    console.log('批量拒绝经费申请，数量:', ids.length, '操作人:', user.id);
-    
-    // 检查所有申请是否可操作
-    const placeholders = ids.map(() => '?').join(',');
-    const [applications] = await pool.query(`
-      SELECT * FROM \`FundingApplication\` 
-      WHERE id IN (${placeholders}) AND status IN ('submitted', 'under_review')
-    `, ids);
-    
-    if (applications.length === 0) {
-      sendResponse(res, 400, { success: false, error: '没有可操作的经费申请' });
-      return;
-    }
-    
-    let successCount = 0;
-    const failedApplications = [];
-    
-    // 逐个处理经费申请
-    for (const funding of applications) {
-      try {
-        // 更新经费申请状态
-        await pool.query(
-          'UPDATE `FundingApplication` SET status = "rejected", reviewer_id = ?, review_date = CURDATE(), review_comment = ?, updated_at = NOW() WHERE id = ?',
-          [user.id, comment, funding.id]
-        );
-        
-        // 获取项目信息
-        const [projectInfo] = await pool.query(`
-          SELECT p.applicant_id, p.title 
-          FROM \`Project\` p
-          WHERE p.id = ?
-        `, [funding.project_id]);
-        
-        if (projectInfo.length > 0) {
-          const applicantId = projectInfo[0].applicant_id;
-          const projectTitle = projectInfo[0].title;
-          
-          // 创建审核任务记录
-          const taskId = generateUUID();
-          await pool.query(`
-            INSERT INTO \`AuditTask\` (
-              id, task_type, title, description,
-              applicant_id, project_id, related_table, related_id,
-              priority, status, processed_by, processed_at,
-              review_result, review_comment, created_at
-            ) VALUES (?, 'funding_review', ?, ?, ?, ?, 'FundingApplication', ?, 'medium', 'completed', ?, NOW(), 'rejected', ?, NOW())
-          `, [
-            taskId,
-            `批量经费申请审核：${funding.application_no}`,
-            `科研助理批量审核经费申请"${funding.application_no}"，项目：${projectTitle}`,
-            applicantId,
-            funding.project_id,
-            funding.id,
-            user.id,
-            comment
-          ]);
-          
-          // 创建通知
-          const notificationId = generateUUID();
-          await pool.query(`
-            INSERT INTO \`Notification\` (
-              id, user_id, type, title, content,
-              related_id, related_type, priority,
-              is_read, expires_at, created_at
-            ) VALUES (?, ?, 'funding', ?, ?, ?, 'FundingApplication', 'medium', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-          `, [
-            notificationId,
-            applicantId,
-            '经费申请批量审核拒绝',
-            `您的经费申请 ${funding.application_no}（项目：${projectTitle}）批量审核结果为：拒绝`,
-            funding.id
-          ]);
-        }
-        
-        successCount++;
-        
-      } catch (error) {
-        console.error(`批量拒绝经费申请 ${funding.id} 失败:`, error);
-        failedApplications.push({
-          funding_id: funding.id,
-          application_no: funding.application_no,
-          error: error.message
-        });
-      }
-    }
-    
-    // 记录操作日志
-    await pool.query(`
-      INSERT INTO \`AuditLog\` (user_id, action, table_name, new_values, created_at)
-      VALUES (?, 'batch_funding_reject', 'FundingApplication', ?, NOW())
-    `, [user.id, JSON.stringify({
-      ids,
-      comment,
-      successCount,
-      failedCount: failedApplications.length,
-      totalCount: applications.length
-    })]);
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: `批量拒绝完成，成功处理 ${successCount} 个经费申请`,
-      data: {
-        successCount,
-        failedApplications,
-        failedCount: failedApplications.length,
-        totalCount: applications.length
-      }
-    });
-    
-  } catch (error) {
-    console.error('批量拒绝经费申请失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '批量拒绝失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 获取经费申请统计数据
-if (pathname === '/api/assistant/funding/stats' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    console.log('获取经费申请统计数据，用户ID:', user.id);
-    
-    // 获取基本统计数据
-    const [basicStats] = await pool.query(`
-      SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as reviewing,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid,
-        SUM(CASE WHEN status IN ('approved', 'paid') THEN apply_amount ELSE 0 END) as total_approved_amount,
-        SUM(CASE WHEN status = 'paid' THEN apply_amount ELSE 0 END) as total_paid_amount,
-        AVG(CASE WHEN status IN ('approved', 'paid') THEN apply_amount ELSE NULL END) as avg_approved_amount
-      FROM \`FundingApplication\`
-    `);
-    
-    // 获取按月份的统计
-    const [monthlyStats] = await pool.query(`
-      SELECT 
-        DATE_FORMAT(apply_date, '%Y-%m') as month,
-        COUNT(*) as total,
-        SUM(CASE WHEN status IN ('approved', 'paid') THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(CASE WHEN status IN ('approved', 'paid') THEN apply_amount ELSE 0 END) as approved_amount
-      FROM \`FundingApplication\`
-      WHERE apply_date >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
-      GROUP BY DATE_FORMAT(apply_date, '%Y-%m')
-      ORDER BY month DESC
-    `);
-    
-    // 获取按项目的统计
-    const [projectStats] = await pool.query(`
-      SELECT 
-        p.title as project_title,
-        p.project_code,
-        COUNT(fa.id) as funding_count,
-        SUM(CASE WHEN fa.status IN ('approved', 'paid') THEN fa.apply_amount ELSE 0 END) as total_approved_amount,
-        SUM(CASE WHEN fa.status = 'paid' THEN fa.apply_amount ELSE 0 END) as total_paid_amount
-      FROM \`FundingApplication\` fa
-      LEFT JOIN \`Project\` p ON fa.project_id = p.id
-      GROUP BY fa.project_id, p.title, p.project_code
-      ORDER BY total_approved_amount DESC
-      LIMIT 10
-    `);
-    
-    // 获取按申请人的统计
-    const [applicantStats] = await pool.query(`
-      SELECT 
-        u.name as applicant_name,
-        u.department,
-        COUNT(fa.id) as funding_count,
-        SUM(CASE WHEN fa.status IN ('approved', 'paid') THEN fa.apply_amount ELSE 0 END) as total_approved_amount
-      FROM \`FundingApplication\` fa
-      LEFT JOIN \`Project\` p ON fa.project_id = p.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      GROUP BY p.applicant_id, u.name, u.department
-      ORDER BY total_approved_amount DESC
-      LIMIT 10
-    `);
-    
-    const stats = {
-      summary: {
-        total: basicStats[0]?.total || 0,
-        pending: basicStats[0]?.pending || 0,
-        reviewing: basicStats[0]?.reviewing || 0,
-        approved: basicStats[0]?.approved || 0,
-        rejected: basicStats[0]?.rejected || 0,
-        paid: basicStats[0]?.paid || 0,
-        total_approved_amount: parseFloat(basicStats[0]?.total_approved_amount || 0),
-        total_paid_amount: parseFloat(basicStats[0]?.total_paid_amount || 0),
-        avg_approved_amount: parseFloat(basicStats[0]?.avg_approved_amount || 0)
-      },
-      by_month: monthlyStats.map(stat => ({
-        month: stat.month,
-        total: stat.total || 0,
-        approved: stat.approved || 0,
-        rejected: stat.rejected || 0,
-        approved_amount: parseFloat(stat.approved_amount || 0)
-      })),
-      by_project: projectStats.map(stat => ({
-        project_title: stat.project_title,
-        project_code: stat.project_code,
-        funding_count: stat.funding_count || 0,
-        total_approved_amount: parseFloat(stat.total_approved_amount || 0),
-        total_paid_amount: parseFloat(stat.total_paid_amount || 0)
-      })),
-      by_applicant: applicantStats.map(stat => ({
-        applicant_name: stat.applicant_name,
-        department: stat.department,
-        funding_count: stat.funding_count || 0,
-        total_approved_amount: parseFloat(stat.total_approved_amount || 0)
-      }))
-    };
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: stats
-    });
-    
-  } catch (error) {
-    console.error('获取经费申请统计数据失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '获取统计数据失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 导出经费申请数据
-if (pathname === '/api/assistant/funding/export' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    
-    console.log('导出经费申请数据，用户ID:', user.id);
-    
-    // 构建基础查询条件（与列表查询一致）
-    let whereClauses = [];
-    let queryParams = [];
-    
-    // 按申请状态筛选
-    if (query.status && query.status !== 'all') {
-      const statuses = query.status.split(',');
-      const placeholders = statuses.map(() => '?').join(',');
-      whereClauses.push(`fa.status IN (${placeholders})`);
-      queryParams.push(...statuses);
-    }
-    
-    // 关键词搜索
-    if (query.search) {
-      whereClauses.push('(fa.application_no LIKE ? OR p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)');
-      const keyword = `%${query.search}%`;
-      queryParams.push(keyword, keyword, keyword, keyword);
-    }
-    
-    const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
-    
-    // 获取所有符合条件的申请
-    const [applications] = await pool.query(`
-      SELECT 
-        fa.application_no as '申请编号',
-        p.project_code as '项目编号',
-        p.title as '项目名称',
-        p.category as '项目类别',
-        u.name as '申请人',
-        u.department as '申请人部门',
-        fa.apply_amount as '申请金额(元)',
-        fa.purpose as '申请用途',
-        CASE fa.status
-          WHEN 'draft' THEN '草稿'
-          WHEN 'submitted' THEN '待审核'
-          WHEN 'under_review' THEN '审核中'
-          WHEN 'approved' THEN '已批准'
-          WHEN 'rejected' THEN '已拒绝'
-          WHEN 'paid' THEN '已拨款'
-          ELSE fa.status
-        END as '申请状态',
-        DATE_FORMAT(fa.apply_date, '%Y-%m-%d') as '申请日期',
-        ur.name as '审核人',
-        DATE_FORMAT(fa.review_date, '%Y-%m-%d') as '审核日期',
-        fa.review_comment as '审核意见',
-        DATE_FORMAT(fa.payment_date, '%Y-%m-%d') as '拨款日期',
-        fa.payment_voucher as '拨款凭证'
-      FROM \`FundingApplication\` fa
-      LEFT JOIN \`Project\` p ON fa.project_id = p.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      LEFT JOIN \`User\` ur ON fa.reviewer_id = ur.id
-      ${whereClause}
-      ORDER BY fa.apply_date DESC
-    `, queryParams);
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: applications,
-      message: '导出数据准备完成'
-    });
-    
-  } catch (error) {
-    console.error('导出经费申请数据失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '导出失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// ==================== 科研助理支出审核相关API ====================
-// 获取支出审核列表
-if (pathname === '/api/assistant/expenditures/list' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    const page = parseInt(query.page) || 1;
-    const pageSize = parseInt(query.pageSize) || 10;
-    const offset = (page - 1) * pageSize;
-    
-    console.log('科研助理获取支出审核列表，用户ID:', user.id);
-    
-    // 构建基础查询条件
-    let whereClauses = [];
-    let queryParams = [];
-    
-    // 按申请状态筛选
-    if (query.status && query.status !== 'all') {
-      const statuses = query.status.split(',');
-      const placeholders = statuses.map(() => '?').join(',');
-      whereClauses.push(`er.status IN (${placeholders})`);
-      queryParams.push(...statuses);
-    }
-    
-    // 按支出类别筛选
-    if (query.category) {
-      whereClauses.push('er.category = ?');
-      queryParams.push(query.category);
-    }
-    
-    // 按支出时间筛选
-    if (query.dateRange) {
-      let dateCondition = '';
-      
-      switch (query.dateRange) {
-        case 'today':
-          dateCondition = 'DATE(er.expense_date) = CURDATE()';
-          break;
-        case 'week':
-          dateCondition = 'er.expense_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
-          break;
-        case 'month':
-          dateCondition = 'er.expense_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)';
-          break;
-        case 'quarter':
-          dateCondition = 'er.expense_date >= DATE_SUB(NOW(), INTERVAL 90 DAY)';
-          break;
-        default:
-          // 处理自定义日期范围
-          if (query.startDate && query.endDate) {
-            whereClauses.push('er.expense_date BETWEEN ? AND ?');
-            queryParams.push(query.startDate, query.endDate);
-          }
-      }
-      
-      if (dateCondition) {
-        whereClauses.push(dateCondition);
-      }
-    }
-    
-    // 关键词搜索
-    if (query.search) {
-      whereClauses.push('(er.expense_no LIKE ? OR p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ? OR er.payee LIKE ? OR er.item_name LIKE ?)');
-      const keyword = `%${query.search}%`;
-      queryParams.push(keyword, keyword, keyword, keyword, keyword, keyword);
-    }
-    
-    const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
-    
-    // 获取支出总数
-    const [totalResult] = await pool.query(`
-      SELECT COUNT(*) as total 
-      FROM \`ExpenditureRecord\` er
-      LEFT JOIN \`Project\` p ON er.project_id = p.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      ${whereClause}
-    `, queryParams);
-    
-    const total = totalResult[0]?.total || 0;
-    
-    // 获取支出数据
-    const [expenditures] = await pool.query(`
-      SELECT 
-        er.id,
-        er.expense_no,
-        er.project_id,
-        er.funding_app_id,
-        er.category,
-        er.item_name,
-        er.amount,
-        er.expense_date,
-        er.payee,
-        er.description,
-        er.supporting_docs,
-        er.status,
-        er.reviewer_id,
-        er.review_date,
-        er.review_comment,
-        
-        p.title as project_title,
-        p.project_code,
-        p.category as project_category,
-        
-        u.id as applicant_id,
-        u.name as applicant_name,
-        u.department as applicant_department,
-        
-        ur.name as reviewer_name,
-        
-        fa.application_no as funding_app_no,
-        fa.apply_amount as funding_app_amount,
-        fa.status as funding_app_status
-      FROM \`ExpenditureRecord\` er
-      LEFT JOIN \`Project\` p ON er.project_id = p.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      LEFT JOIN \`User\` ur ON er.reviewer_id = ur.id
-      LEFT JOIN \`FundingApplication\` fa ON er.funding_app_id = fa.id
-      ${whereClause}
-      ORDER BY er.expense_date DESC, er.created_at DESC
-      LIMIT ? OFFSET ?
-    `, [...queryParams, pageSize, offset]);
-    
-    // 格式化数据
-    const formattedExpenditures = expenditures.map(exp => ({
-      id: exp.id,
-      expense_no: exp.expense_no,
-      project_id: exp.project_id,
-      funding_app_id: exp.funding_app_id,
-      category: exp.category,
-      item_name: exp.item_name,
-      amount: parseFloat(exp.amount) || 0,
-      expense_date: exp.expense_date ? exp.expense_date.toISOString().split('T')[0] : null,
-      payee: exp.payee,
-      description: exp.description,
-      //supporting_docs: exp.supporting_docs ? JSON.parse(exp.supporting_docs) : [],
-      status: exp.status,
-      reviewer_id: exp.reviewer_id,
-      review_date: exp.review_date ? exp.review_date.toISOString().split('T')[0] : null,
-      review_comment: exp.review_comment,
-      project_info: {
-        id: exp.project_id,
-        title: exp.project_title,
-        project_code: exp.project_code,
-        category: exp.project_category
-      },
-      applicant_info: {
-        id: exp.applicant_id,
-        name: exp.applicant_name,
-        department: exp.applicant_department
-      },
-      reviewer_info: exp.reviewer_name ? {
-        id: exp.reviewer_id,
-        name: exp.reviewer_name
-      } : null,
-      funding_app_info: exp.funding_app_no ? {
-        id: exp.funding_app_id,
-        application_no: exp.funding_app_no,
-        apply_amount: parseFloat(exp.funding_app_amount) || 0,
-        status: exp.funding_app_status
-      } : null
-    }));
-    
-    // 获取统计数据
-    const [statsResult] = await pool.query(`
-      SELECT 
-        SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as reviewing,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(amount) as total_amount,
-        SUM(CASE WHEN status IN ('submitted', 'under_review') THEN amount ELSE 0 END) as pending_amount,
-        SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) as approved_amount,
-        SUM(CASE WHEN status = 'rejected' THEN amount ELSE 0 END) as rejected_amount
-      FROM \`ExpenditureRecord\`
-    `);
-    
-    const stats = {
-      pending: statsResult[0]?.pending || 0,
-      reviewing: statsResult[0]?.reviewing || 0,
-      approved: statsResult[0]?.approved || 0,
-      rejected: statsResult[0]?.rejected || 0,
-      total_amount: parseFloat(statsResult[0]?.total_amount || 0),
-      pending_amount: parseFloat(statsResult[0]?.pending_amount || 0),
-      approved_amount: parseFloat(statsResult[0]?.approved_amount || 0),
-      rejected_amount: parseFloat(statsResult[0]?.rejected_amount || 0)
-    };
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: {
-        list: formattedExpenditures,
-        pagination: {
-          current: page,
-          pageSize,
-          total
-        },
-        stats
-      }
-    });
-    
-  } catch (error) {
-    console.error('获取支出审核列表失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '获取支出审核列表失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 获取支出记录详情
-if (pathname.startsWith('/api/assistant/expenditures/') && !pathname.includes('/review') && req.method === 'GET') {
-  const match = pathname.match(/\/api\/assistant\/expenditures\/(.+)/);
-  if (!match) return;
-  
-  const expenditureId = match[1];
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    console.log('获取支出记录详情，记录ID:', expenditureId);
-    
-    // 获取支出记录基本信息
-    const [expenditures] = await pool.query(`
-      SELECT 
-        er.*,
-        p.title as project_title,
-        p.project_code,
-        p.category as project_category,
-        p.status as project_status,
-        p.budget_total as project_budget_total,
-        
-        u.id as applicant_id,
-        u.name as applicant_name,
-        u.department,
-        u.email as applicant_email,
-        u.phone as applicant_phone,
-        
-        ur.name as reviewer_name,
-        ur.email as reviewer_email,
-        
-        fa.application_no as funding_app_no,
-        fa.apply_amount as funding_app_amount,
-        fa.status as funding_app_status,
-        fa.apply_date as funding_app_date
-      FROM \`ExpenditureRecord\` er
-      LEFT JOIN \`Project\` p ON er.project_id = p.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      LEFT JOIN \`User\` ur ON er.reviewer_id = ur.id
-      LEFT JOIN \`FundingApplication\` fa ON er.funding_app_id = fa.id
-      WHERE er.id = ?
-    `, [expenditureId]);
-    
-    if (expenditures.length === 0) {
-      sendResponse(res, 404, { success: false, error: '支出记录不存在' });
-      return;
-    }
-    
-    const expenditure = expenditures[0];
-    
-    // 获取项目预算明细（用于参考）
-    const [budgetItems] = await pool.query(`
-      SELECT 
-        category,
-        item_name,
-        description,
-        amount,
-        sort_order
-      FROM \`ProjectBudget\`
-      WHERE project_id = ?
-      ORDER BY sort_order ASC, created_at ASC
-    `, [expenditure.project_id]);
-    
-    // 获取类似支出记录
-    const [similarExpenditures] = await pool.query(`
-      SELECT 
-        expense_no,
-        category,
-        item_name,
-        amount,
-        expense_date,
-        status,
-        review_comment
-      FROM \`ExpenditureRecord\`
-      WHERE project_id = ? AND id != ?
-      ORDER BY expense_date DESC
-      LIMIT 5
-    `, [expenditure.project_id, expenditureId]);
-    
-    // 获取审核任务记录
-    const [tasks] = await pool.query(`
-      SELECT 
-        id,
-        task_type,
-        title,
-        description,
-        priority,
-        status,
-        processed_at,
-        review_result,
-        review_comment,
-        created_at
-      FROM \`AuditTask\`
-      WHERE related_table = 'ExpenditureRecord' AND related_id = ?
-      ORDER BY created_at DESC
-    `, [expenditureId]);
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: {
-        expenditure: {
-          id: expenditure.id,
-          expense_no: expenditure.expense_no,
-          project_id: expenditure.project_id,
-          funding_app_id: expenditure.funding_app_id,
-          category: expenditure.category,
-          item_name: expenditure.item_name,
-          amount: parseFloat(expenditure.amount),
-          expense_date: expenditure.expense_date ? expenditure.expense_date.toISOString().split('T')[0] : null,
-          payee: expenditure.payee,
-          description: expenditure.description,
-          supporting_docs: expenditure.supporting_docs ? JSON.parse(expenditure.supporting_docs) : [],
-          status: expenditure.status,
-          reviewer_id: expenditure.reviewer_id,
-          review_date: expenditure.review_date ? expenditure.review_date.toISOString().split('T')[0] : null,
-          review_comment: expenditure.review_comment,
-          created_at: expenditure.created_at ? expenditure.created_at.toISOString() : null,
-          
-          project_info: {
-            id: expenditure.project_id,
-            title: expenditure.project_title,
-            project_code: expenditure.project_code,
-            category: expenditure.project_category,
-            status: expenditure.project_status,
-            budget_total: parseFloat(expenditure.project_budget_total)
-          },
-          
-          applicant_info: {
-            id: expenditure.applicant_id,
-            name: expenditure.applicant_name,
-            department: expenditure.department,
-            email: expenditure.applicant_email,
-            phone: expenditure.applicant_phone
-          },
-          
-          reviewer_info: expenditure.reviewer_name ? {
-            id: expenditure.reviewer_id,
-            name: expenditure.reviewer_name,
-            email: expenditure.reviewer_email
-          } : null,
-          
-          funding_app_info: expenditure.funding_app_no ? {
-            id: expenditure.funding_app_id,
-            application_no: expenditure.funding_app_no,
-            apply_amount: parseFloat(expenditure.funding_app_amount),
-            status: expenditure.funding_app_status,
-            apply_date: expenditure.funding_app_date ? expenditure.funding_app_date.toISOString().split('T')[0] : null
-          } : null
-        },
-        budget_items: budgetItems.map(item => ({
-          category: item.category,
-          item_name: item.item_name,
-          description: item.description,
-          amount: parseFloat(item.amount),
-          justification: item.description
-        })),
-        similar_expenditures: similarExpenditures.map(exp => ({
-          expense_no: exp.expense_no,
-          category: exp.category,
-          item_name: exp.item_name,
-          amount: parseFloat(exp.amount),
-          expense_date: exp.expense_date ? exp.expense_date.toISOString().split('T')[0] : null,
-          status: exp.status,
-          review_comment: exp.review_comment
-        })),
-        tasks: tasks.map(task => ({
-          id: task.id,
-          task_type: task.task_type,
-          title: task.title,
-          description: task.description,
-          priority: task.priority,
-          status: task.status,
-          processed_at: task.processed_at ? task.processed_at.toISOString() : null,
-          review_result: task.review_result,
-          review_comment: task.review_comment,
-          created_at: task.created_at ? task.created_at.toISOString() : null
-        }))
-      }
-    });
-    
-  } catch (error) {
-    console.error('获取支出记录详情失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '获取支出记录详情失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 审核支出记录
-if (pathname.startsWith('/api/assistant/expenditures/') && pathname.includes('/review') && req.method === 'POST') {
-  const match = pathname.match(/\/api\/assistant\/expenditures\/(.+)\/review/);
-  if (!match) return;
-  
-  const expenditureId = match[1];
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const { recommendation, comment } = body;
-    
-    if (!recommendation) {
-      sendResponse(res, 400, { success: false, error: '请选择审核结果' });
-      return;
-    }
-    
-    if (!comment) {
-      sendResponse(res, 400, { success: false, error: '请填写审核意见' });
-      return;
-    }
-    
-    console.log('审核支出记录，记录ID:', expenditureId, '操作人:', user.id, '审核结果:', recommendation);
-    
-    // 检查支出记录状态
-    const [expenditureRecords] = await pool.query(
-      'SELECT * FROM `ExpenditureRecord` WHERE id = ? AND status IN ("submitted", "under_review")',
-      [expenditureId]
-    );
-    
-    if (expenditureRecords.length === 0) {
-      sendResponse(res, 400, { 
-        success: false, 
-        error: '支出记录不存在或不能审核' 
-      });
-      return;
-    }
-    
-    const expenditure = expenditureRecords[0];
-    
-    // 确定新状态
-    let newStatus = '';
-    if (recommendation === 'approve') {
-      newStatus = 'approved';
-    } else if (recommendation === 'reject') {
-      newStatus = 'rejected';
-    } else {
-      sendResponse(res, 400, { success: false, error: '无效的审核结果' });
-      return;
-    }
-    
-    // 更新支出记录状态
-    await pool.query(
-      'UPDATE `ExpenditureRecord` SET status = ?, reviewer_id = ?, review_date = CURDATE(), review_comment = ?, updated_at = NOW() WHERE id = ?',
-      [newStatus, user.id, comment, expenditureId]
-    );
-    
-    // 获取项目信息用于创建通知
-    const [projectInfo] = await pool.query(`
-      SELECT p.applicant_id, p.title 
-      FROM \`Project\` p
-      WHERE p.id = ?
-    `, [expenditure.project_id]);
-    
-    if (projectInfo.length > 0) {
-      const applicantId = projectInfo[0].applicant_id;
-      const projectTitle = projectInfo[0].title;
-      
-      // 创建审核任务记录
-      const taskId = generateUUID();
-      await pool.query(`
-        INSERT INTO \`AuditTask\` (
-          id, task_type, title, description,
-          applicant_id, project_id, related_table, related_id,
-          priority, status, processed_by, processed_at,
-          review_result, review_comment, created_at
-        ) VALUES (?, 'expenditure_review', ?, ?, ?, ?, 'ExpenditureRecord', ?, 'medium', 'completed', ?, NOW(), ?, ?, NOW())
-      `, [
-        taskId,
-        `支出记录审核：${expenditure.expense_no}`,
-        `科研助理审核支出记录"${expenditure.expense_no}"，项目：${projectTitle}`,
-        applicantId,
-        expenditure.project_id,
-        expenditureId,
-        user.id,
-        newStatus,
-        comment
-      ]);
-      
-      // 创建通知
-      const notificationId = generateUUID();
-      const notificationTitle = newStatus === 'approved' 
-        ? '支出记录审核通过' 
-        : '支出记录审核拒绝';
-      
-      const notificationContent = newStatus === 'approved'
-        ? `您的支出记录 ${expenditure.expense_no}（项目：${projectTitle}，金额：¥${expenditure.amount}）已通过审核`
-        : `您的支出记录 ${expenditure.expense_no}（项目：${projectTitle}，金额：¥${expenditure.amount}）审核结果为：拒绝`;
-      
-      await pool.query(`
-        INSERT INTO \`Notification\` (
-          id, user_id, type, title, content,
-          related_id, related_type, priority,
-          is_read, expires_at, created_at
-        ) VALUES (?, ?, 'expenditure', ?, ?, ?, 'ExpenditureRecord', 'high', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-      `, [
-        notificationId,
-        applicantId,
-        notificationTitle,
-        notificationContent,
-        expenditureId
-      ]);
-    }
-    
-    // 记录操作日志
-    await pool.query(`
-      INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
-      VALUES (?, 'expenditure_review', 'ExpenditureRecord', ?, ?, NOW())
-    `, [user.id, expenditureId, JSON.stringify({ 
-      status: newStatus, 
-      recommendation,
-      comment,
-      reviewer_id: user.id
-    })]);
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: `支出记录已${newStatus === 'approved' ? '批准' : '拒绝'}`,
-      data: { 
-        expenditureId, 
-        status: newStatus,
-        taskId: taskId || null
-      }
-    });
-    
-  } catch (error) {
-    console.error('审核支出记录失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '审核支出记录失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 批量批准支出记录
-if (pathname === '/api/assistant/expenditures/batch-approve' && req.method === 'POST') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const { ids, comment } = body;
-    
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      sendResponse(res, 400, { success: false, error: '请选择要操作的支出记录' });
-      return;
-    }
-    
-    console.log('批量批准支出记录，数量:', ids.length, '操作人:', user.id);
-    
-    // 检查所有记录是否可操作
-    const placeholders = ids.map(() => '?').join(',');
-    const [expenditures] = await pool.query(`
-      SELECT * FROM \`ExpenditureRecord\` 
-      WHERE id IN (${placeholders}) AND status IN ('submitted', 'under_review')
-    `, ids);
-    
-    if (expenditures.length === 0) {
-      sendResponse(res, 400, { success: false, error: '没有可操作的支出记录' });
-      return;
-    }
-    
-    let successCount = 0;
-    const failedExpenditures = [];
-    
-    // 逐个处理支出记录
-    for (const expenditure of expenditures) {
-      try {
-        // 更新支出记录状态
-        await pool.query(
-          'UPDATE `ExpenditureRecord` SET status = "approved", reviewer_id = ?, review_date = CURDATE(), review_comment = ?, updated_at = NOW() WHERE id = ?',
-          [user.id, comment || '批量批准', expenditure.id]
-        );
-        
-        // 获取项目信息
-        const [projectInfo] = await pool.query(`
-          SELECT p.applicant_id, p.title 
-          FROM \`Project\` p
-          WHERE p.id = ?
-        `, [expenditure.project_id]);
-        
-        if (projectInfo.length > 0) {
-          const applicantId = projectInfo[0].applicant_id;
-          const projectTitle = projectInfo[0].title;
-          
-          // 创建审核任务记录
-          const taskId = generateUUID();
-          await pool.query(`
-            INSERT INTO \`AuditTask\` (
-              id, task_type, title, description,
-              applicant_id, project_id, related_table, related_id,
-              priority, status, processed_by, processed_at,
-              review_result, review_comment, created_at
-            ) VALUES (?, 'expenditure_review', ?, ?, ?, ?, 'ExpenditureRecord', ?, 'medium', 'completed', ?, NOW(), 'approved', ?, NOW())
-          `, [
-            taskId,
-            `批量支出记录审核：${expenditure.expense_no}`,
-            `科研助理批量审核支出记录"${expenditure.expense_no}"，项目：${projectTitle}`,
-            applicantId,
-            expenditure.project_id,
-            expenditure.id,
-            user.id,
-            comment || '批量批准'
-          ]);
-          
-          // 创建通知
-          const notificationId = generateUUID();
-          await pool.query(`
-            INSERT INTO \`Notification\` (
-              id, user_id, type, title, content,
-              related_id, related_type, priority,
-              is_read, expires_at, created_at
-            ) VALUES (?, ?, 'expenditure', ?, ?, ?, 'ExpenditureRecord', 'medium', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-          `, [
-            notificationId,
-            applicantId,
-            '支出记录批量审核通过',
-            `您的支出记录 ${expenditure.expense_no}（项目：${projectTitle}）已通过批量审核`,
-            expenditure.id
-          ]);
-        }
-        
-        successCount++;
-        
-      } catch (error) {
-        console.error(`批量批准支出记录 ${expenditure.id} 失败:`, error);
-        failedExpenditures.push({
-          expenditure_id: expenditure.id,
-          expense_no: expenditure.expense_no,
-          error: error.message
-        });
-      }
-    }
-    
-    // 记录操作日志
-    await pool.query(`
-      INSERT INTO \`AuditLog\` (user_id, action, table_name, new_values, created_at)
-      VALUES (?, 'batch_expenditure_approve', 'ExpenditureRecord', ?, NOW())
-    `, [user.id, JSON.stringify({
-      ids,
-      comment,
-      successCount,
-      failedCount: failedExpenditures.length,
-      totalCount: expenditures.length
-    })]);
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: `批量批准完成，成功处理 ${successCount} 条支出记录`,
-      data: {
-        successCount,
-        failedExpenditures,
-        failedCount: failedExpenditures.length,
-        totalCount: expenditures.length
-      }
-    });
-    
-  } catch (error) {
-    console.error('批量批准支出记录失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '批量批准失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 批量拒绝支出记录
-if (pathname === '/api/assistant/expenditures/batch-reject' && req.method === 'POST') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const body = await getBody(req);
-    const { ids, comment } = body;
-    
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      sendResponse(res, 400, { success: false, error: '请选择要操作的支出记录' });
-      return;
-    }
-    
-    if (!comment) {
-      sendResponse(res, 400, { success: false, error: '请填写拒绝原因' });
-      return;
-    }
-    
-    console.log('批量拒绝支出记录，数量:', ids.length, '操作人:', user.id);
-    
-    // 检查所有记录是否可操作
-    const placeholders = ids.map(() => '?').join(',');
-    const [expenditures] = await pool.query(`
-      SELECT * FROM \`ExpenditureRecord\` 
-      WHERE id IN (${placeholders}) AND status IN ('submitted', 'under_review')
-    `, ids);
-    
-    if (expenditures.length === 0) {
-      sendResponse(res, 400, { success: false, error: '没有可操作的支出记录' });
-      return;
-    }
-    
-    let successCount = 0;
-    const failedExpenditures = [];
-    
-    // 逐个处理支出记录
-    for (const expenditure of expenditures) {
-      try {
-        // 更新支出记录状态
-        await pool.query(
-          'UPDATE `ExpenditureRecord` SET status = "rejected", reviewer_id = ?, review_date = CURDATE(), review_comment = ?, updated_at = NOW() WHERE id = ?',
-          [user.id, comment, expenditure.id]
-        );
-        
-        // 获取项目信息
-        const [projectInfo] = await pool.query(`
-          SELECT p.applicant_id, p.title 
-          FROM \`Project\` p
-          WHERE p.id = ?
-        `, [expenditure.project_id]);
-        
-        if (projectInfo.length > 0) {
-          const applicantId = projectInfo[0].applicant_id;
-          const projectTitle = projectInfo[0].title;
-          
-          // 创建审核任务记录
-          const taskId = generateUUID();
-          await pool.query(`
-            INSERT INTO \`AuditTask\` (
-              id, task_type, title, description,
-              applicant_id, project_id, related_table, related_id,
-              priority, status, processed_by, processed_at,
-              review_result, review_comment, created_at
-            ) VALUES (?, 'expenditure_review', ?, ?, ?, ?, 'ExpenditureRecord', ?, 'medium', 'completed', ?, NOW(), 'rejected', ?, NOW())
-          `, [
-            taskId,
-            `批量支出记录审核：${expenditure.expense_no}`,
-            `科研助理批量审核支出记录"${expenditure.expense_no}"，项目：${projectTitle}`,
-            applicantId,
-            expenditure.project_id,
-            expenditure.id,
-            user.id,
-            comment
-          ]);
-          
-          // 创建通知
-          const notificationId = generateUUID();
-          await pool.query(`
-            INSERT INTO \`Notification\` (
-              id, user_id, type, title, content,
-              related_id, related_type, priority,
-              is_read, expires_at, created_at
-            ) VALUES (?, ?, 'expenditure', ?, ?, ?, 'ExpenditureRecord', 'medium', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-          `, [
-            notificationId,
-            applicantId,
-            '支出记录批量审核拒绝',
-            `您的支出记录 ${expenditure.expense_no}（项目：${projectTitle}）批量审核结果为：拒绝`,
-            expenditure.id
-          ]);
-        }
-        
-        successCount++;
-        
-      } catch (error) {
-        console.error(`批量拒绝支出记录 ${expenditure.id} 失败:`, error);
-        failedExpenditures.push({
-          expenditure_id: expenditure.id,
-          expense_no: expenditure.expense_no,
-          error: error.message
-        });
-      }
-    }
-    
-    // 记录操作日志
-    await pool.query(`
-      INSERT INTO \`AuditLog\` (user_id, action, table_name, new_values, created_at)
-      VALUES (?, 'batch_expenditure_reject', 'ExpenditureRecord', ?, NOW())
-    `, [user.id, JSON.stringify({
-      ids,
-      comment,
-      successCount,
-      failedCount: failedExpenditures.length,
-      totalCount: expenditures.length
-    })]);
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: `批量拒绝完成，成功处理 ${successCount} 条支出记录`,
-      data: {
-        successCount,
-        failedExpenditures,
-        failedCount: failedExpenditures.length,
-        totalCount: expenditures.length
-      }
-    });
-    
-  } catch (error) {
-    console.error('批量拒绝支出记录失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '批量拒绝失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 获取支出记录统计数据
-if (pathname === '/api/assistant/expenditures/stats' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    console.log('获取支出记录统计数据，用户ID:', user.id);
-    
-    // 获取基本统计数据
-    const [basicStats] = await pool.query(`
-      SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as reviewing,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(amount) as total_amount,
-        SUM(CASE WHEN status IN ('submitted', 'under_review') THEN amount ELSE 0 END) as pending_amount,
-        SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) as approved_amount,
-        SUM(CASE WHEN status = 'rejected' THEN amount ELSE 0 END) as rejected_amount,
-        AVG(amount) as avg_amount
-      FROM \`ExpenditureRecord\`
-    `);
-    
-    // 获取按月份的统计
-    const [monthlyStats] = await pool.query(`
-      SELECT 
-        DATE_FORMAT(expense_date, '%Y-%m') as month,
-        COUNT(*) as total,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(amount) as total_amount,
-        SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) as approved_amount
-      FROM \`ExpenditureRecord\`
-      WHERE expense_date >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
-      GROUP BY DATE_FORMAT(expense_date, '%Y-%m')
-      ORDER BY month DESC
-    `);
-    
-    // 获取按类别的统计
-    const [categoryStats] = await pool.query(`
-      SELECT 
-        category,
-        COUNT(*) as count,
-        SUM(amount) as total_amount,
-        AVG(amount) as avg_amount,
-        SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) as approved_amount,
-        SUM(CASE WHEN status = 'rejected' THEN amount ELSE 0 END) as rejected_amount
-      FROM \`ExpenditureRecord\`
-      GROUP BY category
-      ORDER BY total_amount DESC
-    `);
-    
-    // 获取按项目的统计
-    const [projectStats] = await pool.query(`
-      SELECT 
-        p.title as project_title,
-        p.project_code,
-        COUNT(er.id) as expenditure_count,
-        SUM(er.amount) as total_amount,
-        SUM(CASE WHEN er.status = 'approved' THEN er.amount ELSE 0 END) as approved_amount
-      FROM \`ExpenditureRecord\` er
-      LEFT JOIN \`Project\` p ON er.project_id = p.id
-      GROUP BY er.project_id, p.title, p.project_code
-      ORDER BY total_amount DESC
-      LIMIT 10
-    `);
-    
-    // 获取按申请人的统计
-    const [applicantStats] = await pool.query(`
-      SELECT 
-        u.name as applicant_name,
-        u.department,
-        COUNT(er.id) as expenditure_count,
-        SUM(er.amount) as total_amount,
-        SUM(CASE WHEN er.status = 'approved' THEN er.amount ELSE 0 END) as approved_amount
-      FROM \`ExpenditureRecord\` er
-      LEFT JOIN \`Project\` p ON er.project_id = p.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      GROUP BY p.applicant_id, u.name, u.department
-      ORDER BY total_amount DESC
-      LIMIT 10
-    `);
-    
-    const stats = {
-      summary: {
-        total: basicStats[0]?.total || 0,
-        pending: basicStats[0]?.pending || 0,
-        reviewing: basicStats[0]?.reviewing || 0,
-        approved: basicStats[0]?.approved || 0,
-        rejected: basicStats[0]?.rejected || 0,
-        total_amount: parseFloat(basicStats[0]?.total_amount || 0),
-        pending_amount: parseFloat(basicStats[0]?.pending_amount || 0),
-        approved_amount: parseFloat(basicStats[0]?.approved_amount || 0),
-        rejected_amount: parseFloat(basicStats[0]?.rejected_amount || 0),
-        avg_amount: parseFloat(basicStats[0]?.avg_amount || 0)
-      },
-      by_month: monthlyStats.map(stat => ({
-        month: stat.month,
-        total: stat.total || 0,
-        approved: stat.approved || 0,
-        rejected: stat.rejected || 0,
-        total_amount: parseFloat(stat.total_amount || 0),
-        approved_amount: parseFloat(stat.approved_amount || 0)
-      })),
-      by_category: categoryStats.map(stat => ({
-        category: stat.category,
-        count: stat.count || 0,
-        total_amount: parseFloat(stat.total_amount || 0),
-        avg_amount: parseFloat(stat.avg_amount || 0),
-        approved_amount: parseFloat(stat.approved_amount || 0),
-        rejected_amount: parseFloat(stat.rejected_amount || 0)
-      })),
-      by_project: projectStats.map(stat => ({
-        project_title: stat.project_title,
-        project_code: stat.project_code,
-        expenditure_count: stat.expenditure_count || 0,
-        total_amount: parseFloat(stat.total_amount || 0),
-        approved_amount: parseFloat(stat.approved_amount || 0)
-      })),
-      by_applicant: applicantStats.map(stat => ({
-        applicant_name: stat.applicant_name,
-        department: stat.department,
-        expenditure_count: stat.expenditure_count || 0,
-        total_amount: parseFloat(stat.total_amount || 0),
-        approved_amount: parseFloat(stat.approved_amount || 0)
-      }))
-    };
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: stats
-    });
-    
-  } catch (error) {
-    console.error('获取支出记录统计数据失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '获取统计数据失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
-// 导出支出记录数据
-if (pathname === '/api/assistant/expenditures/export' && req.method === 'GET') {
-  const token = req.headers.authorization;
-  const user = await verifyToken(token);
-  
-  if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
-    sendResponse(res, 403, { success: false, error: '没有权限' });
-    return;
-  }
-  
-  try {
-    const query = url.parse(req.url, true).query;
-    
-    console.log('导出支出记录数据，用户ID:', user.id);
-    
-    // 构建基础查询条件（与列表查询一致）
-    let whereClauses = [];
-    let queryParams = [];
-    
-    // 按申请状态筛选
-    if (query.status && query.status !== 'all') {
-      const statuses = query.status.split(',');
-      const placeholders = statuses.map(() => '?').join(',');
-      whereClauses.push(`er.status IN (${placeholders})`);
-      queryParams.push(...statuses);
-    }
-    
-    // 按支出类别筛选
-    if (query.category) {
-      whereClauses.push('er.category = ?');
-      queryParams.push(query.category);
-    }
-    
-    // 关键词搜索
-    if (query.search) {
-      whereClauses.push('(er.expense_no LIKE ? OR p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ? OR er.payee LIKE ? OR er.item_name LIKE ?)');
-      const keyword = `%${query.search}%`;
-      queryParams.push(keyword, keyword, keyword, keyword, keyword, keyword);
-    }
-    
-    const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
-    
-    // 获取所有符合条件的支出记录
-    const [expenditures] = await pool.query(`
-      SELECT 
-        er.expense_no as '支出编号',
-        p.project_code as '项目编号',
-        p.title as '项目名称',
-        p.category as '项目类别',
-        u.name as '申请人',
-        u.department as '申请人部门',
-        er.category as '支出类别',
-        er.item_name as '支出项目',
-        er.amount as '支出金额(元)',
-        er.expense_date as '支出日期',
-        er.payee as '收款方',
-        er.description as '支出说明',
-        CASE er.status
-          WHEN 'draft' THEN '草稿'
-          WHEN 'submitted' THEN '待审核'
-          WHEN 'under_review' THEN '审核中'
-          WHEN 'approved' THEN '已批准'
-          WHEN 'rejected' THEN '已拒绝'
-          ELSE er.status
-        END as '审核状态',
-        ur.name as '审核人',
-        er.review_date as '审核日期',
-        er.review_comment as '审核意见',
-        CASE WHEN er.funding_app_id IS NOT NULL THEN '是' ELSE '否' END as '是否关联经费申请'
-      FROM \`ExpenditureRecord\` er
-      LEFT JOIN \`Project\` p ON er.project_id = p.id
-      LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      LEFT JOIN \`User\` ur ON er.reviewer_id = ur.id
-      ${whereClause}
-      ORDER BY er.expense_date DESC
-    `, queryParams);
-    
-    sendResponse(res, 200, {
-      success: true,
-      data: expenditures,
-      message: '导出数据准备完成'
-    });
-    
-  } catch (error) {
-    console.error('导出支出记录数据失败:', error);
-    sendResponse(res, 500, {
-      success: false,
-      error: '导出失败',
-      message: error.message
-    });
-  }
-  return;
-}
-
 // ==================== 科研成果审核相关API ====================
 
 // 获取科研成果列表
@@ -9599,9 +6882,11 @@ if (pathname === '/api/assistant/achievements/list' && req.method === 'GET') {
     
     // 关键词搜索
     if (query.search) {
-      whereClauses.push('(pa.title LIKE ? OR pa.keywords LIKE ? OR p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)');
+      whereClauses.push(
+        '(pa.title LIKE ? OR pa.abstract LIKE ? OR pa.content LIKE ? OR p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)',
+      );
       const keyword = `%${query.search}%`;
-      queryParams.push(keyword, keyword, keyword, keyword, keyword);
+      queryParams.push(keyword, keyword, keyword, keyword, keyword, keyword);
     }
     
     const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
@@ -9624,20 +6909,22 @@ if (pathname === '/api/assistant/achievements/list' && req.method === 'GET') {
         pa.project_id,
         pa.type,
         pa.title,
-        pa.description,
-        pa.keywords,
+        pa.abstract,
+        pa.content,
         pa.status,
         pa.achievement_date,
-        pa.authors,
-        pa.attachment_urls,
-        pa.external_link,
         pa.verified_by,
         pa.verified_date,
         pa.verification_comment,
         
         p.title as project_title,
         p.project_code,
-        p.category as project_category,
+        (
+          SELECT GROUP_CONCAT(rd.name ORDER BY rd.sort_order, rd.name SEPARATOR ', ')
+          FROM \`ProjectResearchDomain\` prd
+          JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+          WHERE prd.project_id = p.id
+        ) AS project_category,
         
         u.id as creator_id,
         u.name as creator_name,
@@ -9659,18 +6946,20 @@ if (pathname === '/api/assistant/achievements/list' && req.method === 'GET') {
       project_id: ach.project_id,
       type: ach.type,
       title: ach.title,
-      description: ach.description,
-      keywords: ach.keywords,
+      abstract: ach.abstract,
+      content: ach.content,
+      description: ach.abstract,
+      keywords: [],
       status: ach.status,
       achievement_date: ach.achievement_date ? ach.achievement_date.toISOString().split('T')[0] : null,
-      authors: ach.authors,
-      attachment_urls: ach.attachment_urls ? JSON.parse(ach.attachment_urls) : [],
-      external_link: ach.external_link,
+      authors: [],
+      attachment_urls: [],
+      external_link: null,
       verified_by: ach.verified_by,
       verified_date: ach.verified_date ? ach.verified_date.toISOString().split('T')[0] : null,
       verification_comment: ach.verification_comment,
-      published_date: ach.published_date ? ach.published_date.toISOString().split('T')[0] : null,
-      publish_link: ach.publish_link,
+      published_date: null,
+      publish_link: null,
       project_info: {
         id: ach.project_id,
         title: ach.project_title,
@@ -9691,10 +6980,9 @@ if (pathname === '/api/assistant/achievements/list' && req.method === 'GET') {
     // 获取统计数据
     const [statsResult] = await pool.query(`
       SELECT 
+        SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft,
         SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as reviewing,
         SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) as verified,
-        SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as published,
         SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
       FROM \`ProjectAchievement\`
     `);
@@ -9710,10 +6998,11 @@ if (pathname === '/api/assistant/achievements/list' && req.method === 'GET') {
     `);
     
     const stats = {
+      draft: statsResult[0]?.draft || 0,
       pending: statsResult[0]?.pending || 0,
-      reviewing: statsResult[0]?.reviewing || 0,
+      reviewing: 0,
       verified: statsResult[0]?.verified || 0,
-      published: statsResult[0]?.published || 0,
+      published: 0,
       rejected: statsResult[0]?.rejected || 0,
       by_type: {
         paper: typeStats[0]?.paper || 0,
@@ -9774,20 +7063,22 @@ if (pathname.startsWith('/api/assistant/achievements/') &&
         pa.*,
         p.title as project_title,
         p.project_code,
-        p.category as project_category,
+        (
+          SELECT GROUP_CONCAT(rd.name ORDER BY rd.sort_order, rd.name SEPARATOR ', ')
+          FROM \`ProjectResearchDomain\` prd
+          JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+          WHERE prd.project_id = p.id
+        ) AS project_category,
         p.status as project_status,
-        p.budget_total as project_budget_total,
-        
+        (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS project_budget_total,
         u.id as creator_id,
         u.name as creator_name,
         u.department,
         u.email as creator_email,
         u.phone as creator_phone,
-        
         uv.name as verifier_name,
         uv.email as verifier_email,
-        
-        (SELECT COUNT(*) FROM \`AchievementTransfer\` WHERE achievement_id = pa.id) as transfer_count
+        0 AS transfer_count
       FROM \`ProjectAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       LEFT JOIN \`User\` u ON pa.created_by = u.id
@@ -9802,23 +7093,7 @@ if (pathname.startsWith('/api/assistant/achievements/') &&
     
     const achievement = achievements[0];
     
-    // 获取转化记录
-    const [transferRecords] = await pool.query(`
-      SELECT 
-        id,
-        transfer_type,
-        transferee,
-        transfer_date,
-        contract_no,
-        contract_amount,
-        actual_amount,
-        transfer_status,
-        description,
-        contract_file
-      FROM \`AchievementTransfer\`
-      WHERE achievement_id = ?
-      ORDER BY transfer_date DESC
-    `, [achievementId]);
+    const transferRecords = [];
     
     // 获取类似成果记录
     const [similarAchievements] = await pool.query(`
@@ -9833,21 +7108,10 @@ if (pathname.startsWith('/api/assistant/achievements/') &&
       LIMIT 5
     `, [achievement.project_id, achievementId]);
     
-    // 获取审核任务记录
     const [tasks] = await pool.query(`
-      SELECT 
-        id,
-        task_type,
-        title,
-        description,
-        priority,
-        status,
-        processed_at,
-        review_result,
-        review_comment,
-        created_at
-      FROM \`AuditTask\`
-      WHERE related_table = 'ProjectAchievement' AND related_id = ?
+      SELECT id, action, new_values, created_at
+      FROM \`AuditLog\`
+      WHERE table_name = 'ProjectAchievement' AND record_id = ?
       ORDER BY created_at DESC
     `, [achievementId]);
     
@@ -9859,18 +7123,20 @@ if (pathname.startsWith('/api/assistant/achievements/') &&
           project_id: achievement.project_id,
           type: achievement.type,
           title: achievement.title,
-          description: achievement.description,
-          keywords: achievement.keywords,
+          abstract: achievement.abstract,
+          content: achievement.content,
+          description: achievement.abstract,
+          keywords: [],
           status: achievement.status,
           achievement_date: achievement.achievement_date ? achievement.achievement_date.toISOString().split('T')[0] : null,
-          authors: achievement.authors ? JSON.parse(achievement.authors) : [],
-          attachment_urls: achievement.attachment_urls ? JSON.parse(achievement.attachment_urls) : [],
-          external_link: achievement.external_link,
+          authors: [],
+          attachment_urls: [],
+          external_link: null,
           verified_by: achievement.verified_by,
           verified_date: achievement.verified_date ? achievement.verified_date.toISOString().split('T')[0] : null,
           verification_comment: achievement.verification_comment,
-          published_date: achievement.published_date ? achievement.published_date.toISOString().split('T')[0] : null,
-          publish_link: achievement.publish_link,
+          published_date: null,
+          publish_link: null,
           transfer_count: achievement.transfer_count || 0,
           created_at: achievement.created_at ? achievement.created_at.toISOString() : null,
           
@@ -9915,18 +7181,30 @@ if (pathname.startsWith('/api/assistant/achievements/') &&
           achievement_date: ach.achievement_date ? ach.achievement_date.toISOString().split('T')[0] : null,
           status: ach.status
         })),
-        tasks: tasks.map(task => ({
-          id: task.id,
-          task_type: task.task_type,
-          title: task.title,
-          description: task.description,
-          priority: task.priority,
-          status: task.status,
-          processed_at: task.processed_at ? task.processed_at.toISOString() : null,
-          review_result: task.review_result,
-          review_comment: task.review_comment,
-          created_at: task.created_at ? task.created_at.toISOString() : null
-        }))
+        tasks: tasks.map(task => {
+          let review_result = null;
+          let review_comment = null;
+          try {
+            const nv = task.new_values;
+            const parsed = typeof nv === 'string' ? JSON.parse(nv) : nv;
+            if (parsed && typeof parsed === 'object') {
+              review_result = parsed.status ?? parsed.recommendation ?? null;
+              review_comment = parsed.comment ?? null;
+            }
+          } catch (_) { /* ignore */ }
+          return {
+            id: String(task.id),
+            task_type: task.action,
+            title: task.action,
+            description: '',
+            priority: 'medium',
+            status: 'completed',
+            processed_at: task.created_at ? task.created_at.toISOString() : null,
+            review_result,
+            review_comment,
+            created_at: task.created_at ? task.created_at.toISOString() : null
+          };
+        })
       }
     });
     
@@ -9973,7 +7251,7 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/r
     
     // 检查成果状态
     const [achievements] = await pool.query(
-      'SELECT * FROM `ProjectAchievement` WHERE id = ? AND status IN ("submitted", "under_review")',
+      'SELECT * FROM `ProjectAchievement` WHERE id = ? AND status = "submitted"',
       [achievementId]
     );
     
@@ -9994,7 +7272,7 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/r
     } else if (recommendation === 'reject') {
       newStatus = 'rejected';
     } else if (recommendation === 'return') {
-      newStatus = 'returned';
+      newStatus = 'draft';
     } else {
       sendResponse(res, 400, { success: false, error: '无效的审核结果' });
       return;
@@ -10002,7 +7280,7 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/r
     
     // 更新成果状态
     await pool.query(
-      'UPDATE `ProjectAchievement` SET status = ?, verified_by = ?, verified_date = CURDATE(), verification_comment = ?, updated_at = NOW() WHERE id = ?',
+      'UPDATE `ProjectAchievement` SET status = ?, verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
       [newStatus, user.id, comment, achievementId]
     );
     
@@ -10017,28 +7295,6 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/r
       const applicantId = projectInfo[0].applicant_id;
       const projectTitle = projectInfo[0].title;
       
-      // 创建审核任务记录
-      const taskId = generateUUID();
-      await pool.query(`
-        INSERT INTO \`AuditTask\` (
-          id, task_type, title, description,
-          applicant_id, project_id, related_table, related_id,
-          priority, status, processed_by, processed_at,
-          review_result, review_comment, created_at
-        ) VALUES (?, 'achievement_review', ?, ?, ?, ?, 'ProjectAchievement', ?, 'medium', 'completed', ?, NOW(), ?, ?, NOW())
-      `, [
-        taskId,
-        `科研成果审核：${achievement.title}`,
-        `科研助理审核科研成果"${achievement.title}"，项目：${projectTitle}`,
-        applicantId,
-        achievement.project_id,
-        achievementId,
-        user.id,
-        newStatus,
-        comment
-      ]);
-      
-      // 创建通知
       const notificationId = generateUUID();
       let notificationTitle = '';
       let notificationContent = '';
@@ -10049,7 +7305,7 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/r
       } else if (newStatus === 'rejected') {
         notificationTitle = '科研成果审核驳回';
         notificationContent = `您的科研成果"${achievement.title}"（项目：${projectTitle}）审核结果为：驳回，请查看审核意见`;
-      } else if (newStatus === 'returned') {
+      } else if (newStatus === 'draft') {
         notificationTitle = '科研成果需要补充';
         notificationContent = `您的科研成果"${achievement.title}"（项目：${projectTitle}）需要补充材料后才能继续审核`;
       }
@@ -10058,8 +7314,8 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/r
         INSERT INTO \`Notification\` (
           id, user_id, type, title, content,
           related_id, related_type, priority,
-          is_read, expires_at, created_at
-        ) VALUES (?, ?, 'achievement', ?, ?, ?, 'ProjectAchievement', 'high', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
+          is_read, created_at
+        ) VALUES (?, ?, 'system', ?, ?, ?, 'ProjectAchievement', 'high', FALSE, NOW())
       `, [
         notificationId,
         applicantId,
@@ -10086,7 +7342,7 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/r
       data: { 
         achievementId, 
         status: newStatus,
-        taskId: taskId || null
+        taskId: null
       }
     });
     
@@ -10142,14 +7398,12 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/p
     
     const achievement = achievements[0];
     
-    // 更新成果状态
     const publishDate = publish_date || new Date().toISOString().split('T')[0];
     await pool.query(
-      'UPDATE `ProjectAchievement` SET status = "published", publish_link = ?, published_date = ?, updated_at = NOW() WHERE id = ?',
-      [publish_link, publishDate, achievementId]
+      `UPDATE \`ProjectAchievement\` SET content = CONCAT(IFNULL(content,''), '\n\n【对外发布链接】', ?) WHERE id = ? AND status = 'verified'`,
+      [publish_link, achievementId]
     );
     
-    // 获取项目信息
     const [projectInfo] = await pool.query(`
       SELECT p.applicant_id, p.title 
       FROM \`Project\` p
@@ -10160,64 +7414,51 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/p
       const applicantId = projectInfo[0].applicant_id;
       const projectTitle = projectInfo[0].title;
       
-      // 创建审核任务记录
-      const taskId = generateUUID();
-      await pool.query(`
-        INSERT INTO \`AuditTask\` (
-          id, task_type, title, description,
-          applicant_id, project_id, related_table, related_id,
-          priority, status, processed_by, processed_at,
-          review_result, review_comment, created_at
-        ) VALUES (?, 'achievement_publish', ?, ?, ?, ?, 'ProjectAchievement', ?, 'medium', 'completed', ?, NOW(), 'published', ?, NOW())
-      `, [
-        taskId,
-        `科研成果发布：${achievement.title}`,
-        `科研助理发布科研成果"${achievement.title}"，项目：${projectTitle}`,
-        applicantId,
-        achievement.project_id,
-        achievementId,
-        user.id,
-        remark || `发布链接：${publish_link}`
-      ]);
-      
-      // 创建通知
       const notificationId = generateUUID();
-      await pool.query(`
+      await pool.query(
+        `
         INSERT INTO \`Notification\` (
           id, user_id, type, title, content,
           related_id, related_type, priority,
-          is_read, expires_at, created_at
-        ) VALUES (?, ?, 'achievement', ?, ?, ?, 'ProjectAchievement', 'high', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-      `, [
-        notificationId,
-        applicantId,
-        '科研成果已发布',
-        `您的科研成果"${achievement.title}"（项目：${projectTitle}）已正式发布`,
-        achievementId
-      ]);
+          is_read, created_at
+        ) VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', 'high', FALSE, NOW())
+      `,
+        [
+          notificationId,
+          applicantId,
+          '科研成果发布链接已登记',
+          `您的科研成果"${achievement.title}"（项目：${projectTitle}）已登记对外发布链接：${publish_link}。${remark || ''}`,
+          achievementId,
+        ],
+      );
     }
     
-    // 记录操作日志
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
       VALUES (?, 'achievement_publish', 'ProjectAchievement', ?, ?, NOW())
-    `, [user.id, achievementId, JSON.stringify({ 
-      status: 'published', 
-      publish_link,
-      publish_date: publishDate,
-      remark: remark || '',
-      published_by: user.id
-    })]);
+    `,
+      [
+        user.id,
+        achievementId,
+        JSON.stringify({
+          publish_link,
+          publish_date: publishDate,
+          remark: remark || '',
+          published_by: user.id,
+        }),
+      ],
+    );
     
     sendResponse(res, 200, {
       success: true,
       message: '科研成果发布成功',
       data: { 
         achievementId, 
-        status: 'published',
+        status: 'verified',
         publish_link,
         publish_date: publishDate,
-        taskId: taskId || null
+        taskId: null
       }
     });
     
@@ -10269,7 +7510,7 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/t
     
     // 检查成果状态
     const [achievements] = await pool.query(
-      'SELECT * FROM `ProjectAchievement` WHERE id = ? AND status IN ("verified", "published")',
+      'SELECT * FROM `ProjectAchievement` WHERE id = ? AND status = "verified"',
       [achievementId]
     );
     
@@ -10282,114 +7523,81 @@ if (pathname.startsWith('/api/assistant/achievements/') && pathname.includes('/t
     }
     
     const achievement = achievements[0];
-    
-    // 创建转化记录
     const transferId = generateUUID();
-    await pool.query(`
-      INSERT INTO \`AchievementTransfer\` (
-        id, achievement_id, transfer_type, transferee, transfer_date,
-        contract_no, contract_amount, actual_amount, transfer_status,
-        description, created_by, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-    `, [
-      transferId,
-      achievementId,
-      transfer_type,
-      transferee,
-      transfer_date,
-      contract_no || null,
-      contract_amount || 0,
-      actual_amount || 0,
-      transfer_status,
-      description || '',
-      user.id
-    ]);
-    
-    // 如果这是第一项转化记录，更新成果状态
-    const [transferCount] = await pool.query(
-      'SELECT COUNT(*) as count FROM `AchievementTransfer` WHERE achievement_id = ?',
-      [achievementId]
+    const transferNote =
+      `\n\n【成果转化记录 ID:${transferId}】类型：${transfer_type}；受让方：${transferee}；日期：${transfer_date}；状态：${transfer_status}` +
+      (contract_no ? `；合同编号：${contract_no}` : '') +
+      (contract_amount != null ? `；合同金额：${contract_amount}` : '') +
+      (actual_amount != null ? `；实际金额：${actual_amount}` : '') +
+      (description ? `\n说明：${description}` : '');
+    await pool.query(
+      `UPDATE \`ProjectAchievement\` SET content = CONCAT(IFNULL(content,''), ?) WHERE id = ?`,
+      [transferNote, achievementId],
     );
-    
-    if (transferCount[0]?.count === 1) {
-      await pool.query(
-        'UPDATE `ProjectAchievement` SET status = "transferred", updated_at = NOW() WHERE id = ?',
-        [achievementId]
-      );
-    }
-    
-    // 获取项目信息
-    const [projectInfo] = await pool.query(`
+
+    const [projectInfo] = await pool.query(
+      `
       SELECT p.applicant_id, p.title 
       FROM \`Project\` p
       WHERE p.id = ?
-    `, [achievement.project_id]);
-    
+    `,
+      [achievement.project_id],
+    );
+
     if (projectInfo.length > 0) {
       const applicantId = projectInfo[0].applicant_id;
       const projectTitle = projectInfo[0].title;
-      
-      // 创建审核任务记录
-      const taskId = generateUUID();
-      await pool.query(`
-        INSERT INTO \`AuditTask\` (
-          id, task_type, title, description,
-          applicant_id, project_id, related_table, related_id,
-          priority, status, processed_by, processed_at,
-          review_result, review_comment, created_at
-        ) VALUES (?, 'achievement_transfer', ?, ?, ?, ?, 'AchievementTransfer', ?, 'medium', 'completed', ?, NOW(), 'created', ?, NOW())
-      `, [
-        taskId,
-        `成果转化记录：${achievement.title}`,
-        `科研助理创建成果转化记录"${achievement.title}"，项目：${projectTitle}`,
-        applicantId,
-        achievement.project_id,
-        transferId,
-        user.id,
-        `转化类型：${transfer_type}，受让方：${transferee}`
-      ]);
-      
-      // 创建通知
+
       const notificationId = generateUUID();
-      await pool.query(`
+      await pool.query(
+        `
         INSERT INTO \`Notification\` (
           id, user_id, type, title, content,
           related_id, related_type, priority,
-          is_read, expires_at, created_at
-        ) VALUES (?, ?, 'achievement', ?, ?, ?, 'AchievementTransfer', 'medium', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-      `, [
-        notificationId,
-        applicantId,
-        '成果转化记录创建',
-        `您的科研成果"${achievement.title}"（项目：${projectTitle}）已创建转化记录`,
-        transferId
-      ]);
+          is_read, created_at
+        ) VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', 'medium', FALSE, NOW())
+      `,
+        [
+          notificationId,
+          applicantId,
+          '成果转化信息已登记',
+          `您的科研成果"${achievement.title}"（项目：${projectTitle}）已登记转化信息（受让方：${transferee}）。`,
+          achievementId,
+        ],
+      );
     }
-    
-    // 记录操作日志
-    await pool.query(`
+
+    await pool.query(
+      `
       INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
-      VALUES (?, 'achievement_transfer_create', 'AchievementTransfer', ?, ?, NOW())
-    `, [user.id, transferId, JSON.stringify({ 
-      achievement_id: achievementId,
-      transfer_type,
-      transferee,
-      transfer_date,
-      contract_no: contract_no || null,
-      contract_amount: contract_amount || 0,
-      actual_amount: actual_amount || 0,
-      transfer_status,
-      description: description || ''
-    })]);
-    
+      VALUES (?, 'achievement_transfer_create', 'ProjectAchievement', ?, ?, NOW())
+    `,
+      [
+        user.id,
+        achievementId,
+        JSON.stringify({
+          transfer_id: transferId,
+          achievement_id: achievementId,
+          transfer_type,
+          transferee,
+          transfer_date,
+          contract_no: contract_no || null,
+          contract_amount: contract_amount || 0,
+          actual_amount: actual_amount || 0,
+          transfer_status,
+          description: description || '',
+        }),
+      ],
+    );
+
     sendResponse(res, 200, {
       success: true,
       message: '成果转化记录创建成功',
-      data: { 
-        achievementId, 
+      data: {
+        achievementId,
         transferId,
-        status: transferCount[0]?.count === 1 ? 'transferred' : achievement.status
-      }
+        status: achievement.status,
+      },
     });
     
   } catch (error) {
@@ -10428,7 +7636,7 @@ if (pathname === '/api/assistant/achievements/batch-verify' && req.method === 'P
     const placeholders = ids.map(() => '?').join(',');
     const [achievements] = await pool.query(`
       SELECT * FROM \`ProjectAchievement\` 
-      WHERE id IN (${placeholders}) AND status IN ('submitted', 'under_review')
+      WHERE id IN (${placeholders}) AND status = 'submitted'
     `, ids);
     
     if (achievements.length === 0) {
@@ -10442,13 +7650,11 @@ if (pathname === '/api/assistant/achievements/batch-verify' && req.method === 'P
     // 逐个处理成果
     for (const achievement of achievements) {
       try {
-        // 更新成果状态
         await pool.query(
-          'UPDATE `ProjectAchievement` SET status = "verified", verified_by = ?, verified_date = CURDATE(), verification_comment = ?, updated_at = NOW() WHERE id = ?',
+          'UPDATE `ProjectAchievement` SET status = "verified", verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
           [user.id, comment || '批量核实通过', achievement.id]
         );
         
-        // 获取项目信息
         const [projectInfo] = await pool.query(`
           SELECT p.applicant_id, p.title 
           FROM \`Project\` p
@@ -10459,41 +7665,23 @@ if (pathname === '/api/assistant/achievements/batch-verify' && req.method === 'P
           const applicantId = projectInfo[0].applicant_id;
           const projectTitle = projectInfo[0].title;
           
-          // 创建审核任务记录
-          const taskId = generateUUID();
-          await pool.query(`
-            INSERT INTO \`AuditTask\` (
-              id, task_type, title, description,
-              applicant_id, project_id, related_table, related_id,
-              priority, status, processed_by, processed_at,
-              review_result, review_comment, created_at
-            ) VALUES (?, 'achievement_review', ?, ?, ?, ?, 'ProjectAchievement', ?, 'medium', 'completed', ?, NOW(), 'verified', ?, NOW())
-          `, [
-            taskId,
-            `批量科研成果审核：${achievement.title}`,
-            `科研助理批量审核科研成果"${achievement.title}"，项目：${projectTitle}`,
-            applicantId,
-            achievement.project_id,
-            achievement.id,
-            user.id,
-            comment || '批量核实通过'
-          ]);
-          
-          // 创建通知
           const notificationId = generateUUID();
-          await pool.query(`
+          await pool.query(
+            `
             INSERT INTO \`Notification\` (
               id, user_id, type, title, content,
               related_id, related_type, priority,
-              is_read, expires_at, created_at
-            ) VALUES (?, ?, 'achievement', ?, ?, ?, 'ProjectAchievement', 'medium', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-          `, [
-            notificationId,
-            applicantId,
-            '科研成果批量审核通过',
-            `您的科研成果"${achievement.title}"（项目：${projectTitle}）已通过批量审核并核实`,
-            achievement.id
-          ]);
+              is_read, created_at
+            ) VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', 'medium', FALSE, NOW())
+          `,
+            [
+              notificationId,
+              applicantId,
+              '科研成果批量审核通过',
+              `您的科研成果"${achievement.title}"（项目：${projectTitle}）已通过批量审核并核实`,
+              achievement.id,
+            ],
+          );
         }
         
         successCount++;
@@ -10572,7 +7760,7 @@ if (pathname === '/api/assistant/achievements/batch-reject' && req.method === 'P
     const placeholders = ids.map(() => '?').join(',');
     const [achievements] = await pool.query(`
       SELECT * FROM \`ProjectAchievement\` 
-      WHERE id IN (${placeholders}) AND status IN ('submitted', 'under_review')
+      WHERE id IN (${placeholders}) AND status = 'submitted'
     `, ids);
     
     if (achievements.length === 0) {
@@ -10586,13 +7774,11 @@ if (pathname === '/api/assistant/achievements/batch-reject' && req.method === 'P
     // 逐个处理成果
     for (const achievement of achievements) {
       try {
-        // 更新成果状态
         await pool.query(
-          'UPDATE `ProjectAchievement` SET status = "rejected", verified_by = ?, verified_date = CURDATE(), verification_comment = ?, updated_at = NOW() WHERE id = ?',
+          'UPDATE `ProjectAchievement` SET status = "rejected", verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
           [user.id, comment, achievement.id]
         );
         
-        // 获取项目信息
         const [projectInfo] = await pool.query(`
           SELECT p.applicant_id, p.title 
           FROM \`Project\` p
@@ -10603,41 +7789,23 @@ if (pathname === '/api/assistant/achievements/batch-reject' && req.method === 'P
           const applicantId = projectInfo[0].applicant_id;
           const projectTitle = projectInfo[0].title;
           
-          // 创建审核任务记录
-          const taskId = generateUUID();
-          await pool.query(`
-            INSERT INTO \`AuditTask\` (
-              id, task_type, title, description,
-              applicant_id, project_id, related_table, related_id,
-              priority, status, processed_by, processed_at,
-              review_result, review_comment, created_at
-            ) VALUES (?, 'achievement_review', ?, ?, ?, ?, 'ProjectAchievement', ?, 'medium', 'completed', ?, NOW(), 'rejected', ?, NOW())
-          `, [
-            taskId,
-            `批量科研成果审核：${achievement.title}`,
-            `科研助理批量审核科研成果"${achievement.title}"，项目：${projectTitle}`,
-            applicantId,
-            achievement.project_id,
-            achievement.id,
-            user.id,
-            comment
-          ]);
-          
-          // 创建通知
           const notificationId = generateUUID();
-          await pool.query(`
+          await pool.query(
+            `
             INSERT INTO \`Notification\` (
               id, user_id, type, title, content,
               related_id, related_type, priority,
-              is_read, expires_at, created_at
-            ) VALUES (?, ?, 'achievement', ?, ?, ?, 'ProjectAchievement', 'medium', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-          `, [
-            notificationId,
-            applicantId,
-            '科研成果批量审核驳回',
-            `您的科研成果"${achievement.title}"（项目：${projectTitle}）批量审核结果为：驳回`,
-            achievement.id
-          ]);
+              is_read, created_at
+            ) VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', 'medium', FALSE, NOW())
+          `,
+            [
+              notificationId,
+              applicantId,
+              '科研成果批量审核驳回',
+              `您的科研成果"${achievement.title}"（项目：${projectTitle}）批量审核结果为：驳回`,
+              achievement.id,
+            ],
+          );
         }
         
         successCount++;
@@ -10726,63 +7894,44 @@ if (pathname === '/api/assistant/achievements/batch-publish' && req.method === '
     // 逐个处理成果
     for (const achievement of achievements) {
       try {
-        // 生成默认发布链接
         const publishLink = `https://research-system.example.com/achievements/${achievement.id}`;
-        
-        // 更新成果状态
         await pool.query(
-          'UPDATE `ProjectAchievement` SET status = "published", publish_link = ?, published_date = ?, updated_at = NOW() WHERE id = ?',
-          [publishLink, publishDate, achievement.id]
+          `UPDATE \`ProjectAchievement\` SET content = CONCAT(IFNULL(content,''), '\n\n【对外发布链接】', ?) WHERE id = ? AND status = 'verified'`,
+          [publishLink, achievement.id],
         );
-        
-        // 获取项目信息
-        const [projectInfo] = await pool.query(`
+
+        const [projectInfo] = await pool.query(
+          `
           SELECT p.applicant_id, p.title 
           FROM \`Project\` p
           WHERE p.id = ?
-        `, [achievement.project_id]);
-        
+        `,
+          [achievement.project_id],
+        );
+
         if (projectInfo.length > 0) {
           const applicantId = projectInfo[0].applicant_id;
           const projectTitle = projectInfo[0].title;
-          
-          // 创建审核任务记录
-          const taskId = generateUUID();
-          await pool.query(`
-            INSERT INTO \`AuditTask\` (
-              id, task_type, title, description,
-              applicant_id, project_id, related_table, related_id,
-              priority, status, processed_by, processed_at,
-              review_result, review_comment, created_at
-            ) VALUES (?, 'achievement_publish', ?, ?, ?, ?, 'ProjectAchievement', ?, 'medium', 'completed', ?, NOW(), 'published', ?, NOW())
-          `, [
-            taskId,
-            `批量科研成果发布：${achievement.title}`,
-            `科研助理批量发布科研成果"${achievement.title}"，项目：${projectTitle}`,
-            applicantId,
-            achievement.project_id,
-            achievement.id,
-            user.id,
-            `批量发布，发布链接：${publishLink}`
-          ]);
-          
-          // 创建通知
+
           const notificationId = generateUUID();
-          await pool.query(`
+          await pool.query(
+            `
             INSERT INTO \`Notification\` (
               id, user_id, type, title, content,
               related_id, related_type, priority,
-              is_read, expires_at, created_at
-            ) VALUES (?, ?, 'achievement', ?, ?, ?, 'ProjectAchievement', 'medium', FALSE, DATE_ADD(NOW(), INTERVAL 30 DAY), NOW())
-          `, [
-            notificationId,
-            applicantId,
-            '科研成果批量发布',
-            `您的科研成果"${achievement.title}"（项目：${projectTitle}）已批量发布`,
-            achievement.id
-          ]);
+              is_read, created_at
+            ) VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', 'medium', FALSE, NOW())
+          `,
+            [
+              notificationId,
+              applicantId,
+              '科研成果批量发布',
+              `您的科研成果"${achievement.title}"（项目：${projectTitle}）已批量登记发布链接：${publishLink}`,
+              achievement.id,
+            ],
+          );
         }
-        
+
         successCount++;
         
       } catch (error) {
@@ -10845,48 +7994,40 @@ if (pathname === '/api/assistant/achievements/stats' && req.method === 'GET') {
     const [basicStats] = await pool.query(`
       SELECT 
         COUNT(*) as total,
+        SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft,
         SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as reviewing,
         SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) as verified,
-        SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as published,
-        SUM(CASE WHEN status = 'transferred' THEN 1 ELSE 0 END) as transferred,
         SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
       FROM \`ProjectAchievement\`
     `);
     
-    // 获取按类型的统计
     const [typeStats] = await pool.query(`
       SELECT 
         type,
         COUNT(*) as count,
-        SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as published_count,
-        SUM(CASE WHEN status = 'transferred' THEN 1 ELSE 0 END) as transferred_count
+        SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) as verified_count
       FROM \`ProjectAchievement\`
       GROUP BY type
       ORDER BY count DESC
     `);
     
-    // 获取按月份的统计
     const [monthlyStats] = await pool.query(`
       SELECT 
         DATE_FORMAT(achievement_date, '%Y-%m') as month,
         COUNT(*) as total,
-        SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) as verified,
-        SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as published
+        SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) as verified
       FROM \`ProjectAchievement\`
       WHERE achievement_date >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
       GROUP BY DATE_FORMAT(achievement_date, '%Y-%m')
       ORDER BY month DESC
     `);
     
-    // 获取按项目的统计
     const [projectStats] = await pool.query(`
       SELECT 
         p.title as project_title,
         p.project_code,
         COUNT(pa.id) as achievement_count,
-        SUM(CASE WHEN pa.status = 'published' THEN 1 ELSE 0 END) as published_count,
-        SUM(CASE WHEN pa.status = 'transferred' THEN 1 ELSE 0 END) as transferred_count
+        SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as verified_count
       FROM \`ProjectAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       GROUP BY pa.project_id, p.title, p.project_code
@@ -10894,45 +8035,46 @@ if (pathname === '/api/assistant/achievements/stats' && req.method === 'GET') {
       LIMIT 10
     `);
     
-    // 获取转化统计
     const [transferStats] = await pool.query(`
       SELECT 
-        COUNT(*) as total,
-        SUM(contract_amount) as total_contract_amount,
-        SUM(actual_amount) as total_actual_amount,
-        AVG(contract_amount) as avg_contract_amount,
-        AVG(actual_amount) as avg_actual_amount
-      FROM \`AchievementTransfer\`
+        0 AS total,
+        0 AS total_contract_amount,
+        0 AS total_actual_amount,
+        0 AS avg_contract_amount,
+        0 AS avg_actual_amount
     `);
     
     const stats = {
       summary: {
         total: basicStats[0]?.total || 0,
+        draft: basicStats[0]?.draft || 0,
         pending: basicStats[0]?.pending || 0,
-        reviewing: basicStats[0]?.reviewing || 0,
+        reviewing: 0,
         verified: basicStats[0]?.verified || 0,
-        published: basicStats[0]?.published || 0,
-        transferred: basicStats[0]?.transferred || 0,
+        published: 0,
+        transferred: 0,
         rejected: basicStats[0]?.rejected || 0
       },
       by_type: typeStats.map(stat => ({
         type: stat.type,
         count: stat.count || 0,
-        published_count: stat.published_count || 0,
-        transferred_count: stat.transferred_count || 0
+        verified_count: stat.verified_count || 0,
+        published_count: 0,
+        transferred_count: 0
       })),
       by_month: monthlyStats.map(stat => ({
         month: stat.month,
         total: stat.total || 0,
         verified: stat.verified || 0,
-        published: stat.published || 0
+        published: 0
       })),
       by_project: projectStats.map(stat => ({
         project_title: stat.project_title,
         project_code: stat.project_code,
         achievement_count: stat.achievement_count || 0,
-        published_count: stat.published_count || 0,
-        transferred_count: stat.transferred_count || 0
+        verified_count: stat.verified_count || 0,
+        published_count: 0,
+        transferred_count: 0
       })),
       transfer_summary: {
         total: transferStats[0]?.total || 0,
@@ -11000,9 +8142,11 @@ if (pathname === '/api/assistant/achievements/export' && req.method === 'GET') {
     
     // 关键词搜索
     if (query.search) {
-      whereClauses.push('(pa.title LIKE ? OR pa.keywords LIKE ? OR p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)');
+      whereClauses.push(
+        '(pa.title LIKE ? OR pa.abstract LIKE ? OR pa.content LIKE ? OR p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)',
+      );
       const keyword = `%${query.search}%`;
-      queryParams.push(keyword, keyword, keyword, keyword, keyword);
+      queryParams.push(keyword, keyword, keyword, keyword, keyword, keyword);
     }
     
     const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
@@ -11022,15 +8166,12 @@ if (pathname === '/api/assistant/achievements/export' && req.method === 'GET') {
         END as '成果类型',
         p.project_code as '项目编号',
         p.title as '项目名称',
-        pa.keywords as '关键词',
+        pa.abstract as '摘要',
         pa.achievement_date as '成果日期',
         CASE pa.status
           WHEN 'draft' THEN '草稿'
           WHEN 'submitted' THEN '待审核'
-          WHEN 'under_review' THEN '审核中'
           WHEN 'verified' THEN '已核实'
-          WHEN 'published' THEN '已发布'
-          WHEN 'transferred' THEN '已转化'
           WHEN 'rejected' THEN '已驳回'
           ELSE pa.status
         END as '审核状态',
@@ -11039,9 +8180,9 @@ if (pathname === '/api/assistant/achievements/export' && req.method === 'GET') {
         uv.name as '审核人',
         pa.verified_date as '核实日期',
         pa.verification_comment as '审核意见',
-        pa.publish_link as '发布链接',
-        pa.published_date as '发布日期',
-        (SELECT COUNT(*) FROM \`AchievementTransfer\` WHERE achievement_id = pa.id) as '转化记录数量'
+        NULL as '发布链接',
+        NULL as '发布日期',
+        0 as '转化记录数量'
       FROM \`ProjectAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       LEFT JOIN \`User\` u ON pa.created_by = u.id
@@ -11093,26 +8234,26 @@ if (pathname === '/api/assistant/users' && req.method === 'GET') {
     
     // 关键词搜索
     if (query.keyword) {
-      whereClauses.push('(username LIKE ? OR name LIKE ? OR email LIKE ? OR department LIKE ?)');
+      whereClauses.push('(u.username LIKE ? OR u.name LIKE ? OR u.email LIKE ? OR u.department LIKE ?)');
       const keyword = `%${query.keyword}%`;
       queryParams.push(keyword, keyword, keyword, keyword);
     }
     
     // 角色筛选
     if (query.role) {
-      whereClauses.push('role = ?');
+      whereClauses.push('u.role = ?');
       queryParams.push(query.role);
     }
     
     // 状态筛选
     if (query.status) {
-      whereClauses.push('status = ?');
+      whereClauses.push('u.status = ?');
       queryParams.push(query.status);
     }
     
     // 部门筛选
     if (query.department) {
-      whereClauses.push('department LIKE ?');
+      whereClauses.push('u.department LIKE ?');
       queryParams.push(`%${query.department}%`);
     }
     
@@ -11121,7 +8262,7 @@ if (pathname === '/api/assistant/users' && req.method === 'GET') {
     // 获取用户总数
     const [totalResult] = await pool.query(`
       SELECT COUNT(*) as total 
-      FROM \`User\`
+      FROM \`User\` u
       WHERE ${whereClause}
     `, queryParams);
     
@@ -11130,30 +8271,31 @@ if (pathname === '/api/assistant/users' && req.method === 'GET') {
     // 获取用户数据
     const [users] = await pool.query(`
       SELECT 
-        id,
-        username,
-        name,
-        email,
-        role,
-        department,
-        title,
-        research_field,
-        phone,
-        status,
-        last_login,
-        created_at,
-        updated_at
-      FROM \`User\`
+        u.id,
+        u.username,
+        u.name,
+        u.email,
+        u.role,
+        u.department,
+        u.title,
+        ep.expertise_description AS research_field,
+        u.phone,
+        u.status,
+        u.last_login,
+        u.created_at,
+        u.updated_at
+      FROM \`User\` u
+      LEFT JOIN \`ExpertProfile\` ep ON ep.id = u.id
       WHERE ${whereClause}
       ORDER BY 
-        CASE role
+        CASE u.role
           WHEN 'admin' THEN 1
           WHEN 'project_manager' THEN 2
           WHEN 'reviewer' THEN 3
           WHEN 'applicant' THEN 4
           ELSE 5
         END,
-        created_at DESC
+        u.created_at DESC
       LIMIT ? OFFSET ?
     `, [...queryParams, pageSize, offset]);
     
@@ -11335,11 +8477,12 @@ if (pathname === '/api/assistant/users' && req.method === 'POST') {
     const newUserId = uuidv4();
     const now = new Date();
     
+    const userStatus = body.status === 'inactive' ? 'inactive' : 'active';
     await pool.query(
       `INSERT INTO \`User\` (
         id, username, password, name, email, role, department, title,
-        research_field, phone, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        phone, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newUserId,
         body.username,
@@ -11347,15 +8490,22 @@ if (pathname === '/api/assistant/users' && req.method === 'POST') {
         body.name,
         body.email,
         body.role,
-        body.department || '',
-        body.title || '',
-        body.research_field || '',
-        body.phone || '',
-        body.status || 'active',
+        body.department || null,
+        body.title || null,
+        body.phone || null,
+        userStatus,
         now,
         now
       ]
     );
+    if (body.role === 'reviewer') {
+      const desc = body.expertise_description != null ? body.expertise_description : body.research_field;
+      await pool.query(
+        `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
+         ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
+        [newUserId, desc || null]
+      );
+    }
     
     // 记录操作日志
     await pool.query(
@@ -11417,17 +8567,10 @@ if (pathname.startsWith('/api/assistant/users/') && req.method === 'PUT') {
     
     const oldUser = users[0];
     
-    // 构建更新数据
+    const userCols = ['name', 'email', 'role', 'department', 'title', 'phone', 'status'];
     const updates = {};
-    const updateFields = [
-      'name', 'email', 'role', 'department', 'title', 
-      'research_field', 'phone', 'status'
-    ];
-    
-    updateFields.forEach(field => {
-      if (body[field] !== undefined) {
-        updates[field] = body[field];
-      }
+    userCols.forEach((field) => {
+      if (body[field] !== undefined) updates[field] = body[field];
     });
     
     // 如果是更新角色，需要特殊权限检查
@@ -11442,11 +8585,26 @@ if (pathname.startsWith('/api/assistant/users/') && req.method === 'PUT') {
       }
     }
     
-    // 更新用户信息
-    await pool.query(
-      'UPDATE `User` SET ?, updated_at = NOW() WHERE id = ?',
-      [updates, userId]
-    );
+    const setParts = [];
+    const setVals = [];
+    Object.keys(updates).forEach((k) => {
+      setParts.push(`\`${k}\` = ?`);
+      setVals.push(updates[k]);
+    });
+    if (setParts.length) {
+      await pool.query(`UPDATE \`User\` SET ${setParts.join(', ')}, updated_at = NOW() WHERE id = ?`, [...setVals, userId]);
+    }
+    const expertDesc = body.expertise_description !== undefined ? body.expertise_description : body.research_field;
+    if (expertDesc !== undefined || body.role === 'reviewer') {
+      const effRole = body.role !== undefined ? body.role : oldUser.role;
+      if (effRole === 'reviewer') {
+        await pool.query(
+          `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
+           ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
+          [userId, expertDesc != null ? expertDesc : null]
+        );
+      }
+    }
     
     // 记录操作日志
     await pool.query(
@@ -11906,7 +9064,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.endsWith('/r
         newStatus = 'rejected';
         break;
       case 'returned':
-        newStatus = 'draft';
+        newStatus = 'revision';
         break;
       default:
         newStatus = project.status;
@@ -11936,19 +9094,6 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.endsWith('/r
       [uuidv4(), project.applicant_id, 
        `您的项目"${project.title}"审核结果为：${body.result === 'approved' ? '通过' : body.result === 'rejected' ? '不通过' : '需要修改'}。审核意见：${body.comment}`,
        projectId]
-    );
-    
-    // 更新审核任务状态
-    await pool.query(
-      `UPDATE \`AuditTask\` 
-       SET status = 'completed', 
-           review_result = ?, 
-           review_comment = ?,
-           processed_by = ?,
-           processed_at = NOW(),
-           updated_at = NOW()
-       WHERE related_id = ? AND task_type = 'project_review' AND status = 'processing'`,
-      [body.result, body.comment, assistant.id, projectId]
     );
     
     sendResponse(res, 200, {
@@ -12179,8 +9324,8 @@ if (pathname === '/api/assistant/activities' && req.method === 'GET') {
         COUNT(*) as totalCount,
         SUM(CASE WHEN action LIKE '%login%' THEN 1 ELSE 0 END) as loginCount,
         SUM(CASE WHEN table_name = 'Project' THEN 1 ELSE 0 END) as projectCount,
-        SUM(CASE WHEN table_name IN ('FundingApplication', 'ExpenditureRecord') THEN 1 ELSE 0 END) as fundingCount,
-        SUM(CASE WHEN table_name IN ('ProjectAchievement', 'AchievementTransfer') THEN 1 ELSE 0 END) as achievementCount,
+        0 as fundingCount,
+        SUM(CASE WHEN table_name = 'ProjectAchievement' THEN 1 ELSE 0 END) as achievementCount,
         SUM(CASE WHEN DATE(created_at) = ? THEN 1 ELSE 0 END) as todayCount
       FROM \`AuditLog\`
       WHERE ${whereClause}
@@ -12530,15 +9675,9 @@ function getTableText(table) {
     'Project': '项目表',
     'ProjectMember': '项目成员表',
     'ProjectBudget': '项目预算表',
-    'FundingApplication': '经费申请表',
-    'ExpenditureRecord': '支出记录表',
     'ProjectAchievement': '项目成果表',
-    'AchievementTransfer': '成果转化表',
-    'ProjectReview': '项目评审表',
-    'ProjectStage': '项目阶段表',
     'Notification': '通知表',
-    'FileStorage': '文件存储表',
-    'AuditTask': '审核任务表',
+    'AuditLog': '操作日志表',
   };
   return map[table] || table;
 }
@@ -12609,7 +9748,7 @@ function getRoleText(role) {
             ip_address,
             created_at
           FROM \`AuditLog\`
-          WHERE user_id = ? OR table_name IN ('Project', 'User', 'FundingApplication', 'ExpenditureRecord', 'ProjectAchievement')
+          WHERE user_id = ? OR table_name IN ('Project', 'User', 'ProjectAchievement', 'Notification')
           ORDER BY created_at DESC
           LIMIT ?
         `, [user.id, parseInt(limit)]);
@@ -12636,10 +9775,6 @@ function getRoleText(role) {
               icon = '👤';
               color = '#f6ffed';
             }
-          } else if (activity.table_name === 'ExpenditureRecord') {
-            description = `处理了支出申请 "${activity.new_values?.item_name || '未知支出'}"`;
-            icon = '💰';
-            color = '#f0faff';
           } else if (activity.table_name === 'ProjectAchievement') {
             description = `处理了成果 "${activity.new_values?.title || '未知成果'}"`;
             icon = '🏆';
@@ -12779,10 +9914,10 @@ function getRoleText(role) {
         const [stats] = await pool.query(`
           SELECT 
             (SELECT COUNT(*) FROM \`Project\` WHERE status = 'under_review') as pending_reviews,
-            (SELECT COUNT(*) FROM \`ExpenditureRecord\` WHERE status = 'submitted') as pending_expenditures,
-            (SELECT COUNT(*) FROM \`ProjectAchievement\` WHERE status = 'under_review') as pending_achievements,
-            (SELECT COUNT(*) FROM \`User\` WHERE status = 'pending') as pending_users,
-            (SELECT COUNT(*) FROM \`Project\` WHERE status IN ('in_progress', 'stage_review')) as active_projects
+            0 as pending_expenditures,
+            (SELECT COUNT(*) FROM \`ProjectAchievement\` WHERE status = 'submitted') as pending_achievements,
+            (SELECT COUNT(*) FROM \`User\` WHERE status = 'inactive') as pending_users,
+            (SELECT COUNT(*) FROM \`Project\` WHERE status IN ('under_review', 'incubating')) as active_projects
         `);
         
         sendResponse(res, 200, {
@@ -12860,22 +9995,8 @@ function getRoleText(role) {
           });
         });
         
-        // 获取待处理支出申请
-        const [expenditureTasks] = await pool.query(`
-          SELECT 
-            er.id,
-            er.item_name,
-            'expenditure_review' as type,
-            er.created_at,
-            p.title as project_title,
-            er.amount
-          FROM \`ExpenditureRecord\` er
-          LEFT JOIN \`Project\` p ON er.project_id = p.id
-          WHERE er.status = 'submitted'
-          ORDER BY er.created_at ASC
-          LIMIT 5
-        `);
-        
+        const expenditureTasks = [];
+
         expenditureTasks.forEach(task => {
           pendingTasks.push({
             id: `expenditure_${task.id}`,
@@ -12899,7 +10020,7 @@ function getRoleText(role) {
             pa.type as achievement_type
           FROM \`ProjectAchievement\` pa
           LEFT JOIN \`Project\` p ON pa.project_id = p.id
-          WHERE pa.status = 'under_review'
+          WHERE pa.status = 'submitted'
           ORDER BY pa.created_at ASC
           LIMIT 5
         `);
@@ -13156,50 +10277,59 @@ function getRoleText(role) {
         console.log('获取需要分配评审专家的项目列表，助理ID:', user.id);
         
         // 构建查询条件：状态为已提交或评审中（适配新数据库状态）
-        let whereClauses = ["p.status IN ('submitted', 'under_review', 'revision', 'batch_review')"];
+        let whereClauses = ["p.status IN ('submitted', 'under_review')"];
         let queryParams = [];
-        
-        // 筛选条件
+
         if (query.projectCode) {
           whereClauses.push('p.project_code LIKE ?');
           queryParams.push(`%${query.projectCode}%`);
         }
-        
+
         if (query.projectTitle) {
           whereClauses.push('p.title LIKE ?');
           queryParams.push(`%${query.projectTitle}%`);
         }
-        
+
         if (query.applicantName) {
           whereClauses.push('u.name LIKE ?');
           queryParams.push(`%${query.applicantName}%`);
         }
-        
+
         if (query.researchField) {
-          whereClauses.push('rd.name LIKE ?');
+          whereClauses.push(`EXISTS (
+            SELECT 1 FROM \`ProjectResearchDomain\` prd
+            INNER JOIN \`ResearchDomain\` rd2 ON prd.research_domain_id = rd2.id
+            WHERE prd.project_id = p.id AND rd2.name LIKE ?
+          )`);
           queryParams.push(`%${query.researchField}%`);
         }
-        
+
         const whereClause = whereClauses.join(' AND ');
-        
-        // 获取总数量
-        const [totalResult] = await pool.query(`
+
+        const [totalResult] = await pool.query(
+          `
           SELECT COUNT(*) as total
           FROM \`Project\` p
           LEFT JOIN \`User\` u ON p.applicant_id = u.id
-          LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
           WHERE ${whereClause}
-        `, queryParams);
+        `,
+          queryParams,
+        );
         
         const total = totalResult[0]?.total || 0;
         
-        // 获取项目列表
-        const [projects] = await pool.query(`
+        const [projects] = await pool.query(
+          `
           SELECT 
             p.id,
             p.project_code,
             p.title,
-            rd.name as research_field,
+            (
+              SELECT rd3.name FROM \`ProjectResearchDomain\` prd3
+              INNER JOIN \`ResearchDomain\` rd3 ON prd3.research_domain_id = rd3.id
+              WHERE prd3.project_id = p.id
+              ORDER BY rd3.sort_order ASC LIMIT 1
+            ) as research_field,
             p.status,
             p.submit_date,
             p.created_at,
@@ -13207,34 +10337,31 @@ function getRoleText(role) {
             u.department as applicant_department,
             u.title as applicant_title,
             (
-              SELECT COUNT(*)
-              FROM \`ProjectReview\` pr
-              WHERE pr.project_id = p.id
+              SELECT COUNT(*) FROM \`ExpertAssignment\` ea WHERE ea.project_id = p.id
             ) as reviewer_count,
             (
               SELECT GROUP_CONCAT(
-                DISTINCT CONCAT(ru.name, '|', ru.id, '|', pr.status, '|', IFNULL(pr.submitted_at, ''))
+                DISTINCT CONCAT(ru.name, '|', ru.id, '|', ea.status, '|', IFNULL(ea.assigned_at, ''))
                 SEPARATOR ';'
               )
-              FROM \`ProjectReview\` pr
-              LEFT JOIN \`User\` ru ON pr.expert_id = ru.id
-              WHERE pr.project_id = p.id
+              FROM \`ExpertAssignment\` ea
+              LEFT JOIN \`User\` ru ON ea.expert_id = ru.id
+              WHERE ea.project_id = p.id
             ) as assigned_reviewers
           FROM \`Project\` p
           LEFT JOIN \`User\` u ON p.applicant_id = u.id
-          LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
           WHERE ${whereClause}
           ORDER BY 
             CASE p.status 
               WHEN 'submitted' THEN 1
               WHEN 'under_review' THEN 2
-              WHEN 'revision' THEN 3
-              WHEN 'batch_review' THEN 4
               ELSE 5
             END,
             p.submit_date DESC
           LIMIT ? OFFSET ?
-        `, [...queryParams, pageSize, offset]);
+        `,
+          [...queryParams, pageSize, offset],
+        );
         
         // 格式化数据
         const formattedProjects = projects.map(project => {
@@ -13276,7 +10403,7 @@ function getRoleText(role) {
             SUM(CASE WHEN p.status = 'submitted' THEN 1 ELSE 0 END) as submitted,
             SUM(CASE WHEN p.status = 'under_review' THEN 1 ELSE 0 END) as under_review
           FROM \`Project\` p
-          WHERE p.status IN ('submitted', 'under_review', 'revision', 'batch_review')
+          WHERE p.status IN ('submitted', 'under_review')
         `);
         
         const stats = {
@@ -13321,16 +10448,20 @@ function getRoleText(role) {
         // 获取当前项目已分配的评审专家ID
         let assignedReviewerIds = [];
         if (projectId) {
-          const [assigned] = await pool.query(`
+          const [assigned] = await pool.query(
+            `
             SELECT expert_id 
-            FROM \`ProjectReview\` 
+            FROM \`ExpertAssignment\` 
             WHERE project_id = ?
-          `, [projectId]);
-          assignedReviewerIds = assigned.map(item => item.expert_id);
+          `,
+            [projectId],
+          );
+          assignedReviewerIds = assigned.map((item) => item.expert_id);
         }
         
         // 查询评审专家
-        const [reviewers] = await pool.query(`
+        const [reviewers] = await pool.query(
+          `
           SELECT 
             u.id,
             u.name,
@@ -13340,20 +10471,15 @@ function getRoleText(role) {
             u.phone,
             u.status,
             u.created_at,
-            ep.organization,
             ep.expertise_description,
-            ep.is_external,
             (
-              SELECT COUNT(*) 
-              FROM \`ProjectReview\` pr 
-              WHERE pr.expert_id = u.id 
-                AND pr.status = 'submitted'
+              SELECT COUNT(*) FROM \`AuditLog\` al 
+              WHERE al.user_id = u.id AND al.action = 'expert_project_review'
             ) as completed_reviews,
             (
-              SELECT COUNT(*) 
-              FROM \`ProjectReview\` pr 
-              WHERE pr.expert_id = u.id 
-                AND pr.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+              SELECT COUNT(*) FROM \`AuditLog\` al 
+              WHERE al.user_id = u.id AND al.action = 'expert_project_review'
+                AND al.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
             ) as recent_reviews
           FROM \`User\` u
           LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.id
@@ -13364,7 +10490,9 @@ function getRoleText(role) {
             (u.name LIKE ?) DESC,
             completed_reviews ASC,
             u.name ASC
-        `, [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`]);
+        `,
+          [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`],
+        );
         
         // 获取专家的研究领域
         const reviewerIds = reviewers.map(r => r.id);
@@ -13394,9 +10522,9 @@ function getRoleText(role) {
           title: reviewer.title,
           phone: reviewer.phone,
           research_field: expertDomains[reviewer.id] ? expertDomains[reviewer.id].join(', ') : '未指定',
-          organization: reviewer.organization,
+          organization: reviewer.department || '',
           expertise_description: reviewer.expertise_description,
-          is_external: reviewer.is_external === 1,
+          is_external: false,
           status: reviewer.status,
           completed_reviews: reviewer.completed_reviews || 0,
           recent_reviews: reviewer.recent_reviews || 0,
@@ -13824,7 +10952,7 @@ function getRoleText(role) {
             SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted,
             SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as under_review
           FROM \`Project\`
-          WHERE status IN ('submitted', 'under_review', 'revision', 'batch_review')
+          WHERE status IN ('submitted', 'under_review')
         `);
         
         const stats = {
@@ -14042,7 +11170,9 @@ if (pathname === '/api/projects' && req.method === 'GET') {
           p.detailed_introduction_part2,
           p.detailed_introduction_part3,
           p.status,
-          p.approved_budget,
+          /* 库表无 approved_budget 列，与 budget_total 同为明细汇总 */
+          (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS approved_budget,
+          (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total,
           p.submit_date,
           p.approval_date,
           p.start_date,
@@ -14121,7 +11251,8 @@ if (pathname === '/api/projects' && req.method === 'GET') {
         p.keywords,
         p.abstract,
         p.status,
-        p.approved_budget,
+        (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS approved_budget,
+        (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total,
         p.submit_date,
         p.approval_date,
         p.start_date,
@@ -14132,7 +11263,7 @@ if (pathname === '/api/projects' && req.method === 'GET') {
       LEFT JOIN \`User\` u ON p.applicant_id = u.id
       WHERE p.applicant_id = ?
     `;
-    const params = [user.userId];
+    const params = [user.userId || user.id];
     
     if (status && status !== 'all') {
       query += ' AND p.status = ?';
@@ -14248,33 +11379,55 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
         
         const body = await parseRequestBody(req);
         
-        // 构建更新字段（适配新数据库字段）
+        // 构建更新字段（与 database/research_system_db.sql `Project` 表一致）
         const updateFields = [];
         const updateValues = [];
-        
-        // 允许更新的字段
+
         const allowedFields = [
-          'title', 'domain_id', 'keywords', 'abstract', 'background',
-          'objectives', 'methodology', 'expected_outcomes', 'budget_total',
-          'duration_months', 'start_date', 'end_date', 'status', 'remarks',
+          'title',
           'project_domain_other_text',
+          'tech_maturity',
+          'achievement_transform',
+          'achievement_transform_other_text',
+          'poc_stage_requirement',
+          'poc_multi_stage_note',
+          'keywords',
+          'abstract',
+          'detailed_introduction_part1',
+          'detailed_introduction_part2',
+          'detailed_introduction_part3',
+          'implementation_plan',
+          'supplementary_info',
+          'status',
+          'start_date',
+          'end_date',
+          'remarks',
+          'manager_id',
         ];
-        
-        allowedFields.forEach(field => {
+
+        let nextNormStatus;
+        allowedFields.forEach((field) => {
           if (body[field] !== undefined) {
+            let v = body[field];
+            if (field === 'status') {
+              nextNormStatus = normalizeProjectStatusForDb(v);
+              v = nextNormStatus;
+            }
             updateFields.push(`${field} = ?`);
-            updateValues.push(body[field]);
+            updateValues.push(v);
           }
         });
-        
+
+        const effStatus = nextNormStatus !== undefined ? nextNormStatus : project.status;
+
         // 如果有提交操作，添加提交日期
-        if (body.status === 'submitted' && project.status === 'draft') {
+        if (nextNormStatus !== undefined && effStatus === 'submitted' && project.status === 'draft') {
           updateFields.push('submit_date = ?');
           updateValues.push(new Date().toISOString().split('T')[0]);
         }
-        
+
         // 如果有批准操作，添加批准日期
-        if (body.status === 'approved' && project.status !== 'approved') {
+        if (nextNormStatus !== undefined && effStatus === 'approved' && project.status !== 'approved') {
           updateFields.push('approval_date = ?');
           updateValues.push(new Date().toISOString().split('T')[0]);
         }
@@ -14403,7 +11556,11 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
       return;
     }
     // ==================== 删除项目API ====================
-    if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'DELETE') {
+    if (
+      (pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) &&
+      req.method === 'DELETE' &&
+      !pathname.startsWith('/api/projects/attachments/')
+    ) {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
       
@@ -14538,22 +11695,22 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
             p.id,
             p.project_code,
             p.title,
-            p.domain_id,
+            p.project_domain_other_text,
             p.keywords,
             p.abstract,
-            p.background,
-            p.objectives,
-            p.methodology,
-            p.expected_outcomes,
-            p.budget_total,
-            p.approved_budget,
-            p.duration_months,
+            p.detailed_introduction_part1,
+            p.detailed_introduction_part2,
+            p.detailed_introduction_part3,
+            p.implementation_plan,
+            p.supplementary_info,
+            p.tech_maturity,
+            (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total,
+            (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS approved_budget,
             p.status,
             p.start_date,
             p.end_date,
             p.submit_date,
             p.approval_date,
-            p.support_level,
             p.remarks,
             p.created_at,
             p.updated_at,
@@ -14639,10 +11796,9 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
             id,
             type,
             title,
-            description,
+            abstract,
+            content,
             achievement_date,
-            authors,
-            external_link,
             status,
             verified_by,
             verified_date,
@@ -14661,8 +11817,8 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
         const totalBudget = budgetResult[0]?.total_budget || 0;
         
         // 6. 获取已批准的预算总额（已立项的项目使用批准预算）
-        const approvedBudget = project.approved_budget || totalBudget;
-        const usedAmount = 0; // 支出记录暂时没有，设为0
+        const approvedBudget = totalBudget;
+        const usedAmount = 0;
         const balance = approvedBudget - usedAmount;
         
         // 7. 获取项目通知提醒（关联该项目的通知）
@@ -14683,64 +11839,62 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
           LIMIT 10
         `, [user.id, projectId]);
         
-        // 8. 获取专家评审记录（如果有）
-        const [reviews] = await pool.query(`
-          SELECT 
-            pr.id,
-            pr.recommendation,
-            pr.innovation_score,
-            pr.feasibility_score,
-            pr.significance_score,
-            pr.team_score,
-            pr.budget_score,
-            pr.total_score,
-            pr.comments,
-            pr.suggestions,
-            pr.submitted_at,
-            u.name as expert_name
-          FROM \`ProjectReview\` pr
-          LEFT JOIN \`User\` u ON pr.expert_id = u.id
-          WHERE pr.project_id = ?
-            AND pr.status = 'submitted'
-          ORDER BY pr.submitted_at DESC
-        `, [projectId]);
+        /* 库表无 ProjectReview；评审痕迹见 AuditLog（project_reject / project_return 等） */
+        const [reviewLogs] = await pool.query(
+          `SELECT id, user_id, action, new_values, created_at FROM \`AuditLog\`
+           WHERE table_name = 'Project' AND record_id = ?
+             AND action IN ('project_reject', 'project_return', 'project_review')
+           ORDER BY created_at DESC LIMIT 20`,
+          [projectId],
+        );
+        const reviews = reviewLogs.map((row) => ({
+          id: row.id,
+          recommendation: null,
+          innovation_score: null,
+          feasibility_score: null,
+          significance_score: null,
+          team_score: null,
+          budget_score: null,
+          comments: row.new_values ? JSON.stringify(row.new_values) : '',
+          suggestions: null,
+          submitted_at: row.created_at,
+          expert_name: null,
+          action: row.action,
+        }));
         
-        // 9. 获取批审批次决策（如果有）
-        const [batchDecisions] = await pool.query(`
-          SELECT 
-            bd.decision,
-            bd.support_type,
-            bd.approved_budget,
-            bd.support_details,
-            bd.conditions,
-            bd.decision_comment,
-            bd.decided_at,
-            rb.batch_name
-          FROM \`BatchReviewDecision\` bd
-          LEFT JOIN \`ReviewBatch\` rb ON bd.batch_id = rb.id
-          WHERE bd.project_id = ?
-          ORDER BY bd.decided_at DESC
-          LIMIT 1
-        `, [projectId]);
+        /* 库表 research_system_db.sql 无 BatchReviewDecision / ReviewBatch / IncubationRecord，批次决策留空 */
+        const batchDecisions = [];
         
-        // 10. 获取孵化记录（如果有）
-        const [incubation] = await pool.query(`
+        /* 孵化跟进见 IncubationProgress 表 */
+        const [incubation] = await pool.query(
+          `
           SELECT 
-            ir.id,
-            ir.start_date,
-            ir.planned_end_date,
-            ir.actual_end_date,
-            ir.status as incubation_status,
-            ir.created_at,
-            ir.updated_at
-          FROM \`IncubationRecord\` ir
-          WHERE ir.project_id = ?
-          ORDER BY ir.created_at DESC
+            id,
+            application_date,
+            service_requirement,
+            feedback_date,
+            result_date,
+            status,
+            created_at
+          FROM \`IncubationProgress\`
+          WHERE project_id = ?
+          ORDER BY created_at DESC
           LIMIT 1
-        `, [projectId]);
+        `,
+          [projectId],
+        );
+        
+        const incubationForStages = incubation[0]
+          ? {
+              start_date: incubation[0].application_date,
+              planned_end_date: project.end_date,
+              actual_end_date: incubation[0].result_date,
+              incubation_status: incubation[0].status,
+            }
+          : null;
         
         // 11. 构建项目阶段时间线（根据项目状态动态生成）
-        const stages = buildProgressStages(project, incubation[0], batchDecisions[0]);
+        const stages = buildProgressStages(project, incubationForStages, batchDecisions[0]);
         
         // 构建响应数据
         const responseData = {
@@ -14761,10 +11915,10 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
               id: ach.id,
               type: ach.type,
               title: ach.title,
-              description: ach.description,
+              abstract: ach.abstract,
+              content: ach.content,
+              description: ach.abstract || ach.content,
               achievement_date: ach.achievement_date,
-              authors: ach.authors,
-              external_link: ach.external_link,
               status: ach.status,
               verified_by: ach.verified_by,
               verified_date: ach.verified_date,
@@ -14790,7 +11944,7 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
                 team: review.team_score,
                 budget: review.budget_score
               },
-              total_score: review.total_score,
+              total_score: null,
               comments: review.comments,
               suggestions: review.suggestions,
               submitted_at: review.submitted_at,
@@ -14806,14 +11960,15 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
               decided_at: batchDecisions[0].decided_at,
               batch_name: batchDecisions[0].batch_name
             } : null,
-            incubation: incubation[0] ? {
-              start_date: incubation[0].start_date,
-              planned_end_date: incubation[0].planned_end_date,
-              actual_end_date: incubation[0].actual_end_date,
-              status: incubation[0].incubation_status,
-              created_at: incubation[0].created_at,
-              updated_at: incubation[0].updated_at
-            } : null,
+            incubation: incubation[0]
+              ? {
+                  start_date: incubation[0].progress_date,
+                  planned_end_date: project.end_date,
+                  title: incubation[0].title,
+                  abstract: incubation[0].abstract,
+                  created_at: incubation[0].created_at,
+                }
+              : null,
             budget_summary: {
               total: totalBudget,
               approved: approvedBudget,
@@ -15186,136 +12341,14 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
       return;
     }
 
-    // ==================== 更新项目API ====================
-
-    // 更新项目
-    if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'PUT') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-      
-      // 提取项目ID
-      let projectId;
-      if (pathname.startsWith('/api/project/')) {
-        projectId = pathname.replace('/api/project/', '');
-      } else {
-        projectId = pathname.replace('/api/projects/', '');
-      }
-      
-      try {
-        // 检查项目是否存在
-        const [projects] = await pool.query(
-          'SELECT * FROM `Project` WHERE id = ?',
-          [projectId]
-        );
-        
-        if (projects.length === 0) {
-          sendResponse(res, 404, {
-            success: false,
-            error: '项目未找到'
-          });
-          return;
-        }
-        
-        const project = projects[0];
-        
-        // 检查权限：只有项目申请人或管理员可以更新
-        const isOwner = project.applicant_id === user.id;
-        const isAdmin = checkPermission(user.role, 'admin');
-        
-        if (!isOwner && !isAdmin) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限更新此项目'
-          });
-          return;
-        }
-        
-        const body = await parseRequestBody(req);
-        
-        console.log('🔄 更新项目请求:', {
-          projectId: projectId,
-          userId: user.id,
-          data: body
-        });
-        
-        // 构建更新字段（适配新数据库字段）
-        const updateFields = [];
-        const updateValues = [];
-        
-        // 新数据库允许更新的字段
-        const allowedFields = [
-          'title', 'domain_id', 'keywords', 'abstract', 'background',
-          'objectives', 'methodology', 'expected_outcomes', 'budget_total',
-          'duration_months', 'status', 'start_date', 'end_date',
-          'support_level', 'approved_budget', 'remarks',
-          'project_domain_other_text',
-        ];
-        
-        allowedFields.forEach(field => {
-          if (body[field] !== undefined) {
-            updateFields.push(`${field} = ?`);
-            updateValues.push(body[field]);
-          }
-        });
-        
-        // 如果有提交操作，添加提交日期
-        if (body.status === 'submitted' && project.status === 'draft') {
-          updateFields.push('submit_date = ?');
-          updateValues.push(new Date().toISOString().split('T')[0]);
-        }
-        
-        // 如果有批准操作，添加批准日期
-        if (body.status === 'approved' && project.status !== 'approved') {
-          updateFields.push('approval_date = ?');
-          updateValues.push(new Date().toISOString().split('T')[0]);
-        }
-        
-        // 如果没有更新数据
-        if (updateFields.length === 0) {
-          sendResponse(res, 400, {
-            success: false,
-            error: '没有提供更新数据'
-          });
-          return;
-        }
-        
-        updateValues.push(projectId);
-        
-        const updateSql = `UPDATE \`Project\` SET ${updateFields.join(', ')}, updated_at = NOW() WHERE id = ?`;
-        
-        console.log('更新项目SQL:', updateSql);
-        
-        await pool.query(updateSql, updateValues);
-        
-        sendResponse(res, 200, {
-          success: true,
-          message: '项目更新成功',
-          id: projectId
-        });
-        
-      } catch (error) {
-        console.error('更新项目失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '更新项目失败',
-          message: error.message
-        });
-      }
-      return;
-    }
-
     // ==================== 删除项目API ====================
 
-    // 删除项目
-    if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'DELETE') {
+    // 删除项目（须排除 /api/projects/attachments/:id，否则会误匹配为「项目 id = attachments/xxx」）
+    if (
+      (pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) &&
+      req.method === 'DELETE' &&
+      !pathname.startsWith('/api/projects/attachments/')
+    ) {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
       
@@ -15480,8 +12513,9 @@ if (pathname.startsWith('/api/projects/attachments/') && req.method === 'GET') {
       return;
     }
     
-    // 构建文件路径
-    const filePath = path.join(__dirname, attachment.file_path);
+    // 构建文件路径（与删除附件一致，避免 Windows 下以 / 开头的路径拼接异常）
+    const relGet = String(attachment.file_path || '').replace(/^[/\\]+/, '');
+    const filePath = path.join(__dirname, relGet);
     
     // 检查文件是否存在
     if (!fs.existsSync(filePath)) {
@@ -15514,10 +12548,9 @@ if (pathname.startsWith('/api/projects/attachments/') && req.method === 'GET') {
   return;
 }
 
-// 2. 上传附件接口（放在项目详情之前）
+// 2. 上传附件接口（放在项目详情之前；multipart 字段在 req.body，勿再 parseRequestBody）
 if (pathname === '/api/projects/upload-attachment' && req.method === 'POST') {
-  // 使用 multer 处理文件上传
-  upload.single('file')(req, res, async (err) => {
+  projectUpload.single('file')(req, res, async (err) => {
     if (err) {
       console.error('文件上传错误:', err);
       sendResponse(res, 400, {
@@ -15526,23 +12559,29 @@ if (pathname === '/api/projects/upload-attachment' && req.method === 'POST') {
       });
       return;
     }
-    
-    // 验证 Token
+
     const authHeader = req.headers.authorization;
     let token = authHeader;
     if (token && token.startsWith('Bearer ')) {
       token = token.substring(7);
     }
-    
+
     const user = await verifyToken(token);
     if (!user) {
+      if (req.file?.path) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (e) {
+          /* ignore */
+        }
+      }
       sendResponse(res, 401, {
         success: false,
         error: '认证失败'
       });
       return;
     }
-    
+
     if (!req.file) {
       sendResponse(res, 400, {
         success: false,
@@ -15550,55 +12589,101 @@ if (pathname === '/api/projects/upload-attachment' && req.method === 'POST') {
       });
       return;
     }
-    
-    // 获取项目ID（从请求体或查询参数）
-    const body = await parseRequestBody(req);
-    const projectId = body.project_id;
-    
-    if (!projectId) {
-      sendResponse(res, 400, {
-        success: false,
-        error: '项目ID不能为空'
-      });
-      return;
-    }
-    
+
+    const projectId = (req.body && req.body.project_id) ? String(req.body.project_id).trim() : '';
+    const relativePath = `/uploads/projects/${req.file.filename}`;
+    const type = req.file.mimetype.startsWith('image/') ? 'image' : 'attachment';
+    const safeOriginalName = fixMultipartFilename(req.file.originalname);
+
     try {
+      if (projectId) {
+        const [projects] = await pool.query(
+          'SELECT applicant_id FROM `Project` WHERE id = ?',
+          [projectId]
+        );
+        if (projects.length === 0) {
+          try {
+            fs.unlinkSync(req.file.path);
+          } catch (e) {
+            /* ignore */
+          }
+          sendResponse(res, 404, {
+            success: false,
+            error: '项目不存在'
+          });
+          return;
+        }
+        const uid = user.userId || user.id;
+        const isOwner = projects[0].applicant_id === uid;
+        const isAdmin = user.role === 'admin';
+        const isPm = user.role === 'project_manager';
+        if (!isOwner && !isAdmin && !isPm) {
+          try {
+            fs.unlinkSync(req.file.path);
+          } catch (e) {
+            /* ignore */
+          }
+          sendResponse(res, 403, {
+            success: false,
+            error: '没有权限为此项目上传附件'
+          });
+          return;
+        }
+
+        const attachmentId = randomUUID();
+        await pool.query(`
+          INSERT INTO \`ProjectAttachment\` (
+            id, project_id, file_name, file_path, file_size,
+            mime_type, type, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+        `, [
+          attachmentId,
+          projectId,
+          safeOriginalName,
+          relativePath,
+          req.file.size,
+          req.file.mimetype,
+          type
+        ]);
+
+        sendResponse(res, 200, {
+          success: true,
+          message: '文件上传成功',
+          data: {
+            id: attachmentId,
+            file_name: safeOriginalName,
+            file_path: relativePath,
+            file_size: req.file.size,
+            mime_type: req.file.mimetype,
+            type,
+            created_at: new Date().toISOString()
+          }
+        });
+        return;
+      }
+
+      // 无 project_id：新建项目场景，仅落盘，创建项目时再由 POST /api/projects 写入 ProjectAttachment
       const attachmentId = randomUUID();
-      const relativePath = `/uploads/projects/${req.file.filename}`;
-      
-      await pool.query(`
-        INSERT INTO \`ProjectAttachment\` (
-          id, project_id, file_name, file_path, file_size, 
-          mime_type, type, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
-      `, [
-        attachmentId,
-        projectId,
-        req.file.originalname,
-        relativePath,
-        req.file.size,
-        req.file.mimetype,
-        req.file.mimetype.startsWith('image/') ? 'image' : 'attachment'
-      ]);
-      
-      const fileInfo = {
-        id: attachmentId,
-        file_name: req.file.originalname,
-        file_path: relativePath,
-        file_size: req.file.size,
-        mime_type: req.file.mimetype,
-        type: req.file.mimetype.startsWith('image/') ? 'image' : 'attachment',
-        created_at: new Date().toISOString()
-      };
-      
       sendResponse(res, 200, {
         success: true,
         message: '文件上传成功',
-        data: fileInfo
+        data: {
+          id: attachmentId,
+          file_name: safeOriginalName,
+          file_path: relativePath,
+          file_size: req.file.size,
+          mime_type: req.file.mimetype,
+          type,
+          created_at: new Date().toISOString()
+        }
       });
     } catch (error) {
       console.error('保存附件信息失败:', error);
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (e) {
+        /* ignore */
+      }
       sendResponse(res, 500, {
         success: false,
         error: '保存附件信息失败'
@@ -15610,7 +12695,7 @@ if (pathname === '/api/projects/upload-attachment' && req.method === 'POST') {
 
 // 3. 删除附件接口
 if (pathname.startsWith('/api/projects/attachments/') && req.method === 'DELETE') {
-  const attachmentId = pathname.replace('/api/projects/attachments/', '');
+  let attachmentId = pathname.replace('/api/projects/attachments/', '').replace(/\/$/, '');
   
   const authHeader = req.headers.authorization;
   let token = authHeader;
@@ -15655,8 +12740,9 @@ if (pathname.startsWith('/api/projects/attachments/') && req.method === 'DELETE'
     const userId = user.userId || user.id;
     const isApplicant = projects[0]?.applicant_id === userId;
     const isAdmin = user.role === 'admin';
+    const isProjectManager = user.role === 'project_manager';
     
-    if (!isApplicant && !isAdmin) {
+    if (!isApplicant && !isAdmin && !isProjectManager) {
       sendResponse(res, 403, {
         success: false,
         error: '没有权限删除此附件'
@@ -15664,8 +12750,9 @@ if (pathname.startsWith('/api/projects/attachments/') && req.method === 'DELETE'
       return;
     }
     
-    // 删除物理文件
-    const filePath = path.join(__dirname, attachment.file_path);
+    // 删除物理文件（file_path 存为 /uploads/... 时避免 path.join 吞掉 __dirname）
+    const rel = String(attachment.file_path || '').replace(/^[/\\]+/, '');
+    const filePath = path.join(__dirname, rel);
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
@@ -15745,7 +12832,7 @@ if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/
         p.detailed_introduction_part3,
         p.project_domain_other_text,
         p.status,
-        p.approved_budget,
+        (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS approved_budget,
         p.submit_date,
         p.approval_date,
         p.created_at,
@@ -15958,9 +13045,13 @@ if ((pathname.match(/^\/api\/project\/[^\/]+$/) || pathname.match(/^\/api\/proje
         p.detailed_introduction_part2,
         p.detailed_introduction_part3,
         p.status,
-        p.approved_budget,
+        ${sqlProjectBudgetTotal('p')} AS approved_budget,
+        ${sqlProjectBudgetTotal('p')} AS budget_total,
         p.submit_date,
         p.approval_date,
+        p.start_date,
+        p.end_date,
+        p.remarks,
         p.created_at,
         p.updated_at,
         p.applicant_id,
@@ -16057,95 +13148,6 @@ if ((pathname.match(/^\/api\/project\/[^\/]+$/) || pathname.match(/^\/api\/proje
       error: '获取项目详情失败'
     });
   }
-  return;
-}
-// 确保上传目录存在
-const uploadDir = path.join(__dirname, 'uploads', 'projects');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-// 配置 multer 存储
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    // 生成唯一文件名：时间戳_随机数_原文件名
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, uniqueSuffix + ext);
-  }
-});
-// 文件过滤
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip'];
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('不支持的文件类型'), false);
-  }
-};
-
-const upload = multer({ 
-  storage: storage,
-  fileFilter: fileFilter,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB限制
-});
-
-// 上传附件接口
-if (pathname === '/api/projects/upload-attachment' && req.method === 'POST') {
-  // 使用 multer 处理文件上传
-  upload.single('file')(req, res, async (err) => {
-    if (err) {
-      console.error('文件上传错误:', err);
-      sendResponse(res, 400, {
-        success: false,
-        error: err.message || '文件上传失败'
-      });
-      return;
-    }
-    
-    // 验证 Token
-    const authHeader = req.headers.authorization;
-    let token = authHeader;
-    if (token && token.startsWith('Bearer ')) {
-      token = token.substring(7);
-    }
-    
-    const user = await verifyToken(token);
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    if (!req.file) {
-      sendResponse(res, 400, {
-        success: false,
-        error: '请选择要上传的文件'
-      });
-      return;
-    }
-    
-    // 返回文件信息
-    const fileInfo = {
-      originalName: req.file.originalname,
-      fileName: req.file.filename,
-      filePath: `/uploads/projects/${req.file.filename}`,
-      fileSize: req.file.size,
-      mimeType: req.file.mimetype,
-      uploadTime: new Date().toISOString()
-    };
-    
-    sendResponse(res, 200, {
-      success: true,
-      message: '文件上传成功',
-      data: fileInfo
-    });
-  });
   return;
 }
 // 创建项目
@@ -16354,7 +13356,32 @@ if (pathname === '/api/projects' && req.method === 'POST') {
       }
       console.log('✅ 预算明细插入成功');
     }
-    
+
+    // 5. 保存项目附件（须在 sendResponse 之前，且与 projectId 同处 try 内）
+    if (body.attachments && body.attachments.length > 0) {
+      console.log('📎 保存项目附件:', body.attachments.length);
+      for (let i = 0; i < body.attachments.length; i++) {
+        const att = body.attachments[i];
+        await pool.query(`
+          INSERT INTO \`ProjectAttachment\` (
+            id, project_id, file_name, file_path, file_size, 
+            mime_type, type, description, sort_order, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `, [
+          randomUUID(),
+          projectId,
+          att.file_name,
+          att.file_path,
+          att.file_size,
+          att.mime_type,
+          att.type || 'attachment',
+          att.description || '',
+          i
+        ]);
+      }
+      console.log('✅ 项目附件保存成功');
+    }
+
     sendResponse(res, 201, {
       success: true,
       message: '项目创建成功',
@@ -16365,7 +13392,6 @@ if (pathname === '/api/projects' && req.method === 'POST') {
         status: 'draft'
       }
     });
-    
   } catch (error) {
     console.error('❌ 创建项目失败:', error);
     sendResponse(res, 500, {
@@ -16375,30 +13401,7 @@ if (pathname === '/api/projects' && req.method === 'POST') {
       sqlMessage: error.sqlMessage
     });
   }
-  // 5. 保存项目附件
-  if (body.attachments && body.attachments.length > 0) {
-    console.log('📎 保存项目附件:', body.attachments.length);
-    for (let i = 0; i < body.attachments.length; i++) {
-      const att = body.attachments[i];
-      await pool.query(`
-        INSERT INTO \`ProjectAttachment\` (
-          id, project_id, file_name, file_path, file_size, 
-          mime_type, type, description, sort_order, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-      `, [
-        randomUUID(),
-        projectId,
-        att.file_name,
-        att.file_path,
-        att.file_size,
-        att.mime_type,
-        att.type || 'attachment',
-        att.description || '',
-        i
-      ]);
-    }
-    console.log('✅ 项目附件保存成功');
-  }
+  return;
 }
 // 如果没有 express，添加手动处理
 if (pathname.startsWith('/uploads/') && req.method === 'GET') {
@@ -16443,18 +13446,21 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             p.project_code,
             p.title,
             p.status,
-            p.budget_total,
-            p.duration_months,
+            (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total,
             p.start_date,
             p.end_date,
             p.created_at,
             p.updated_at,
-            rd.name as research_field
+            (
+              SELECT GROUP_CONCAT(DISTINCT rd.name ORDER BY rd.name SEPARATOR '、')
+              FROM \`ProjectResearchDomain\` prd
+              JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+              WHERE prd.project_id = p.id
+            ) AS research_field
           FROM \`Project\` p
-          LEFT JOIN \`ResearchDomain\` rd ON p.domain_id = rd.id
           WHERE p.applicant_id = ?
           ORDER BY p.created_at DESC
-        `, [user.id]);
+        `, [user.userId || user.id]);
         
         sendResponse(res, 200, {
           success: true,
@@ -16940,8 +13946,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             console.log('✅ 创建项目文件夹:', projectUploadDir);
           }
           
-          // 生成唯一文件名
-          const originalName = file.originalFilename || file.name;
+          // 生成唯一文件名（修复 multipart 中文名乱码）
+          const originalName = fixMultipartFilename(file.originalFilename || file.name || '');
           const ext = path.extname(originalName);
           const storedName = `${Date.now()}_${Math.random().toString(36).substring(7)}${ext}`;
           const storedPath = path.join(projectUploadDir, storedName);
@@ -17268,8 +14274,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         
         // 搜索
         if (search) {
-          sql += ' AND (pa.title LIKE ? OR pa.keywords LIKE ? OR pa.description LIKE ?)';
-          countSql += ' AND (title LIKE ? OR keywords LIKE ? OR description LIKE ?)';
+          sql += ' AND (pa.title LIKE ? OR pa.abstract LIKE ? OR pa.content LIKE ?)';
+          countSql += ' AND (title LIKE ? OR abstract LIKE ? OR content LIKE ?)';
           const searchParam = `%${search}%`;
           params.push(searchParam, searchParam, searchParam);
           countParams.push(searchParam, searchParam, searchParam);
@@ -17367,41 +14373,31 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const achievementId = randomUUID();
         
         // 插入成果记录
+        const abs =
+          (body.abstract && String(body.abstract).trim()) ||
+          (body.description && String(body.description).trim()) ||
+          '（无摘要）';
+        const cont =
+          (body.content && String(body.content).trim()) ||
+          (body.description && String(body.description).trim()) ||
+          abs;
         const sql = `
           INSERT INTO \`ProjectAchievement\` (
-            id, project_id, type, title, description, achievement_date,
-            keywords, authors, publisher, publication_date, publication_source,
-            impact_factor, patent_number, patent_type, patent_authority,
-            award_name, award_level, award_date, award_organization,
-            attachment_urls, external_link,
+            id, project_id, type, title, abstract, content, achievement_date,
             status, created_by, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
-        
+
         const params = [
           achievementId,
           body.project_id || null,
           body.type,
           body.title,
-          body.description || '',
+          abs,
+          cont,
           body.achievement_date || new Date().toISOString().split('T')[0],
-          body.keywords || '',
-          body.authors || '',
-          body.publisher || '',
-          body.publication_date || null,
-          body.publication_source || '',
-          body.impact_factor || null,
-          body.patent_number || '',
-          body.patent_type || '',
-          body.patent_authority || '',
-          body.award_name || '',
-          body.award_level || '',
-          body.award_date || null,
-          body.award_organization || '',
-          body.attachment_urls || '[]',
-          body.external_link || '',
           body.status || 'draft',
-          user.id
+          user.id,
         ];
         
         console.log('📝 执行创建成果SQL:', sql);
@@ -17612,7 +14608,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         }
         
         // 检查状态：只有草稿或退回状态的成果可以修改（管理员除外）
-        if (!isAdmin && !['draft', 'returned'].includes(achievement.status)) {
+        if (!isAdmin && !['draft', 'submitted'].includes(achievement.status)) {
           sendResponse(res, 409, {
             success: false,
             error: '当前状态不允许修改',
@@ -17625,29 +14621,29 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const updateFields = [];
         const updateValues = [];
         
-        // 允许更新的字段
         const allowedFields = [
-          'title', 'description', 'achievement_date', 'keywords',
-          'authors', 'publisher', 'publication_date', 'publication_source',
-          'impact_factor', 'patent_number', 'patent_type', 'patent_authority',
-          'award_name', 'award_level', 'award_date', 'award_organization',
-          'attachment_urls', 'external_link', 'status', 'project_id'
+          'type', 'title', 'abstract', 'content', 'achievement_date', 'status', 'project_id',
         ];
-        
-        allowedFields.forEach(field => {
+        const legacyAbstract =
+          body.abstract !== undefined ? body.abstract : body.description;
+
+        allowedFields.forEach((field) => {
+          if (field === 'abstract' && legacyAbstract !== undefined) {
+            updateFields.push('abstract = ?');
+            updateValues.push(legacyAbstract);
+            return;
+          }
           if (body[field] !== undefined) {
             updateFields.push(`${field} = ?`);
             updateValues.push(body[field]);
           }
         });
-        
-        // 提交审核时更新状态
+
         if (body.submit_for_review === true) {
           updateFields.push('status = ?');
-          updateValues.push('under_review');
-          updateFields.push('submitted_at = NOW()');
+          updateValues.push('submitted');
         }
-        
+
         if (updateFields.length === 0) {
           sendResponse(res, 400, {
             success: false,
@@ -17655,8 +14651,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           });
           return;
         }
-        
-        updateFields.push('submitted_at = NOW()');
+
         updateValues.push(achievementId);
         
         const updateSql = `UPDATE \`ProjectAchievement\` SET ${updateFields.join(', ')} WHERE id = ?`;
@@ -17815,7 +14810,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         }
         
         // 检查当前状态
-        if (!['draft', 'returned'].includes(achievement.status)) {
+        if (!['draft', 'submitted'].includes(achievement.status)) {
           sendResponse(res, 409, {
             success: false,
             error: '当前状态不允许提交审核',
@@ -17824,17 +14819,17 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           return;
         }
         
-        // 更新状态为审核中
-        await pool.query(
-          'UPDATE `ProjectAchievement` SET status = ?, submitted_at = NOW() WHERE id = ?',
-          ['under_review', achievementId]
-        );
+        // 库表 ProjectAchievement.status：draft/submitted/verified/rejected（无 under_review）
+        await pool.query('UPDATE `ProjectAchievement` SET status = ? WHERE id = ?', [
+          'submitted',
+          achievementId,
+        ]);
         
         sendResponse(res, 200, {
           success: true,
           message: '成果已提交审核',
           achievement_id: achievementId,
-          new_status: 'under_review'
+          new_status: 'submitted'
         });
         
       } catch (error) {
@@ -17912,8 +14907,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         
         const achievement = achievements[0];
         
-        // 检查当前状态是否为审核中
-        if (achievement.status !== 'under_review') {
+        // 与 ProjectAchievement.status ENUM 一致：待审核为 submitted
+        if (achievement.status !== 'submitted') {
           sendResponse(res, 409, {
             success: false,
             error: '当前状态不允许审核',
@@ -17935,14 +14930,14 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             statusText = '已驳回';
             break;
           case 'return':
-            newStatus = 'returned';
+            newStatus = 'draft';
             statusText = '已退回修改';
             break;
         }
         
-        // 更新成果状态
+        // 更新成果状态（字段名与 research_system_db.sql 中 ProjectAchievement 一致）
         await pool.query(
-          'UPDATE `ProjectAchievement` SET status = ?, verified_by = ?, verified_at = NOW(), verification_comment = ? WHERE id = ?',
+          'UPDATE `ProjectAchievement` SET status = ?, verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
           [newStatus, user.id, body.reason || body.comments || '', achievementId]
         );
         
@@ -18102,9 +15097,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             SELECT 
               COUNT(*) as total,
               SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-              SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as under_review,
+              SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as under_review,
               SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft,
-              SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) as returned,
               SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
               COUNT(DISTINCT project_id) as project_count,
               COUNT(DISTINCT created_by) as user_count
@@ -18116,9 +15110,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             SELECT 
               COUNT(*) as total,
               SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-              SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as under_review,
+              SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as under_review,
               SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft,
-              SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) as returned,
               SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
               COUNT(DISTINCT project_id) as project_count
             FROM \`ProjectAchievement\`
@@ -18185,562 +15178,6 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       return;
     }
-    // ==================== 成果转化API ====================
-
-  // 1. 获取成果转化列表
-  if (pathname === '/api/transfers' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const { page = 1, limit = 10, type, status, achievement_id, search } = query;
-    const offset = (page - 1) * limit;
-    
-    try {
-      // 构建查询SQL
-      let sql = `
-        SELECT 
-          at.*,
-          pa.title as achievement_title,
-          pa.type as achievement_type,
-          pa.project_id,
-          p.title as project_title,
-          p.project_code,
-          u.name as created_by_name
-        FROM \`AchievementTransfer\` at
-        INNER JOIN \`ProjectAchievement\` pa ON at.achievement_id = pa.id
-        LEFT JOIN \`Project\` p ON pa.project_id = p.id
-        LEFT JOIN \`User\` u ON at.created_by = u.id
-        WHERE at.created_by = ?
-      `;
-      
-      let countSql = 'SELECT COUNT(*) as total FROM `AchievementTransfer` WHERE created_by = ?';
-      const params = [user.id];
-      const countParams = [user.id];
-      
-      // 管理员可以查看所有转化记录
-      if (checkPermission(user.role, ['admin', 'project_manager'])) {
-        sql = sql.replace('WHERE at.created_by = ?', 'WHERE 1=1');
-        countSql = countSql.replace('WHERE created_by = ?', 'WHERE 1=1');
-        params.shift();
-        countParams.shift();
-      }
-      
-      // 按成果筛选
-      if (achievement_id) {
-        sql += ' AND at.achievement_id = ?';
-        countSql += ' AND achievement_id = ?';
-        params.push(achievement_id);
-        countParams.push(achievement_id);
-      }
-      
-      // 类型筛选
-      if (type) {
-        sql += ' AND at.transfer_type = ?';
-        countSql += ' AND transfer_type = ?';
-        params.push(type);
-        countParams.push(type);
-      }
-      
-      // 状态筛选
-      if (status) {
-        sql += ' AND at.transfer_status = ?';
-        countSql += ' AND transfer_status = ?';
-        params.push(status);
-        countParams.push(status);
-      }
-      
-      // 搜索
-      if (search) {
-        sql += ' AND (pa.title LIKE ? OR at.transferee LIKE ? OR at.contract_no LIKE ?)';
-        countSql += ' AND EXISTS (SELECT 1 FROM `ProjectAchievement` pa WHERE pa.id = achievement_id AND (pa.title LIKE ? OR ?)) OR transferee LIKE ? OR contract_no LIKE ?';
-        const searchParam = `%${search}%`;
-        params.push(searchParam, searchParam, searchParam);
-        countParams.push(searchParam, searchParam, searchParam, searchParam);
-      }
-      
-      sql += ' ORDER BY at.created_at DESC LIMIT ? OFFSET ?';
-      params.push(parseInt(limit), offset);
-      
-      console.log('🔍 执行转化查询:', sql);
-      console.log('🔍 查询参数:', params);
-      
-      const [rows] = await pool.query(sql, params);
-      const [totalResult] = await pool.query(countSql, countParams);
-      const total = totalResult[0].total;
-      
-      // 处理收入记录
-      for (const transfer of rows) {
-        if (transfer.income_records) {
-          try {
-            transfer.income_records = JSON.parse(transfer.income_records);
-          } catch (e) {
-            console.error('解析收入记录失败:', e);
-            transfer.income_records = [];
-          }
-        }
-      }
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: rows,
-        total: total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / limit)
-      });
-      
-    } catch (error) {
-      console.error('获取成果转化列表失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取成果转化列表失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 2. 创建成果转化记录
-  if (pathname === '/api/transfers' && req.method === 'POST') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    try {
-      const body = await parseRequestBody(req);
-      
-      console.log('📥 创建转化记录请求:', body);
-      
-      // 验证必填字段
-      if (!body.achievement_id || !body.transfer_type || !body.transferee) {
-        sendResponse(res, 400, {
-          success: false,
-          error: '成果ID、转化类型和受让方是必填字段'
-        });
-        return;
-      }
-      
-      // 验证成果是否存在
-      const [achievements] = await pool.query(
-        'SELECT id, project_id, created_by, status FROM `ProjectAchievement` WHERE id = ?',
-        [body.achievement_id]
-      );
-      
-      if (achievements.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '成果不存在'
-        });
-        return;
-      }
-      
-      const achievement = achievements[0];
-      
-      // 检查权限：只有成果创建者或管理员可以创建转化记录
-      const isOwner = achievement.created_by === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
-      
-      if (!isOwner && !isAdmin) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限为此成果创建转化记录'
-        });
-        return;
-      }
-      
-      // 生成转化ID
-      const transferId = randomUUID();
-      
-      // 插入转化记录
-      const sql = `
-        INSERT INTO \`AchievementTransfer\` (
-          id, achievement_id, transfer_type, transferee, transfer_date,
-          contract_no, contract_amount, actual_amount, transfer_status,
-          description, contract_file, income_records, created_by, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-      `;
-      
-      const params = [
-        transferId,
-        body.achievement_id,
-        body.transfer_type,
-        body.transferee,
-        body.transfer_date || null,
-        body.contract_no || null,
-        body.contract_amount || null,
-        body.actual_amount || null,
-        body.transfer_status || 'negotiating',
-        body.description || '',
-        body.contract_file || '',
-        body.income_records ? JSON.stringify(body.income_records) : null,
-        user.id
-      ];
-      
-      console.log('📝 执行插入转化记录SQL:', sql);
-      console.log('📝 参数:', params);
-      
-      await pool.query(sql, params);
-      
-      // 如果转化状态是已完成，更新成果状态
-      if (body.transfer_status === 'completed') {
-        await pool.query(
-          'UPDATE `ProjectAchievement` SET status = ? WHERE id = ?',
-          ['transferred', body.achievement_id]
-        );
-      }
-      
-      // 获取新创建的转化记录详情
-      const [newTransfers] = await pool.query(
-        `SELECT 
-          at.*,
-          pa.title as achievement_title,
-          pa.type as achievement_type,
-          pa.project_id,
-          p.title as project_title,
-          p.project_code,
-          u.name as created_by_name
-        FROM \`AchievementTransfer\` at
-        INNER JOIN \`ProjectAchievement\` pa ON at.achievement_id = pa.id
-        LEFT JOIN \`Project\` p ON pa.project_id = p.id
-        LEFT JOIN \`User\` u ON at.created_by = u.id
-        WHERE at.id = ?`,
-        [transferId]
-      );
-      
-      sendResponse(res, 201, {
-        success: true,
-        message: '成果转化记录创建成功',
-        data: newTransfers[0]
-      });
-      
-    } catch (error) {
-      console.error('创建成果转化记录失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '创建成果转化记录失败',
-        message: error.message,
-        sqlMessage: error.sqlMessage
-      });
-    }
-    return;
-  }
-
-  // 3. 获取单个转化记录详情
-  if (pathname.startsWith('/api/transfers/') && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const transferId = pathname.replace('/api/transfers/', '');
-    
-    console.log('🔍 获取转化记录详情，ID:', transferId);
-    
-    try {
-      const sql = `
-        SELECT 
-          at.*,
-          pa.title as achievement_title,
-          pa.type as achievement_type,
-          pa.project_id,
-          pa.description as achievement_description,
-          pa.keywords as achievement_keywords,
-          pa.achievement_date,
-          pa.authors,
-          pa.attachment_urls as achievement_attachments,
-          p.title as project_title,
-          p.project_code,
-          u1.name as created_by_name,
-          u2.name as applicant_name
-        FROM \`AchievementTransfer\` at
-        INNER JOIN \`ProjectAchievement\` pa ON at.achievement_id = pa.id
-        LEFT JOIN \`Project\` p ON pa.project_id = p.id
-        LEFT JOIN \`User\` u1 ON at.created_by = u1.id
-        LEFT JOIN \`User\` u2 ON p.applicant_id = u2.id
-        WHERE at.id = ?
-      `;
-      
-      const [transfers] = await pool.query(sql, [transferId]);
-      
-      if (transfers.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '转化记录不存在'
-        });
-        return;
-      }
-      
-      const transfer = transfers[0];
-      
-      // 检查权限：只有创建者或管理员可以查看
-      const isOwner = transfer.created_by === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
-      
-      if (!isOwner && !isAdmin) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限查看此转化记录'
-        });
-        return;
-      }
-      
-      // 处理JSON字段
-      if (transfer.income_records) {
-        try {
-          transfer.income_records = JSON.parse(transfer.income_records);
-        } catch (e) {
-          console.error('解析收入记录失败:', e);
-          transfer.income_records = [];
-        }
-      }
-      
-      if (transfer.authors) {
-        try {
-          transfer.authors = JSON.parse(transfer.authors);
-        } catch (e) {
-          console.error('解析作者失败:', e);
-          transfer.authors = [];
-        }
-      }
-      
-      if (transfer.achievement_attachments) {
-        try {
-          transfer.achievement_attachments = JSON.parse(transfer.achievement_attachments);
-        } catch (e) {
-          console.error('解析成果附件失败:', e);
-          transfer.achievement_attachments = [];
-        }
-      }
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: transfer
-      });
-      
-    } catch (error) {
-      console.error('获取转化记录详情失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取转化记录详情失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // 4. 更新转化记录
-  if (pathname.startsWith('/api/transfers/') && req.method === 'PUT') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const transferId = pathname.replace('/api/transfers/', '');
-    const body = await parseRequestBody(req);
-    
-    console.log('🔄 更新转化记录:', transferId, body);
-    
-    try {
-      // 检查转化记录是否存在
-      const [transfers] = await pool.query(
-        'SELECT * FROM `AchievementTransfer` WHERE id = ?',
-        [transferId]
-      );
-      
-      if (transfers.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '转化记录不存在'
-        });
-        return;
-      }
-      
-      const transfer = transfers[0];
-      
-      // 检查权限：只有创建者或管理员可以修改
-      const isOwner = transfer.created_by === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
-      
-      if (!isOwner && !isAdmin) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限修改此转化记录'
-        });
-        return;
-      }
-      
-      // 构建更新字段
-      const updateFields = [];
-      const updateValues = [];
-      
-      const allowedFields = [
-        'transfer_type', 'transferee', 'transfer_date', 'contract_no',
-        'contract_amount', 'actual_amount', 'transfer_status',
-        'description', 'contract_file', 'income_records'
-      ];
-      
-      allowedFields.forEach(field => {
-        if (body[field] !== undefined) {
-          updateFields.push(`${field} = ?`);
-          if (field === 'income_records') {
-            updateValues.push(JSON.stringify(body[field]));
-          } else {
-            updateValues.push(body[field]);
-          }
-        }
-      });
-      
-      if (updateFields.length === 0) {
-        sendResponse(res, 400, {
-          success: false,
-          error: '没有提供更新数据'
-        });
-        return;
-      }
-      
-      updateValues.push(transferId);
-      
-      const updateSql = `UPDATE \`AchievementTransfer\` SET ${updateFields.join(', ')} WHERE id = ?`;
-      
-      console.log('📝 执行更新SQL:', updateSql);
-      console.log('📝 参数:', updateValues);
-      
-      await pool.query(updateSql, updateValues);
-      
-      // 如果转化状态发生变化，更新成果状态
-      if (body.transfer_status) {
-        if (body.transfer_status === 'completed') {
-          await pool.query(
-            'UPDATE `ProjectAchievement` SET status = ? WHERE id = ?',
-            ['transferred', transfer.achievement_id]
-          );
-        }
-      }
-      
-      sendResponse(res, 200, {
-        success: true,
-        message: '转化记录更新成功',
-        transfer_id: transferId
-      });
-      
-    } catch (error) {
-      console.error('更新转化记录失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '更新转化记录失败',
-        message: error.message,
-        sqlMessage: error.sqlMessage
-      });
-    }
-    return;
-  }
-
-  // 5. 删除转化记录
-  if (pathname.startsWith('/api/transfers/') && req.method === 'DELETE') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const transferId = pathname.replace('/api/transfers/', '');
-    
-    console.log('🗑️ 删除转化记录:', transferId);
-    
-    try {
-      // 检查转化记录是否存在
-      const [transfers] = await pool.query(
-        'SELECT * FROM `AchievementTransfer` WHERE id = ?',
-        [transferId]
-      );
-      
-      if (transfers.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '转化记录不存在'
-        });
-        return;
-      }
-      
-      const transfer = transfers[0];
-      
-      // 检查权限：只有创建者或管理员可以删除
-      const isOwner = transfer.created_by === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
-      
-      if (!isOwner && !isAdmin) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限删除此转化记录'
-        });
-        return;
-      }
-      
-      // 检查状态：只有洽谈中的记录可以删除
-      if (transfer.transfer_status !== 'negotiating' && !isAdmin) {
-        sendResponse(res, 409, {
-          success: false,
-          error: '只能删除洽谈中的转化记录',
-          current_status: transfer.transfer_status
-        });
-        return;
-      }
-      
-      // 删除转化记录
-      const [result] = await pool.query('DELETE FROM `AchievementTransfer` WHERE id = ?', [transferId]);
-      
-      console.log('✅ 转化记录删除成功，影响行数:', result.affectedRows);
-      
-      sendResponse(res, 200, {
-        success: true,
-        message: '转化记录删除成功',
-        transfer_id: transferId
-      });
-      
-    } catch (error) {
-      console.error('删除转化记录失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '删除转化记录失败',
-        message: error.message,
-        sqlMessage: error.sqlMessage
-      });
-    }
-    return;
-  }
-
   // ==================== 经费管理API（基于新数据库） ====================
 
   // 1. 获取经费统计（基于 Project 和 ProjectBudget）
@@ -18766,12 +15203,12 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       let projectsSql = `
         SELECT 
           p.id, 
-          p.budget_total, 
-          p.approved_budget,
+          (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total,
+          (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS approved_budget,
           p.status
         FROM \`Project\` p
         WHERE p.applicant_id = ?
-          AND p.status NOT IN ('draft', 'rejected', 'terminated')
+          AND p.status NOT IN ('draft', 'rejected')
       `;
       
       const [projects] = await pool.query(projectsSql, [user.id]);
@@ -18804,22 +15241,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         usedAmount = parseFloat(budgets[0]?.total || 0);
       }
       
-      // 获取待处理的经费申请（如果需要，可以从 FundingApplication 表获取）
-      let pendingApplications = 0;
-      let pendingReimbursements = 0;
-      
-      // 尝试获取待处理的申请（如果有 FundingApplication 表）
-      try {
-        const [apps] = await pool.query(
-          `SELECT COUNT(*) as count 
-          FROM \`FundingApplication\` 
-          WHERE applicant_id = ? AND status = 'submitted'`,
-          [user.id]
-        );
-        pendingApplications = apps[0]?.count || 0;
-      } catch (error) {
-        console.log('经费申请表不存在或查询失败，跳过');
-      }
+      const pendingApplications = 0;
+      const pendingReimbursements = 0;
       
       const availableBalance = totalApprovedBudget - usedAmount;
       const usedPercentage = totalApprovedBudget > 0 ? ((usedAmount / totalApprovedBudget) * 100).toFixed(1) : 0;
@@ -18966,7 +15389,9 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
     try {
       // 获取用户的项目
       let projectsSql = `
-        SELECT p.id, p.title, p.budget_total, p.approved_budget
+        SELECT p.id, p.title,
+          (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total,
+          (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS approved_budget
         FROM \`Project\` p
         WHERE p.applicant_id = ?
           AND p.status IN ('approved', 'incubating', 'completed')
@@ -19069,8 +15494,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           p.id,
           p.title,
           p.project_code,
-          p.budget_total,
-          p.approved_budget,
+          (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total,
+          (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS approved_budget,
           p.status,
           p.start_date,
           p.end_date
@@ -19997,18 +16422,20 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
     try {
       // 获取用户的项目
       let projectsSql = `
-        SELECT id, approved_budget 
-        FROM \`Project\` 
-        WHERE applicant_id = ?
-          AND status IN ('approved', 'incubating', 'completed')
+        SELECT p.id,
+          (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS approved_budget
+        FROM \`Project\` p
+        WHERE p.applicant_id = ?
+          AND p.status IN ('approved', 'incubating', 'completed')
       `;
       const params = [user.id];
       
       if (checkPermission(user.role, ['admin', 'project_manager'])) {
         projectsSql = `
-          SELECT id, approved_budget 
-          FROM \`Project\` 
-          WHERE status IN ('approved', 'incubating', 'completed')
+          SELECT p.id,
+            (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS approved_budget
+          FROM \`Project\` p
+          WHERE p.status IN ('approved', 'incubating', 'completed')
         `;
         params.length = 0;
       }
@@ -20533,397 +16960,6 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
     const d = new Date(date);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
-  // ==================== 支出申请API ====================
-
-  // 创建支出申请（新增）
-  if (pathname === '/api/expenditures' && req.method === 'POST') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    console.log('📝 创建支出申请，用户:', user.id);
-    
-    try {
-      const body = await parseRequestBody(req);
-      
-      console.log('📥 支出申请数据:', body);
-      
-      // 验证必填字段
-      if (!body.project_id || !body.budget_id || !body.category || !body.amount) {
-        sendResponse(res, 400, {
-          success: false,
-          error: '项目ID、预算ID、类别和金额是必填字段'
-        });
-        return;
-      }
-      
-      // 验证项目是否存在且用户有权限
-      const [projects] = await pool.query(
-        'SELECT id, applicant_id, status FROM `Project` WHERE id = ?',
-        [body.project_id]
-      );
-      
-      if (projects.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '项目不存在'
-        });
-        return;
-      }
-      
-      const project = projects[0];
-      
-      // 检查权限：只有项目申请人可以申请支出
-      const isOwner = project.applicant_id === user.id;
-      const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
-      
-      if (!isOwner && !isAdmin) {
-        sendResponse(res, 403, {
-          success: false,
-          error: '没有权限为此项目申请支出'
-        });
-        return;
-      }
-      
-      // 检查项目状态是否允许申请支出
-      if (!['approved', 'incubating'].includes(project.status)) {
-        sendResponse(res, 409, {
-          success: false,
-          error: '项目当前状态不允许申请支出',
-          project_status: project.status
-        });
-        return;
-      }
-      
-      // 验证预算项是否存在
-      const [budgets] = await pool.query(
-        'SELECT * FROM `ProjectBudget` WHERE id = ? AND project_id = ?',
-        [body.budget_id, body.project_id]
-      );
-      
-      if (budgets.length === 0) {
-        sendResponse(res, 404, {
-          success: false,
-          error: '预算项不存在或不属于该项目'
-        });
-        return;
-      }
-      
-      const budget = budgets[0];
-      const currentUsed = budget.used_amount || 0;
-      const newUsed = currentUsed + parseFloat(body.amount);
-      
-      // 检查预算是否足够
-      if (newUsed > budget.amount) {
-        sendResponse(res, 409, {
-          success: false,
-          error: '申请金额超过预算余额',
-          budget_amount: budget.amount,
-          used_amount: currentUsed,
-          available: budget.amount - currentUsed,
-          requested: parseFloat(body.amount)
-        });
-        return;
-      }
-      
-      // 生成支出申请编号
-      const expenseNo = `EXP-${new Date().toISOString().slice(0,10).replace(/-/g, '')}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
-      const expenditureId = randomUUID();
-      
-      // 插入支出申请记录
-      const sql = `
-        INSERT INTO \`ExpenditureRecord\` (
-          id, project_id, budget_id, expense_no, category, item_name,
-          amount, description, calculation_method, payee_name, payee_type,
-          bank_account, bank_name, status, applicant_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-      `;
-      
-      const params = [
-        expenditureId,
-        body.project_id,
-        body.budget_id,
-        expenseNo,
-        body.category,
-        body.item_name || budget.item_name,
-        parseFloat(body.amount),
-        body.description || '',
-        body.calculation_method || '',
-        body.payee_name || '',
-        body.payee_type || 'company',
-        body.bank_account || '',
-        body.bank_name || '',
-        'submitted',
-        user.id
-      ];
-      
-      console.log('📝 执行创建支出申请SQL:', sql);
-      
-      await pool.query(sql, params);
-      
-      // 可选：更新预算已使用金额（可以在审批通过后更新，这里先不更新）
-      
-      // 获取新创建的支出申请
-      const [newExpenditures] = await pool.query(
-        `SELECT 
-          er.*,
-          p.title as project_title,
-          p.project_code,
-          b.item_name as budget_item_name,
-          u.name as applicant_name
-        FROM \`ExpenditureRecord\` er
-        LEFT JOIN \`Project\` p ON er.project_id = p.id
-        LEFT JOIN \`ProjectBudget\` b ON er.budget_id = b.id
-        LEFT JOIN \`User\` u ON er.applicant_id = u.id
-        WHERE er.id = ?`,
-        [expenditureId]
-      );
-      
-      sendResponse(res, 201, {
-        success: true,
-        message: '支出申请提交成功',
-        data: {
-          id: expenditureId,
-          expense_no: expenseNo,
-          ...newExpenditures[0]
-        }
-      });
-      
-    } catch (error) {
-      console.error('创建支出申请失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '创建支出申请失败',
-        message: error.message,
-        sqlMessage: error.sqlMessage
-      });
-    }
-    return;
-  }
-
-  // ==================== 获取支出申请列表 ====================
-
-  if (pathname === '/api/expenditures' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    const { 
-      page = 1, 
-      limit = 10, 
-      status, 
-      project_id, 
-      category,
-      search
-    } = query;
-    
-    const offset = (page - 1) * limit;
-    
-    try {
-      let sql = `
-        SELECT 
-          er.*,
-          p.title as project_title,
-          p.project_code,
-          b.item_name as budget_item_name,
-          u.name as applicant_name,
-          r.name as reviewer_name
-        FROM \`ExpenditureRecord\` er
-        LEFT JOIN \`Project\` p ON er.project_id = p.id
-        LEFT JOIN \`ProjectBudget\` b ON er.budget_id = b.id
-        LEFT JOIN \`User\` u ON er.applicant_id = u.id
-        LEFT JOIN \`User\` r ON er.reviewer_id = r.id
-        WHERE 1=1
-      `;
-      
-      let countSql = 'SELECT COUNT(*) as total FROM `ExpenditureRecord` er WHERE 1=1';
-      const params = [];
-      const countParams = [];
-      
-      // 权限过滤
-      if (!checkPermission(user.role, ['admin', 'project_manager'])) {
-        sql += ' AND er.applicant_id = ?';
-        countSql += ' AND er.applicant_id = ?';
-        params.push(user.id);
-        countParams.push(user.id);
-      }
-      
-      // 状态筛选
-      if (status) {
-        const statusList = status.split(',');
-        sql += ` AND er.status IN (${statusList.map(() => '?').join(',')})`;
-        countSql += ` AND er.status IN (${statusList.map(() => '?').join(',')})`;
-        params.push(...statusList);
-        countParams.push(...statusList);
-      }
-      
-      // 项目筛选
-      if (project_id) {
-        sql += ' AND er.project_id = ?';
-        countSql += ' AND er.project_id = ?';
-        params.push(project_id);
-        countParams.push(project_id);
-      }
-      
-      // 类别筛选
-      if (category) {
-        sql += ' AND er.category = ?';
-        countSql += ' AND er.category = ?';
-        params.push(category);
-        countParams.push(category);
-      }
-      
-      // 搜索
-      if (search) {
-        sql += ' AND (er.item_name LIKE ? OR er.description LIKE ?)';
-        countSql += ' AND (er.item_name LIKE ? OR er.description LIKE ?)';
-        const searchParam = `%${search}%`;
-        params.push(searchParam, searchParam);
-        countParams.push(searchParam, searchParam);
-      }
-      
-      sql += ' ORDER BY er.created_at DESC LIMIT ? OFFSET ?';
-      params.push(parseInt(limit), offset);
-      
-      const [rows] = await pool.query(sql, params);
-      const [totalResult] = await pool.query(countSql, countParams);
-      const total = totalResult[0]?.total || 0;
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: rows,
-        total: total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / limit)
-      });
-      
-    } catch (error) {
-      console.error('获取支出申请列表失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取支出申请列表失败',
-        message: error.message
-      });
-    }
-    return;
-  }
-
-  // ==================== 获取支出申请统计 ====================
-
-  if (pathname === '/api/expenditures/stats' && req.method === 'GET') {
-    const token = req.headers.authorization;
-    const user = await verifyToken(token);
-    
-    if (!user) {
-      sendResponse(res, 401, {
-        success: false,
-        error: '认证失败'
-      });
-      return;
-    }
-    
-    try {
-      // 获取用户的项目预算
-      let projectsSql = `
-        SELECT id, approved_budget 
-        FROM \`Project\` 
-        WHERE applicant_id = ?
-          AND status IN ('approved', 'incubating')
-      `;
-      const params = [user.id];
-      
-      if (checkPermission(user.role, ['admin', 'project_manager'])) {
-        projectsSql = `
-          SELECT id, approved_budget 
-          FROM \`Project\` 
-          WHERE status IN ('approved', 'incubating')
-        `;
-        params.length = 0;
-      }
-      
-      const [projects] = await pool.query(projectsSql, params);
-      
-      let totalBudget = 0;
-      let totalUsed = 0;
-      let budgetCount = 0;
-      
-      if (projects.length > 0) {
-        const projectIds = projects.map(p => p.id);
-        const placeholders = projectIds.map(() => '?').join(',');
-        
-        // 获取预算总额
-        const [budgetResult] = await pool.query(
-          `SELECT COALESCE(SUM(amount), 0) as total_budget, COUNT(*) as count
-          FROM \`ProjectBudget\`
-          WHERE project_id IN (${placeholders})`,
-          projectIds
-        );
-        
-        totalBudget = parseFloat(budgetResult[0]?.total_budget || 0);
-        budgetCount = parseInt(budgetResult[0]?.count || 0);
-
-        if (totalBudget <= 0) {
-          const fromApproved = projects.reduce(
-            (sum, p) => sum + parseFloat(p.approved_budget || 0),
-            0,
-          );
-          if (fromApproved > 0) {
-            totalBudget = fromApproved;
-            budgetCount = projects.length;
-          }
-        }
-        
-        // 获取已批准的支出总额
-        const [expenditureResult] = await pool.query(
-          `SELECT COALESCE(SUM(amount), 0) as total_used
-          FROM \`ExpenditureRecord\`
-          WHERE project_id IN (${placeholders}) AND status = 'approved'`,
-          projectIds
-        );
-        
-        totalUsed = parseFloat(expenditureResult[0]?.total_used || 0);
-      }
-      
-      const stats = {
-        total_budget: totalBudget,
-        used_amount: totalUsed,
-        remaining_amount: totalBudget - totalUsed,
-        used_percent: totalBudget > 0 ? Math.round((totalUsed / totalBudget) * 100) : 0,
-        budget_count: budgetCount,
-        pending_count: 0,
-        approved_count: 0
-      };
-      
-      sendResponse(res, 200, {
-        success: true,
-        data: stats
-      });
-      
-    } catch (error) {
-      console.error('获取支出统计失败:', error);
-      sendResponse(res, 500, {
-        success: false,
-        error: '获取支出统计失败',
-        message: error.message
-      });
-    }
-    return;
-  }
     // ==================== 文件上传API ====================
     if (pathname === '/api/upload' && req.method === 'POST') {
       const token = req.headers.authorization;
@@ -21051,56 +17087,14 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           return;
         }
         
-        // 获取已批准的支出总额
-        const [expenditureResult] = await pool.query(
-          `SELECT 
-            COALESCE(SUM(amount), 0) as total_used,
-            COUNT(*) as count
-          FROM \`ExpenditureRecord\` 
-          WHERE project_id = ? AND status = 'approved'`,
-          [projectId]
-        );
-        
-        // 获取按分类统计
-        const [categoryResult] = await pool.query(
-          `SELECT 
-            category,
-            COUNT(*) as count,
-            COALESCE(SUM(amount), 0) as total_amount
-          FROM \`ExpenditureRecord\` 
-          WHERE project_id = ? AND status = 'approved'
-          GROUP BY category
-          ORDER BY total_amount DESC`,
-          [projectId]
-        );
-        
-        // 获取最近支出
-        const [recentResult] = await pool.query(
-          `SELECT 
-            expense_no,
-            item_name,
-            amount,
-            expense_date,
-            status
-          FROM \`ExpenditureRecord\` 
-          WHERE project_id = ?
-          ORDER BY created_at DESC
-          LIMIT 5`,
-          [projectId]
-        );
-        
         sendResponse(res, 200, {
           success: true,
           data: {
-            total_used: parseFloat(expenditureResult[0]?.total_used || 0),
-            count: parseInt(expenditureResult[0]?.count || 0),
-            by_category: categoryResult.map(item => ({
-              category: item.category,
-              count: parseInt(item.count),
-              total_amount: parseFloat(item.total_amount)
-            })),
-            recent: recentResult
-          }
+            total_used: 0,
+            count: 0,
+            by_category: [],
+            recent: [],
+          },
         });
         
       } catch (error) {
@@ -21192,13 +17186,13 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           SELECT 
             COUNT(*) as total,
             SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as verified,
-            SUM(CASE WHEN pa.status = 'published' THEN 1 ELSE 0 END) as published,
+            0 as published,
             SUM(CASE WHEN pa.status = 'submitted' THEN 1 ELSE 0 END) as submitted,
             SUM(CASE WHEN pa.status = 'draft' THEN 1 ELSE 0 END) as draft,
             SUM(CASE WHEN pa.status = 'rejected' THEN 1 ELSE 0 END) as rejected,
             ROUND(
-              SUM(CASE WHEN pa.status IN ('verified', 'published') THEN 1 ELSE 0 END) * 100.0 / 
-              NULLIF(SUM(CASE WHEN pa.status IN ('verified', 'published', 'rejected') THEN 1 ELSE 0 END), 0), 
+              SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) * 100.0 / 
+              NULLIF(SUM(CASE WHEN pa.status IN ('verified', 'rejected') THEN 1 ELSE 0 END), 0), 
               1
             ) as approval_rate
           FROM \`ProjectAchievement\` pa
@@ -21259,7 +17253,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const prevSummaryQuery = `
           SELECT 
             COUNT(*) as prev_total,
-            SUM(CASE WHEN pa.status IN ('verified', 'published') THEN 1 ELSE 0 END) as prev_approved
+            SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as prev_approved
           FROM \`ProjectAchievement\` pa
           WHERE pa.created_at BETWEEN ? AND ?
           ${projectFilter}
@@ -21273,7 +17267,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const growthRate = prev.prev_total > 0 ? 
           ((current.total - prev.prev_total) / prev.prev_total * 100).toFixed(1) : 0;
         
-        const approved = (current.verified || 0) + (current.published || 0);
+        const approved = (current.verified || 0);
         const prevApproved = prev.prev_approved || 0;
         const totalCompare = current.total - prev.prev_total;
         const approvedCompare = approved - prevApproved;
@@ -21531,12 +17525,12 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           SELECT 
             DATE_FORMAT(pa.created_at, '${dateFormat}') as date,
             COUNT(*) as total,
-            SUM(CASE WHEN pa.status IN ('verified', 'published') THEN 1 ELSE 0 END) as approved,
+            SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as approved,
             SUM(CASE WHEN pa.status = 'submitted' THEN 1 ELSE 0 END) as pending,
             SUM(CASE WHEN pa.status = 'rejected' THEN 1 ELSE 0 END) as rejected,
             ROUND(
-              SUM(CASE WHEN pa.status IN ('verified', 'published') THEN 1 ELSE 0 END) * 100.0 / 
-              NULLIF(SUM(CASE WHEN pa.status IN ('verified', 'published', 'rejected') THEN 1 ELSE 0 END), 0), 
+              SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) * 100.0 / 
+              NULLIF(SUM(CASE WHEN pa.status IN ('verified', 'rejected') THEN 1 ELSE 0 END), 0), 
               1
             ) as rate
           FROM \`ProjectAchievement\` pa
@@ -21683,10 +17677,10 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
               p.title as name,
               p.project_code,
               COUNT(pa.id) as achievement_count,
-              SUM(CASE WHEN pa.status IN ('verified', 'published') THEN 1 ELSE 0 END) as approved_count,
+              SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as approved_count,
               ROUND(
-                SUM(CASE WHEN pa.status IN ('verified', 'published') THEN 1 ELSE 0 END) * 100.0 / 
-                NULLIF(COUNT(CASE WHEN pa.status IN ('verified', 'published', 'rejected') THEN 1 END), 0), 
+                SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) * 100.0 / 
+                NULLIF(COUNT(CASE WHEN pa.status IN ('verified', 'rejected') THEN 1 END), 0), 
                 1
               ) as approval_rate
             FROM \`Project\` p
@@ -21706,10 +17700,10 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
               p.title as name,
               p.project_code,
               COUNT(pa.id) as achievement_count,
-              SUM(CASE WHEN pa.status IN ('verified', 'published') THEN 1 ELSE 0 END) as approved_count,
+              SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as approved_count,
               ROUND(
-                SUM(CASE WHEN pa.status IN ('verified', 'published') THEN 1 ELSE 0 END) * 100.0 / 
-                NULLIF(COUNT(CASE WHEN pa.status IN ('verified', 'published', 'rejected') THEN 1 END), 0), 
+                SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) * 100.0 / 
+                NULLIF(COUNT(CASE WHEN pa.status IN ('verified', 'rejected') THEN 1 END), 0), 
                 1
               ) as approval_rate
             FROM \`Project\` p
@@ -21808,12 +17802,12 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           SELECT 
             pa.type,
             COUNT(*) as total,
-            SUM(CASE WHEN pa.status IN ('verified', 'published') THEN 1 ELSE 0 END) as approved,
+            SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as approved,
             SUM(CASE WHEN pa.status = 'submitted' THEN 1 ELSE 0 END) as pending,
             SUM(CASE WHEN pa.status = 'rejected' THEN 1 ELSE 0 END) as rejected,
             ROUND(
-              SUM(CASE WHEN pa.status IN ('verified', 'published') THEN 1 ELSE 0 END) * 100.0 / 
-              NULLIF(SUM(CASE WHEN pa.status IN ('verified', 'published', 'rejected') THEN 1 ELSE 0 END), 0), 
+              SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) * 100.0 / 
+              NULLIF(SUM(CASE WHEN pa.status IN ('verified', 'rejected') THEN 1 ELSE 0 END), 0), 
               1
             ) as approval_rate,
             ROUND(AVG(DATEDIFF(COALESCE(pa.verified_at, pa.created_at), pa.created_at)), 1) as avg_review_days
@@ -22001,9 +17995,14 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
               SELECT 
                 p.title,
                 p.project_code,
-                p.category,
+                (
+                  SELECT GROUP_CONCAT(rd.name ORDER BY rd.sort_order, rd.name SEPARATOR ', ')
+                  FROM \`ProjectResearchDomain\` prd
+                  JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+                  WHERE prd.project_id = p.id
+                ) AS category,
                 p.status,
-                p.budget_total,
+                (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total,
                 DATE_FORMAT(p.created_at, '%Y-%m-%d') as created_date,
                 u.name as applicant_name
               FROM \`Project\` p
@@ -22089,7 +18088,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         'verified': '已验证',
         'published': '已发布',
         'rejected': '已驳回',
-        'returned': '已退回',
+        'revision': '已退回',
         'transferred': '已转化',
         'applied': '已应用'
       };
@@ -22583,7 +18582,6 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             action_url,
             is_read,
             read_at,
-            expires_at,
             DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') as created_at
           FROM \`Notification\`
           WHERE id = ? AND user_id = ?`,
@@ -22642,16 +18640,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
                 break;
                 
               case 'expenditure':
-                const [expenditures] = await pool.query(
-                  'SELECT id, item_name, amount, status FROM `ExpenditureRecord` WHERE id = ?',
-                  [notification.related_id]
-                );
-                if (expenditures.length > 0) {
-                  related_data = {
-                    type: 'expenditure',
-                    data: expenditures[0]
-                  };
-                }
+                related_data = { type: 'expenditure', data: null };
                 break;
             }
           } catch (error) {
@@ -22671,7 +18660,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           action_url: notification.action_url,
           is_read: notification.is_read === 1,
           read_at: notification.read_at,
-          expires_at: notification.expires_at,
+          expires_at: null,
           created_at: notification.created_at,
           time_ago: getTimeAgo(notification.created_at),
           related_data: related_data
@@ -22731,8 +18720,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           INSERT INTO \`Notification\` (
             id, user_id, type, title, content,
             related_id, related_type, priority,
-            action_url, is_read, expires_at, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            action_url, is_read, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
         
         const params = [
@@ -22745,8 +18734,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           body.related_type || null,
           body.priority || 'medium',
           body.action_url || null,
-          false, // is_read
-          body.expires_at || null
+          false,
         ];
         
         await pool.query(sql, params);
@@ -22799,9 +18787,12 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           'SELECT COUNT(*) as count FROM `Project` WHERE status = "under_review"'
         );
         
-        const [totalBudget] = await pool.query(
-          'SELECT COALESCE(SUM(budget_total), 0) as total FROM `Project` WHERE status IN ("approved", "in_progress", "completed")'
-        );
+        const [totalBudget] = await pool.query(`
+          SELECT COALESCE(SUM(pb.amount), 0) AS total
+          FROM \`ProjectBudget\` pb
+          INNER JOIN \`Project\` p ON pb.project_id = p.id
+          WHERE p.status IN ('approved', 'incubating', 'completed')
+        `);
         
         const summary = {
           totalUsers: totalUsers[0]?.count || 0,
@@ -22835,10 +18826,10 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted,
             SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as under_review,
             SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-            SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
-            SUM(CASE WHEN status = 'stage_review' THEN 1 ELSE 0 END) as stage_review,
+            SUM(CASE WHEN status = 'incubating' THEN 1 ELSE 0 END) as in_progress,
+            SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as stage_review,
             SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-            SUM(CASE WHEN status = 'terminated' THEN 1 ELSE 0 END) as terminated_count
+            SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as terminated_count
           FROM \`Project\`
         `);
         
@@ -22847,14 +18838,13 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         // 3. 经费统计
         const [financeStats] = await pool.query(`
           SELECT 
-            COALESCE(SUM(p.budget_total), 0) as totalBudget,
+            COALESCE(SUM(pb.amount), 0) as totalBudget,
             COALESCE(SUM(pb.amount), 0) as allocated,
-            COALESCE(SUM(er.amount), 0) as expended,
-            15.7 as fundGrowth  -- 示例增长数据
+            0 as expended,
+            15.7 as fundGrowth
           FROM \`Project\` p
           LEFT JOIN \`ProjectBudget\` pb ON p.id = pb.project_id
-          LEFT JOIN \`ExpenditureRecord\` er ON p.id = er.project_id AND er.status = 'approved'
-          WHERE p.status IN ('approved', 'in_progress', 'completed')
+          WHERE p.status IN ('approved', 'incubating', 'completed')
         `);
         
         // 计算剩余预算
@@ -22875,13 +18865,10 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             SUM(CASE WHEN type = 'prototype' THEN 1 ELSE 0 END) as prototypes,
             10.2 as achievementGrowth  -- 示例增长数据
           FROM \`ProjectAchievement\`
-          WHERE status IN ('verified', 'published')
+          WHERE status = 'verified'
         `);
         
-        // 单独查询成果转化数量
-        const [transfersResult] = await pool.query(
-          'SELECT COUNT(*) as count FROM `AchievementTransfer` WHERE transfer_status = "completed"'
-        );
+        const transfersResult = [{ count: 0 }];
         
         // 合并成果统计数据
         const achievementData = achievementStats[0] || {
@@ -22904,7 +18891,12 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             p.id,
             p.project_code,
             p.title,
-            p.category,
+            (
+              SELECT GROUP_CONCAT(rd.name ORDER BY rd.sort_order, rd.name SEPARATOR ', ')
+              FROM \`ProjectResearchDomain\` prd
+              JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+              WHERE prd.project_id = p.id
+            ) AS category,
             p.status,
             p.created_at,
             u.name as applicant_name
@@ -22961,15 +18953,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           'SELECT COUNT(*) as count FROM `Project` WHERE status = "under_review"'
         );
         
-        // 使用 FundingApplication 表
-        const [pendingFunding] = await pool.query(
-          'SELECT COUNT(*) as count FROM `FundingApplication` WHERE status = "submitted"'
-        );
-        
-        // 使用 ExpenditureRecord 表
-        const [pendingExpenditures] = await pool.query(
-          'SELECT COUNT(*) as count FROM `ExpenditureRecord` WHERE status = "submitted"'
-        );
+        const pendingFunding = [{ count: 0 }];
+        const pendingExpenditures = [{ count: 0 }];
         
         // 使用 ProjectAchievement 表
         const [pendingAchievements] = await pool.query(
@@ -23347,33 +19332,42 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         // 生成用户ID
         const userId = randomUUID();
         
-        // 插入用户数据
+        const bcrypt = require('bcryptjs');
+        const hashedPassword = await bcrypt.hash(body.password, 10);
+        const userStatus = body.status === 'inactive' ? 'inactive' : 'active';
         const sql = `
           INSERT INTO \`User\` (
             id, username, password, name, email, role,
-            department, title, research_field, phone,
-            status, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            department, title, phone,
+            status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
         `;
         
         const params = [
           userId,
           body.username,
-          body.password, // 注意：实际项目中应该对密码进行哈希处理
+          hashedPassword,
           body.name,
           body.email,
           body.role,
-          body.department || '',
-          body.title || '',
-          body.research_field || '',
-          body.phone || '',
-          body.status || 'active'
+          body.department || null,
+          body.title || null,
+          body.phone || null,
+          userStatus,
         ];
         
         console.log('📝 执行创建用户SQL:', sql);
         console.log('📝 参数:', params);
         
         await pool.query(sql, params);
+        if (body.role === 'reviewer') {
+          const desc = body.expertise_description != null ? body.expertise_description : body.research_field;
+          await pool.query(
+            `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
+             ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
+            [userId, desc || null],
+          );
+        }
         
         // 获取新创建的用户（不包含密码）
         const [newUsers] = await pool.query(
@@ -23429,8 +19423,12 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       
       try {
         const [users] = await pool.query(
-          'SELECT id, username, name, email, role, department, title, research_field, phone, status, last_login, created_at, updated_at FROM `User` WHERE id = ?',
-          [userId]
+          `SELECT u.id, u.username, u.name, u.email, u.role, u.department, u.title,
+                  ep.expertise_description AS research_field, u.phone, u.status, u.last_login, u.created_at, u.updated_at
+           FROM \`User\` u
+           LEFT JOIN \`ExpertProfile\` ep ON ep.id = u.id
+           WHERE u.id = ?`,
+          [userId],
         );
         
         if (users.length === 0) {
@@ -23455,10 +19453,9 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           additionalInfo.project_count = projects[0]?.project_count || 0;
           
         } else if (userData.role === 'reviewer') {
-          // 获取用户的评审记录
           const [reviews] = await pool.query(
-            'SELECT COUNT(*) as review_count FROM `ProjectReview` WHERE reviewer_id = ?',
-            [userId]
+            `SELECT COUNT(*) as review_count FROM \`AuditLog\` WHERE user_id = ? AND action = 'expert_project_review'`,
+            [userId],
           );
           additionalInfo.review_count = reviews[0]?.review_count || 0;
         }
@@ -23549,46 +19546,55 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const updateFields = [];
         const updateValues = [];
         
-        // 允许更新的字段
-        const allowedFields = [
-          'name', 'email', 'role', 'department', 'title', 
-          'research_field', 'phone', 'status'
-        ];
-        
-        // 如果是管理员，允许更新所有字段（除了密码）
-        if (checkPermission(adminUser.role, 'admin')) {
-          allowedFields.push('password');
+        const userCols = ['name', 'email', 'role', 'department', 'title', 'phone', 'status'];
+        if (checkPermission(adminUser.role, 'admin') && body.password) {
+          const bcrypt = require('bcryptjs');
+          updateFields.push('password = ?');
+          updateValues.push(await bcrypt.hash(body.password, 10));
         }
-        
-        allowedFields.forEach(field => {
+        userCols.forEach((field) => {
           if (body[field] !== undefined && body[field] !== null) {
             updateFields.push(`${field} = ?`);
             updateValues.push(body[field]);
           }
         });
-        
-        // 如果没有更新数据
-        if (updateFields.length === 0) {
+
+        if (updateFields.length === 0 && body.expertise_description === undefined && body.research_field === undefined) {
           sendResponse(res, 400, {
             success: false,
             error: '没有提供更新数据'
           });
           return;
         }
-        
-        updateValues.push(userId);
-        
-        const updateSql = `UPDATE \`User\` SET ${updateFields.join(', ')}, updated_at = NOW() WHERE id = ?`;
-        
-        console.log('📝 执行更新用户SQL:', updateSql);
-        console.log('📝 参数:', updateValues);
-        
-        await pool.query(updateSql, updateValues);
-        
-        // 获取更新后的用户信息
+
+        if (updateFields.length) {
+          updateValues.push(userId);
+          const updateSql = `UPDATE \`User\` SET ${updateFields.join(', ')}, updated_at = NOW() WHERE id = ?`;
+          console.log('📝 执行更新用户SQL:', updateSql);
+          console.log('📝 参数:', updateValues);
+          await pool.query(updateSql, updateValues);
+        }
+
+        const expertDesc = body.expertise_description !== undefined ? body.expertise_description : body.research_field;
+        if (expertDesc !== undefined || body.role === 'reviewer') {
+          const [ur] = await pool.query('SELECT role FROM `User` WHERE id = ?', [userId]);
+          const effRole = body.role !== undefined ? body.role : ur[0]?.role;
+          if (effRole === 'reviewer') {
+            await pool.query(
+              `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
+               ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
+              [userId, expertDesc != null ? expertDesc : null],
+            );
+          }
+        }
+
         const [updatedUsers] = await pool.query(
-          'SELECT id, username, name, email, role, department, title, research_field, phone, status, updated_at FROM `User` WHERE id = ?',
-          [userId]
+          `SELECT u.id, u.username, u.name, u.email, u.role, u.department, u.title,
+                  ep.expertise_description AS research_field, u.phone, u.status, u.updated_at
+           FROM \`User\` u
+           LEFT JOIN \`ExpertProfile\` ep ON ep.id = u.id
+           WHERE u.id = ?`,
+          [userId],
         );
         
         console.log('✅ 更新用户信息成功');
@@ -23689,7 +19695,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         
         // 检查是否有评审记录
         const [reviews] = await pool.query(
-          'SELECT COUNT(*) as count FROM `ProjectReview` WHERE reviewer_id = ?',
+          'SELECT COUNT(*) as count FROM `AuditLog` WHERE user_id = ? AND action = \'expert_project_review\'',
           [userId]
         );
         
@@ -24020,19 +20026,27 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           return;
         }
         
-        // 获取用户的评审记录
-        const [reviews] = await pool.query(`
+        const [reviews] = await pool.query(
+          `
           SELECT 
-            pr.*,
+            al.id,
+            al.user_id,
+            al.action,
+            al.table_name,
+            al.record_id,
+            al.new_values,
+            al.created_at,
             p.title as project_title,
             p.project_code,
             u.name as applicant_name
-          FROM \`ProjectReview\` pr
-          LEFT JOIN \`Project\` p ON pr.project_id = p.id
+          FROM \`AuditLog\` al
+          LEFT JOIN \`Project\` p ON al.table_name = 'Project' AND al.record_id = p.id
           LEFT JOIN \`User\` u ON p.applicant_id = u.id
-          WHERE pr.reviewer_id = ?
-          ORDER BY pr.review_date DESC, pr.created_at DESC
-        `, [userId]);
+          WHERE al.user_id = ? AND al.action = 'expert_project_review'
+          ORDER BY al.created_at DESC
+        `,
+          [userId],
+        );
         
         console.log(`✅ 获取用户评审记录成功，共 ${reviews.length} 条记录`);
         
@@ -24146,13 +20160,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       JSON.stringify({ type: 'expert_review', updated_at: new Date().toISOString(), ...payload });
     const recommendationToAssignmentStatus = (recommendation) => {
       if (recommendation === 'reject') return 'declined';
-      if (
-        recommendation === 'approve' ||
-        recommendation === 'approve_with_revision' ||
-        recommendation === 'resubmit'
-      ) {
-        return 'accepted';
-      }
+      if (recommendation === 'approve') return 'accepted';
       return 'reviewing';
     };
     const assignmentStatusToRecommendation = (status, fallback = '') => {
@@ -24175,7 +20183,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           INNER JOIN \`Project\` p ON ea.project_id = p.id
           WHERE ea.expert_id = ?
             AND ea.status = 'reviewing'
-            AND p.status IN ('under_review', 'batch_review')
+            AND p.status = 'under_review'
         `, [user.id]);
         const [completedCountResult] = await pool.query(`
           SELECT COUNT(*) as count
@@ -24253,7 +20261,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
                   FROM \`ProjectResearchDomain\` prd2
                   INNER JOIN \`ResearchDomain\` rd2 ON prd2.research_domain_id = rd2.id
                   WHERE prd2.project_id = p.id) as research_field,
-                 COALESCE(p.approved_budget, 0) as budget_total,
+                 (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) as budget_total,
                  p.submit_date,
                  u.name as applicant_name, u.department as applicant_department, ea.assigned_at, ea.deadline as review_deadline,
                  CASE WHEN ea.deadline <= DATE_ADD(NOW(), INTERVAL 3 DAY) THEN 'urgent'
@@ -24264,7 +20272,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           LEFT JOIN \`User\` u ON p.applicant_id = u.id
           WHERE ea.expert_id = ?
             AND ea.status = 'reviewing'
-            AND p.status IN ('under_review', 'batch_review')
+            AND p.status = 'under_review'
           ORDER BY ea.deadline ASC, ea.assigned_at ASC
           LIMIT ?
         `, [user.id, limit]);
@@ -24363,7 +20371,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
             p.title,
             p.abstract,
             p.status,
-            COALESCE(p.approved_budget, 0) as budget_total,
+            (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) as budget_total,
             CASE
               WHEN p.start_date IS NOT NULL AND p.end_date IS NOT NULL
               THEN TIMESTAMPDIFF(MONTH, p.start_date, p.end_date)
@@ -24475,14 +20483,13 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const [distribution] = await pool.query(`
           SELECT CASE WHEN ea.status = 'accepted' THEN '已通过'
                       WHEN ea.status = 'declined' THEN '未通过'
-                      WHEN ea.status = 'reviewing' AND p.status IN ('under_review', 'batch_review') THEN '待处理'
+                      WHEN ea.status = 'reviewing' AND p.status = 'under_review' THEN '待处理'
                       WHEN ea.status = 'reviewing' THEN '其他'
-                      WHEN ea.status = 'expired' THEN '其他'
                       ELSE '其他' END as score_range,
                  COUNT(*) as count
           FROM \`ExpertAssignment\` ea
           INNER JOIN \`Project\` p ON ea.project_id = p.id
-          WHERE ea.expert_id = ? AND ea.status IN ('reviewing', 'accepted', 'declined', 'expired')
+          WHERE ea.expert_id = ? AND ea.status IN ('reviewing', 'accepted', 'declined')
           GROUP BY score_range
         `, [user.id]);
         const allCategories = [
@@ -24596,7 +20603,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const [pendingResult] = await pool.query(`
           SELECT COUNT(*) as count FROM \`ExpertAssignment\` ea
           INNER JOIN \`Project\` p ON ea.project_id = p.id
-          WHERE ea.expert_id = ? AND ea.status = 'reviewing' AND p.status IN ('under_review','batch_review')
+          WHERE ea.expert_id = ? AND ea.status = 'reviewing' AND p.status = 'under_review'
         `, [user.id]);
         const [completedResult] = await pool.query(`
           SELECT COUNT(*) as count FROM \`ExpertAssignment\`
@@ -24647,7 +20654,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           return;
         }
         const [projectResult] = await pool.query(`
-          SELECT p.id, p.project_code, p.title,
+          SELECT p.id, p.project_code, p.title, p.status, p.keywords,
                  (SELECT GROUP_CONCAT(rd2.name ORDER BY rd2.name SEPARATOR ', ')
                   FROM \`ProjectResearchDomain\` prd2
                   INNER JOIN \`ResearchDomain\` rd2 ON prd2.research_domain_id = rd2.id
@@ -24657,7 +20664,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
                  p.implementation_plan as objectives,
                  p.detailed_introduction_part2 as methodology,
                  p.detailed_introduction_part3 as expected_outcomes,
-                 COALESCE(p.approved_budget, 0) as budget_total,
+                 (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) as budget_total,
                  CASE WHEN p.start_date IS NOT NULL AND p.end_date IS NOT NULL
                       THEN TIMESTAMPDIFF(MONTH, p.start_date, p.end_date)
                       ELSE NULL END as duration_months,
@@ -24766,6 +20773,10 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           sendResponse(res, 400, { success: false, error: '项目和评审意见不能为空' });
           return;
         }
+        if (recommendation !== 'approve' && recommendation !== 'reject') {
+          sendResponse(res, 400, { success: false, error: '评审结论仅支持「通过」或「不通过」' });
+          return;
+        }
         const [projectResult] = await pool.query(`
           SELECT status, title, applicant_id FROM \`Project\` WHERE id = ?
         `, [project_id]);
@@ -24790,7 +20801,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           suggestions: body.suggestions || '',
           strengths: body.strengths || '',
           weaknesses: body.weaknesses || '',
-          is_confidential: !!body.is_confidential,
+          is_confidential: false,
           submitted: true,
         });
         const nextStatus = recommendationToAssignmentStatus(recommendation);
@@ -24839,13 +20850,18 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           sendResponse(res, 400, { success: false, error: '该评审任务已结束，无法保存草稿' });
           return;
         }
+        const draftRec = body.recommendation || '';
+        if (draftRec && draftRec !== 'approve' && draftRec !== 'reject') {
+          sendResponse(res, 400, { success: false, error: '评审结论仅支持「通过」或「不通过」' });
+          return;
+        }
         const reviewComment = buildAssignmentReviewComment({
           recommendation: body.recommendation || '',
           comments: body.comments || '',
           suggestions: body.suggestions || '',
           strengths: body.strengths || '',
           weaknesses: body.weaknesses || '',
-          is_confidential: !!body.is_confidential,
+          is_confidential: false,
           submitted: false,
         });
         await pool.query(`

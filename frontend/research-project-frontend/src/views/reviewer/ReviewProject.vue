@@ -152,15 +152,6 @@
                 <el-radio label="approve" class="recommendation-item approve">
                   <span class="recommendation-label">通过</span>
                 </el-radio>
-                <el-radio
-                  label="approve_with_revision"
-                  class="recommendation-item approve-with-revision"
-                >
-                  <span class="recommendation-label">修改后通过</span>
-                </el-radio>
-                <el-radio label="resubmit" class="recommendation-item resubmit">
-                  <span class="recommendation-label">重新提交</span>
-                </el-radio>
                 <el-radio label="reject" class="recommendation-item reject">
                   <span class="recommendation-label">不通过</span>
                 </el-radio>
@@ -188,17 +179,6 @@
                 maxlength="1000"
                 show-word-limit
               />
-            </el-form-item>
-
-            <el-form-item label="保密设置" prop="is_confidential">
-              <el-switch
-                v-model="reviewForm.is_confidential"
-                active-text="对申请人保密"
-                inactive-text="向申请人公开"
-                :active-value="true"
-                :inactive-value="false"
-              />
-              <span class="confidential-tip">（选择保密后，评审意见不会向申请人显示）</span>
             </el-form-item>
           </div>
         </el-form>
@@ -261,7 +241,6 @@ const reviewForm = ref({
   recommendation: '',
   comments: '',
   suggestions: '',
-  is_confidential: false,
 })
 
 /** 与 ExpertAssignment.status 一致：accepted / declined 表示本轮评审已提交 */
@@ -275,7 +254,6 @@ const assignmentStatusLabel = (status: string) => {
     reviewing: '评审中',
     accepted: '已提交',
     declined: '已拒绝',
-    expired: '已过期',
   }
   return map[status] || status
 }
@@ -285,7 +263,6 @@ const assignmentStatusTag = (status: string) => {
     reviewing: 'warning',
     accepted: 'success',
     declined: 'danger',
-    expired: 'info',
   }
   return map[status] || 'info'
 }
@@ -318,13 +295,14 @@ const loadProjectData = async () => {
 
       if (existingReview.value) {
         const er = existingReview.value
+        let rec = er.recommendation || ''
+        if (rec === 'approve_with_revision' || rec === 'resubmit') rec = ''
         reviewForm.value = {
           strengths: er.strengths || '',
           weaknesses: er.weaknesses || '',
-          recommendation: er.recommendation || '',
+          recommendation: rec,
           comments: er.comments || '',
           suggestions: er.suggestions || '',
-          is_confidential: !!er.is_confidential,
         }
       }
     } else {
@@ -346,6 +324,7 @@ const saveDraft = async () => {
     await request.post('/api/reviewer/save-review-draft', {
       project_id: projectData.value.id,
       ...reviewForm.value,
+      is_confidential: false,
     })
     ElMessage.success('草稿保存成功')
   } catch (error) {
@@ -376,6 +355,7 @@ const submitReview = async () => {
       await request.post('/api/reviewer/submit-review', {
         project_id: projectData.value.id,
         ...reviewForm.value,
+        is_confidential: false,
       })
 
       ElMessage.success('评审提交成功')
@@ -693,14 +673,6 @@ onMounted(() => {
   color: #52c41a;
 }
 
-.recommendation-item.approve-with-revision :deep(.el-radio__label) {
-  color: #faad14;
-}
-
-.recommendation-item.resubmit :deep(.el-radio__label) {
-  color: #b31b1b;
-}
-
 .recommendation-item.reject :deep(.el-radio__label) {
   color: #ff4d4f;
 }
@@ -708,16 +680,6 @@ onMounted(() => {
 /* 选中状态的颜色 */
 .recommendation-item.approve :deep(.el-radio__input.is-checked + .el-radio__label) {
   color: #52c41a;
-  font-weight: 600;
-}
-
-.recommendation-item.approve-with-revision :deep(.el-radio__input.is-checked + .el-radio__label) {
-  color: #faad14;
-  font-weight: 600;
-}
-
-.recommendation-item.resubmit :deep(.el-radio__input.is-checked + .el-radio__label) {
-  color: #b31b1b;
   font-weight: 600;
 }
 
@@ -742,12 +704,6 @@ onMounted(() => {
     padding: 6px 12px;
     font-size: 13px;
   }
-}
-
-.confidential-tip {
-  font-size: 12px;
-  color: #909399;
-  margin-left: 12px;
 }
 
 /* 其他专家评审 */
