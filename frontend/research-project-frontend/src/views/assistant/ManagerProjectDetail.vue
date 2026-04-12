@@ -1,6 +1,6 @@
-<!-- src/views/reviewer/ReviewerProjectDetail.vue -->
+<!-- src/views/assistant/ManagerProjectDetail.vue -->
 <template>
-  <div class="reviewer-project-detail">
+  <div class="manager-project-detail">
     <!-- 页面标题 -->
     <div class="page-header">
       <div class="header-left">
@@ -18,12 +18,19 @@
         <div v-if="loading" class="loading-indicator">加载中...</div>
       </div>
       <div class="header-actions" v-if="project">
-        <button
-          v-if="canStartReview"
-          class="action-btn primary"
-          @click="continueReview"
+        <button 
+          v-if="canClaimProject"
+          class="action-btn primary" 
+          @click="claimProject"
         >
-          开始评审
+          领取项目
+        </button>
+        <button 
+          v-if="canAssignReviewers"
+          class="action-btn primary" 
+          @click="assignReviewers"
+        >
+          分配专家
         </button>
         <button class="action-btn secondary" @click="exportProject">📄 导出</button>
       </div>
@@ -229,6 +236,34 @@
         </div>
       </div>
 
+      <!-- 项目进展 -->
+      <div v-if="activeTab === 'progress'" class="tab-panel">
+        <div class="section">
+          <h3>项目进度</h3>
+          <div class="progress-container">
+            <div class="progress-bar-large">
+              <div
+                class="progress-fill-large"
+                :style="{ width: getProgressWidth(project.status) + '%' }"
+                :class="getProgressClass(project.status)"
+              ></div>
+            </div>
+            <div class="progress-text-large">
+              {{ getProgressText(project.status) }}
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>项目状态说明</h3>
+          <div class="content-box">
+            <p><strong>当前状态：</strong>{{ getStatusDescription(project.status) }}</p>
+            <p v-if="project.manager_name"><strong>项目经理：</strong>{{ project.manager_name }}</p>
+            <p v-if="project.review_count > 0"><strong>评审专家数：</strong>{{ project.review_count }} 人</p>
+          </div>
+        </div>
+      </div>
+
       <!-- 图片展示 -->
       <div v-if="activeTab === 'images'" class="tab-panel">
         <div class="section">
@@ -286,15 +321,13 @@
         </div>
       </div>
 
-      <!-- 评审意见 -->
+      <!-- 评审意见（项目经理特有） -->
       <div v-if="activeTab === 'reviews'" class="tab-panel">
         <div class="section">
           <h3>评审专家意见</h3>
           <div v-if="reviewFeedback.length === 0" class="empty-state">
             <p>暂无评审意见</p>
-            <p class="hint" v-if="project && ['submitted', 'under_review'].includes(project.status)">
-              项目正在评审中，评审意见将在专家提交后显示
-            </p>
+            <p v-if="canAssignReviewers" class="hint">您可以分配评审专家来获取评审意见</p>
           </div>
           <div v-else class="reviews-list">
             <div v-for="(review, index) in reviewFeedback" :key="index" class="review-card-modern">
@@ -339,34 +372,6 @@
           </div>
         </div>
       </div>
-
-      <!-- 项目进展 -->
-      <div v-if="activeTab === 'progress'" class="tab-panel">
-        <div class="section">
-          <h3>项目进度</h3>
-          <div class="progress-container">
-            <div class="progress-bar-large">
-              <div
-                class="progress-fill-large"
-                :style="{ width: getProgressWidth(project.status) + '%' }"
-                :class="getProgressClass(project.status)"
-              ></div>
-            </div>
-            <div class="progress-text-large">
-              {{ getProgressText(project.status) }}
-            </div>
-          </div>
-        </div>
-
-        <div class="section">
-          <h3>项目状态说明</h3>
-          <div class="content-box">
-            <p><strong>当前状态：</strong>{{ getStatusDescription(project.status) }}</p>
-            <p v-if="project.manager_name"><strong>项目经理：</strong>{{ project.manager_name }}</p>
-            <p v-if="project.applicant_name"><strong>申请人：</strong>{{ project.applicant_name }}</p>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- 底部操作栏 -->
@@ -375,12 +380,19 @@
         <button class="action-btn secondary" @click="goBack">返回列表</button>
       </div>
       <div class="action-right">
-        <button
-          v-if="canStartReview"
-          class="action-btn primary"
-          @click="continueReview"
+        <button 
+          v-if="canClaimProject"
+          class="action-btn primary" 
+          @click="claimProject"
         >
-          开始评审
+          领取项目
+        </button>
+        <button 
+          v-if="canAssignReviewers"
+          class="action-btn primary" 
+          @click="assignReviewers"
+        >
+          分配评审专家
         </button>
       </div>
     </div>
@@ -388,18 +400,46 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
-import request from '@/utils/request'
+import axios from 'axios'
 
 const router = useRouter()
 const route = useRoute()
 
+// API配置
+const API_BASE_URL = 'http://localhost:3002/api'
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 30000,
+})
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+api.interceptors.response.use(
+  (response) => response.data,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.clear()
+      router.push('/login')
+    }
+    return Promise.reject(error)
+  }
+)
+
 // 状态管理
 const loading = ref(false)
 const errorMessage = ref('')
+const currentUser = ref<any>(null)
 
 // 项目数据
 const project = ref<any>(null)
@@ -407,7 +447,6 @@ const teamMembers = ref<any[]>([])
 const budgetItems = ref<any[]>([])
 const attachments = ref<any[]>([])
 const reviewFeedback = ref<any[]>([])
-const myReview = ref<any>(null)
 
 // UI状态
 const activeTab = ref('basicInfo')
@@ -438,30 +477,246 @@ const totalBudget = computed(() => {
 })
 
 const images = computed(() => {
-  return attachments.value.filter((a: any) =>
+  return attachments.value.filter((a: any) => 
     a.type === 'image' || (a.mime_type && a.mime_type.startsWith('image/'))
   )
 })
 
 const documents = computed(() => {
-  return attachments.value.filter((a: any) =>
+  return attachments.value.filter((a: any) => 
     a.type !== 'image' && !(a.mime_type && a.mime_type.startsWith('image/'))
   )
 })
 
-const canStartReview = computed(() => {
-  if (!project.value || !myReview.value) return false
-  return myReview.value.status === 'draft' && project.value.status === 'under_review'
+const canClaimProject = computed(() => {
+  if (!project.value || !currentUser.value) return false
+  // 项目状态为已提交且没有项目经理，且当前用户是项目经理或管理员
+  const isManagerOrAdmin = ['project_manager', 'admin'].includes(currentUser.value.role)
+  // 严格检查：没有manager_id或者manager_id为空字符串
+  const hasNoManager = !project.value.manager_id || project.value.manager_id === ''
+  return project.value.status === 'submitted' && hasNoManager && isManagerOrAdmin
 })
 
-// ==================== 辅助方法 ====================
+const canAssignReviewers = computed(() => {
+  if (!project.value || !currentUser.value) return false
+  // 必须是当前项目的项目经理才能分配专家
+  const isManager = project.value.manager_id === currentUser.value.id
+  const canAssign = ['submitted', 'under_review'].includes(project.value.status)
+  // 只有项目经理可以分配专家，待领取项目（无manager_id）不显示分配专家按钮
+  return isManager && canAssign
+})
+
+const hasReviewFeedback = computed(() => {
+  return reviewFeedback.value.length > 0
+})
+
+const reviewStats = computed(() => {
+  const total = reviewFeedback.value.length
+  if (total === 0) return { total: 0, avgScore: 0, approveCount: 0, revisionCount: 0, rejectCount: 0 }
+  
+  const scores = reviewFeedback.value.filter((r: any) => r.score).map((r: any) => r.score)
+  const avgScore = scores.length > 0 ? scores.reduce((a: number, b: number) => a + b, 0) / scores.length : 0
+  
+  const approveCount = reviewFeedback.value.filter((r: any) => r.recommendation === 'approve').length
+  const revisionCount = reviewFeedback.value.filter((r: any) => r.recommendation === 'revision').length
+  const rejectCount = reviewFeedback.value.filter((r: any) => r.recommendation === 'reject').length
+  
+  return { total, avgScore, approveCount, revisionCount, rejectCount }
+})
+
+// 方法
+const loadCurrentUser = async () => {
+  try {
+    const userInfoStr = localStorage.getItem('userInfo')
+    if (userInfoStr) {
+      currentUser.value = JSON.parse(userInfoStr)
+    }
+  } catch (error) {
+    console.error('加载用户信息失败:', error)
+  }
+}
+
+const loadProjectDetail = async () => {
+  const projectId = route.params.id as string
+  if (!projectId) {
+    errorMessage.value = '项目ID无效'
+    return
+  }
+
+  loading.value = true
+  errorMessage.value = ''
+
+  try {
+    const response = await api.get(`/projects/${projectId}`)
+    if (response.success && response.data) {
+      project.value = response.data
+      teamMembers.value = response.data.team_members || []
+      budgetItems.value = response.data.budget_items || []
+      attachments.value = response.data.attachments || []
+      
+      // 加载评审意见
+      await loadReviewFeedback(projectId)
+    } else {
+      errorMessage.value = response.error || '加载项目详情失败'
+    }
+  } catch (error: any) {
+    console.error('加载项目详情失败:', error)
+    errorMessage.value = error.message || '网络错误'
+  } finally {
+    loading.value = false
+  }
+}
+
+const loadReviewFeedback = async (projectId: string) => {
+  try {
+    const response = await api.get(`/assistant/projects/${projectId}/reviews`)
+    if (response.success) {
+      reviewFeedback.value = response.data || []
+    }
+  } catch (error) {
+    console.error('加载评审意见失败:', error)
+    reviewFeedback.value = []
+  }
+}
+
+const goBack = () => {
+  // 根据来源参数返回正确的页面
+  const from = route.query.from as string
+  if (from === 'my') {
+    router.push('/assistant/projects/my')
+  } else if (from === 'unassigned') {
+    router.push('/assistant/projects/unassigned')
+  } else if (from === 'terminate') {
+    // 从终止项目页面跳转过来的
+    router.push('/assistant/terminate-projects')
+  } else {
+    // 默认返回项目管理页面
+    router.push('/assistant/projects')
+  }
+}
+
+const claimProject = async () => {
+  if (!project.value) return
+  
+  try {
+    await ElMessageBox.confirm(
+      `确定要领取项目 "${project.value.title}" 吗？`,
+      '确认领取',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+    
+    const response = await api.post('/assistant/projects/claim', {
+      projectId: project.value.id,
+    })
+    
+    if (response.success) {
+      ElMessage.success('项目领取成功')
+      await loadProjectDetail()
+    } else {
+      ElMessage.error(response.error || '领取失败')
+    }
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      console.error('领取项目失败:', error)
+      ElMessage.error('领取失败')
+    }
+  }
+}
+
+const assignReviewers = () => {
+  if (project.value) {
+    router.push(`/assistant/projects/${project.value.id}/assign-reviewers`)
+  }
+}
+
+const exportProject = () => {
+  ElMessage.info('导出功能开发中...')
+}
+
+const downloadAttachment = async (attachment: any) => {
+  try {
+    ElMessage.info('正在下载...')
+    const token = localStorage.getItem('token')
+    const response = await fetch(
+      `http://localhost:3002/api/projects/attachments/${attachment.id}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    
+    if (!response.ok) throw new Error('下载失败')
+    
+    const blob = await response.blob()
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = attachment.file_name
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('下载成功')
+  } catch (error: any) {
+    console.error('下载失败:', error)
+    ElMessage.error(error.message || '下载失败')
+  }
+}
+
+// 格式化方法
+const formatDate = (dateString?: string) => {
+  if (!dateString) return '未设置'
+  try {
+    const date = new Date(dateString)
+    return date.toLocaleDateString('zh-CN')
+  } catch {
+    return dateString
+  }
+}
+
+const formatDateTime = (dateString?: string) => {
+  if (!dateString) return ''
+  try {
+    const date = new Date(dateString)
+    return date.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return dateString
+  }
+}
+
+const formatAmount = (amount: number) => {
+  return new Intl.NumberFormat('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount)
+}
+
+const formatFileSize = (bytes?: number) => {
+  if (!bytes) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+const getFileIcon = (mimeType?: string) => {
+  if (!mimeType) return '📎'
+  if (mimeType.startsWith('image/')) return '🖼️'
+  if (mimeType === 'application/pdf') return '📄'
+  if (mimeType.includes('word')) return '📝'
+  if (mimeType.includes('zip')) return '🗜️'
+  return '📎'
+}
 
 const getStatusText = (status?: string) => {
   const statusMap: Record<string, string> = {
     draft: '草稿',
     submitted: '已提交',
     under_review: '专家评审中',
-    revision: '修改后重提',
+    revision: '需修改',
     batch_review: '集中评审中',
     approved: '已批准',
     incubating: '孵化中',
@@ -469,7 +724,7 @@ const getStatusText = (status?: string) => {
     completed: '已完成',
     terminated: '已终止',
   }
-  return status ? statusMap[status] || status : '未知'
+  return statusMap[status || ''] || status
 }
 
 const getStatusClass = (status?: string) => {
@@ -477,7 +732,7 @@ const getStatusClass = (status?: string) => {
     draft: 'draft',
     submitted: 'submitted',
     under_review: 'reviewing',
-    revision: 'reviewing',
+    revision: 'revision',
     batch_review: 'reviewing',
     approved: 'approved',
     incubating: 'ongoing',
@@ -486,16 +741,6 @@ const getStatusClass = (status?: string) => {
     terminated: 'rejected',
   }
   return classMap[status || ''] || ''
-}
-
-const getReviewStatusText = (status?: string) => {
-  const map: Record<string, string> = {
-    accepted: '通过',
-    declined: '拒绝',
-    reviewing: '评审中',
-    draft: '待评审',
-  }
-  return map[status || ''] || status || '未知'
 }
 
 const getStatusDescription = (status?: string) => {
@@ -524,91 +769,51 @@ const getTechMaturityText = (maturity?: string) => {
   return map[maturity || ''] || maturity || '未指定'
 }
 
-// 映射表定义
-const achievementTransformMap: Record<string, string> = {
-  'patent': '专利',
-  'paper': '论文',
-  'software_copyright': '软件著作权',
-  'technical_standard': '技术标准',
-  'prototype': '原型产品',
-  'pilot': '中试产品',
-  'industrialization': '产业化成果',
-  'other': '其他',
-  'tech_transfer': '技术转让',
-  'tech_license': '技术许可',
-  'equity_investment': '作价投资',
-  'joint_dev': '联合开发',
-}
-
-const pocStageMap: Record<string, string> = {
-  'principle_validation': '原理验证',
-  'prototype_development': '样机开发',
-  'pilot_test': '中试',
-  'market_validation': '市场验证',
-  'multi_stage': '多阶段组合',
-  'multi_stage_combo': '多阶段组合',
-  'creative_verify': '创意性验证',
-  'feasibility_verify': '可行性验证',
-  'commercial_verify': '商业化验证',
-}
-
-// 处理所属领域（带其他说明替换）
-const formatDomainsWithOther = (domains: any[], otherText?: string): string[] => {
-  if (!domains || !Array.isArray(domains)) return []
-  
-  return domains.map((d: any) => {
-    const name = d.name || d
-    if ((name === '其他' || name === 'other') && otherText) {
-      return otherText
-    }
-    return name
-  })
-}
-
-// 处理预期成果转化（带其他说明替换）
-const formatAchievementTransformWithOther = (transforms: any, otherText?: string): string[] => {
-  if (!transforms) return []
-  
-  let arr = transforms
-  if (typeof transforms === 'string') {
-    try {
-      arr = JSON.parse(transforms)
-    } catch {
-      arr = transforms.split(',').map((s: string) => s.trim()).filter(Boolean)
-    }
+const getMemberRoleText = (role?: string) => {
+  const roleMap: Record<string, string> = {
+    principal: '项目负责人',
+    contact: '联系人',
+    other: '其他成员',
   }
-  
-  if (!Array.isArray(arr) || arr.length === 0) return []
-  
-  return arr.map((t: string) => {
-    if (t === 'other' && otherText) {
-      return otherText
-    }
-    return achievementTransformMap[t] || t
-  })
+  return roleMap[role || ''] || role || '成员'
 }
 
-// 处理概念验证阶段需求（带多阶段说明替换）
-const formatPocStageWithNote = (stages: any, note?: string): string[] => {
-  if (!stages) return []
-  
-  let arr = stages
-  if (typeof stages === 'string') {
-    try {
-      arr = JSON.parse(stages)
-    } catch {
-      arr = stages.split(',').map((s: string) => s.trim()).filter(Boolean)
-    }
+const getMemberRoleClass = (role?: string) => {
+  const classMap: Record<string, string> = {
+    principal: 'principal',
+    contact: 'contact',
+    other: 'other',
   }
-  
-  if (!Array.isArray(arr) || arr.length === 0) return []
-  
-  return arr.map((s: string) => {
-    if ((s === 'multi_stage' || s === 'multi_stage_combo') && note) {
-      return note
-    }
-    return pocStageMap[s] || s
-  })
+  return classMap[role || ''] || ''
+}
+
+const getRecommendationText = (recommendation?: string) => {
+  const map: Record<string, string> = {
+    approve: '推荐通过',
+    revision: '建议修改',
+    reject: '建议拒绝',
+  }
+  return map[recommendation || ''] || recommendation
+}
+
+const getReviewStatusText = (status?: string) => {
+  const map: Record<string, string> = {
+    accepted: '通过',
+    declined: '拒绝',
+    reviewing: '评审中',
+    draft: '待评审',
+  }
+  return map[status || ''] || status || '未知'
+}
+
+const getReviewStatusClass = (status?: string) => {
+  const map: Record<string, string> = {
+    accepted: 'accepted',
+    declined: 'declined',
+    reviewing: 'reviewing',
+    draft: 'pending',
+  }
+  return map[status || ''] || 'pending'
 }
 
 const getProgressWidth = (status: string) => {
@@ -658,228 +863,94 @@ const getProgressText = (status: string) => {
   return textMap[status] || ''
 }
 
-const getMemberRoleText = (role?: string) => {
-  const roleMap: Record<string, string> = {
-    principal: '项目负责人',
-    contact: '联系人',
-    other: '其他成员',
-  }
-  return roleMap[role || ''] || role || '成员'
-}
-
-const getMemberRoleClass = (role?: string) => {
-  const classMap: Record<string, string> = {
-    principal: 'principal',
-    contact: 'contact',
-    other: 'other',
-  }
-  return classMap[role || ''] || ''
-}
-
-const getFileIcon = (mimeType?: string) => {
-  if (!mimeType) return '📎'
-  if (mimeType.startsWith('image/')) return '🖼️'
-  if (mimeType === 'application/pdf') return '📄'
-  if (mimeType.includes('word')) return '📝'
-  if (mimeType.includes('zip')) return '🗜️'
-  return '📎'
-}
-
-const formatAmount = (amount: number | string | undefined) => {
-  const num = parseFloat(String(amount || 0))
-  if (isNaN(num)) return '0.00'
-  return new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(num)
-}
-
-const formatDate = (dateString?: string) => {
-  if (!dateString) return '未设置'
-  try {
-    const date = new Date(dateString)
-    return date.toLocaleDateString('zh-CN')
-  } catch {
-    return dateString
-  }
-}
-
-const formatDateTime = (dateString?: string) => {
-  if (!dateString) return ''
-  try {
-    const date = new Date(dateString)
-    return date.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return dateString
-  }
-}
-
-const formatFileSize = (bytes?: number) => {
-  if (!bytes) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
-// ==================== 数据加载方法 ====================
-
-const loadProjectDetail = async () => {
-  const projectId = route.params.id as string
-  if (!projectId) {
-    errorMessage.value = '项目ID无效'
-    return
-  }
-
-  loading.value = true
-  errorMessage.value = ''
-
-  try {
-    // 使用统一的项目详情API
-    const response = await request.get(`/api/projects/${projectId}`)
-
-    if (response.success && response.data) {
-      project.value = response.data
-      teamMembers.value = response.data.team_members || []
-      budgetItems.value = response.data.budget_items || []
-      attachments.value = response.data.attachments || []
-      
-      // 加载评审意见
-      await loadReviewFeedback(projectId)
-      
-      // 检查当前专家的评审状态
-      await loadMyReviewStatus(projectId)
-
-      console.log('已加载项目详情')
-    } else {
-      errorMessage.value = (response as any).error || '加载项目详情失败'
+const formatDomainsWithOther = (domains: any[], otherText?: string): string[] => {
+  if (!domains || !Array.isArray(domains)) return []
+  return domains.map((d: any) => {
+    const name = d.name || d
+    if ((name === '其他' || name === 'other') && otherText) {
+      return otherText
     }
-  } catch (error: any) {
-    console.error('加载项目详情失败:', error)
-    const msg =
-      error?.response?.data?.error ||
-      error?.response?.data?.message ||
-      '加载项目详情失败'
-    errorMessage.value = msg
-  } finally {
-    loading.value = false
-  }
-}
-
-const loadReviewFeedback = async (projectId: string) => {
-  try {
-    const response = await request.get(`/api/projects/${projectId}/reviews`)
-    if (response.success) {
-      reviewFeedback.value = (response.data || []).map((r: any) => ({
-        ...r,
-        review_status: r.review_status || r.status,
-        comments: r.comments || r.comment,
-        reviewer_name: r.reviewer_name || '专家',
-      }))
-    }
-  } catch (error) {
-    console.error('加载评审意见失败:', error)
-    reviewFeedback.value = []
-  }
-}
-
-const loadMyReviewStatus = async (projectId: string) => {
-  try {
-    const response = await request.get('/api/reviewer/project-for-review', {
-      params: { projectId },
-    })
-    if (response.success && response.data) {
-      const ex = response.data.existingReview
-      if (ex) {
-        const ast = ex.status as string
-        myReview.value = {
-          id: ex.id,
-          status: ast === 'reviewing' ? 'draft' : 'submitted',
-          submitted_at: ex.deadline,
-        }
-      } else {
-        myReview.value = null
-      }
-    }
-  } catch (error) {
-    console.error('加载评审状态失败:', error)
-  }
-}
-
-const downloadAttachment = async (attachment: any) => {
-  try {
-    ElMessage.info('正在下载...')
-
-    const token = localStorage.getItem('token')
-    const response = await fetch(
-      `http://localhost:3002/api/projects/attachments/${attachment.id}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      }
-    )
-
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || '下载失败')
-    }
-
-    const blob = await response.blob()
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = attachment.file_name
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
-
-    ElMessage.success('下载成功')
-  } catch (error: any) {
-    console.error('下载失败:', error)
-    ElMessage.error(error.message || '下载失败')
-  }
-}
-
-const goBack = () => {
-  const from = route.query.from as string
-  if (from === 'history') {
-    router.push('/reviewer/projects/history')
-  } else {
-    router.push('/reviewer/projects/pending')
-  }
-}
-
-const continueReview = () => {
-  router.push({
-    path: '/reviewer/review',
-    query: {
-      projectId: project.value.id,
-      projectCode: project.value.project_code,
-    },
+    return name
   })
 }
 
-const exportProject = async () => {
-  ElMessage.info('导出功能开发中...')
+const achievementTransformMap: Record<string, string> = {
+  'patent': '专利',
+  'paper': '论文',
+  'software_copyright': '软件著作权',
+  'technical_standard': '技术标准',
+  'prototype': '原型产品',
+  'pilot': '中试产品',
+  'industrialization': '产业化成果',
+  'other': '其他',
+  'tech_transfer': '技术转让',
+  'tech_license': '技术许可',
+  'equity_investment': '作价投资',
+  'joint_dev': '联合开发',
 }
 
+const formatAchievementTransformWithOther = (transforms: any, otherText?: string): string[] => {
+  if (!transforms) return []
+  let arr = transforms
+  if (typeof transforms === 'string') {
+    try {
+      arr = JSON.parse(transforms)
+    } catch {
+      arr = transforms.split(',').map((s: string) => s.trim()).filter(Boolean)
+    }
+  }
+  if (!Array.isArray(arr) || arr.length === 0) return []
+  return arr.map((t: string) => {
+    if (t === 'other' && otherText) return otherText
+    return achievementTransformMap[t] || t
+  })
+}
+
+const pocStageMap: Record<string, string> = {
+  'principle_validation': '原理验证',
+  'prototype_development': '样机开发',
+  'pilot_test': '中试',
+  'market_validation': '市场验证',
+  'multi_stage': '多阶段组合',
+  'multi_stage_combo': '多阶段组合',
+  'creative_verify': '创意性验证',
+  'feasibility_verify': '可行性验证',
+  'commercial_verify': '商业化验证',
+}
+
+const formatPocStageWithNote = (stages: any, note?: string): string[] => {
+  if (!stages) return []
+  let arr = stages
+  if (typeof stages === 'string') {
+    try {
+      arr = JSON.parse(stages)
+    } catch {
+      arr = stages.split(',').map((s: string) => s.trim()).filter(Boolean)
+    }
+  }
+  if (!Array.isArray(arr) || arr.length === 0) return []
+  return arr.map((s: string) => {
+    if ((s === 'multi_stage' || s === 'multi_stage_combo') && note) return note
+    return pocStageMap[s] || s
+  })
+}
+
+// 监听URL参数，自动切换到评审意见标签
+watch(() => route.query.tab, (tab) => {
+  if (tab === 'reviews') {
+    activeTab.value = 'reviews'
+  }
+}, { immediate: true })
+
 // 初始化
-onMounted(() => {
-  loadProjectDetail()
+onMounted(async () => {
+  await loadCurrentUser()
+  await loadProjectDetail()
 })
 </script>
 
 <style scoped>
-/* 项目详情样式 - 主题色改为人大红 #B31B1B */
-.reviewer-project-detail {
+.manager-project-detail {
   padding: 24px;
   background: #f5f7fa;
   min-height: 100vh;
@@ -901,6 +972,7 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  margin-bottom: 16px;
   padding: 10px 18px;
   border: 1px solid rgba(179, 27, 27, 0.35);
   border-radius: 8px;
@@ -908,6 +980,7 @@ onMounted(() => {
   color: #b31b1b;
   font-size: 15px;
   font-weight: 500;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -961,29 +1034,41 @@ onMounted(() => {
   background: #fff7e6;
   color: #fa8c16;
 }
+
 .status-badge.submitted {
   background: rgba(179,27,27,0.06);
   color: #b31b1b;
 }
+
 .status-badge.reviewing {
   background: #fde8e8;
   color: #b31b1b;
 }
+
 .status-badge.approved {
   background: #f6ffed;
   color: #52c41a;
 }
+
 .status-badge.ongoing {
   background: #fde8e8;
   color: #b31b1b;
 }
+
 .status-badge.completed {
   background: #f6ffed;
   color: #52c41a;
 }
+
 .status-badge.rejected {
   background: #fff2f0;
   color: #ff4d4f;
+}
+
+.loading-indicator {
+  color: #b31b1b;
+  font-size: 14px;
+  margin-top: 8px;
 }
 
 .header-actions {
@@ -1020,13 +1105,75 @@ onMounted(() => {
   background: #8b0000;
 }
 
-.action-btn.success {
-  background: #52c41a;
-  color: white;
+.action-btn.info {
+  background: #f0f5ff;
+  color: #2f54eb;
+  border: 1px solid #91caff;
 }
 
-.action-btn.success:hover {
-  background: #73d13d;
+.action-btn.info:hover {
+  background: #d6e4ff;
+}
+
+/* 错误提示 */
+.error-alert {
+  background: #fff2f0;
+  border: 1px solid #ffccc7;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+}
+
+.error-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.error-icon {
+  font-size: 18px;
+}
+
+.error-text {
+  flex: 1;
+  color: #ff4d4f;
+}
+
+.error-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: #999;
+}
+
+/* 加载状态 */
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid #b31b1b;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.loading-text {
+  color: #b31b1b;
+  font-weight: bold;
 }
 
 /* 标签导航 */
@@ -1038,12 +1185,11 @@ onMounted(() => {
   background: white;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  flex-wrap: wrap;
+  overflow-x: auto;
 }
 
 .tab-btn {
   flex: 1;
-  min-width: 80px;
   padding: 12px 16px;
   border: none;
   background: #f5f7fa;
@@ -1052,6 +1198,8 @@ onMounted(() => {
   font-size: 14px;
   cursor: pointer;
   transition: all 0.3s;
+  white-space: nowrap;
+  min-width: 80px;
 }
 
 .tab-btn:hover {
@@ -1096,49 +1244,23 @@ onMounted(() => {
   white-space: pre-wrap;
 }
 
-/* 研究领域标签 */
-.domain-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.domain-tag {
-  background: #fde8e8;
-  color: #b31b1b;
-  padding: 4px 12px;
-  border-radius: 4px;
-  font-size: 13px;
-}
-
-/* 关键词 */
+/* 标签样式 */
+.domain-tags,
+.transform-tags,
+.poc-tags,
 .keywords {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
+.domain-tag,
+.transform-tag,
+.poc-tag,
 .keyword-tag {
   background: #fde8e8;
   color: #b31b1b;
   padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 13px;
-}
-
-/* 转化形式标签 */
-.transform-tags,
-.poc-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.transform-tag,
-.poc-tag {
-  background: rgba(179,27,27,0.06);
-  color: #b31b1b;
-  padding: 4px 12px;
   border-radius: 4px;
   font-size: 13px;
 }
@@ -1194,13 +1316,67 @@ onMounted(() => {
   background: #f6ffed;
   color: #52c41a;
 }
+
 .role-badge.contact {
   background: rgba(179,27,27,0.06);
   color: #b31b1b;
 }
+
 .role-badge.other {
   background: #f5f5f5;
   color: #666;
+}
+
+/* 进度条 */
+.progress-container {
+  padding: 20px;
+  background: #fafafa;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.progress-bar-large {
+  height: 20px;
+  background: #f5f5f5;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.progress-fill-large {
+  height: 100%;
+  border-radius: 10px;
+  transition: width 0.3s;
+}
+
+.progress-fill-large.draft {
+  background: #fa8c16;
+}
+
+.progress-fill-large.submitted {
+  background: #b31b1b;
+}
+
+.progress-fill-large.reviewing {
+  background: #b31b1b;
+}
+
+.progress-fill-large.approved {
+  background: #52c41a;
+}
+
+.progress-fill-large.ongoing {
+  background: #b31b1b;
+}
+
+.progress-fill-large.completed {
+  background: #52c41a;
+}
+
+.progress-text-large {
+  font-size: 16px;
+  font-weight: 500;
+  color: #2c3e50;
 }
 
 /* 附件列表 */
@@ -1270,155 +1446,7 @@ onMounted(() => {
   background: #8b0000;
 }
 
-/* 进度条 */
-.progress-container {
-  padding: 20px;
-  background: #fafafa;
-  border-radius: 8px;
-  text-align: center;
-}
-
-.progress-bar-large {
-  height: 20px;
-  background: #f5f5f5;
-  border-radius: 10px;
-  overflow: hidden;
-  margin-bottom: 12px;
-}
-
-.progress-fill-large {
-  height: 100%;
-  border-radius: 10px;
-  transition: width 0.3s;
-}
-
-.progress-fill-large.draft {
-  background: #fa8c16;
-}
-.progress-fill-large.submitted {
-  background: #b31b1b;
-}
-.progress-fill-large.reviewing {
-  background: #b31b1b;
-}
-.progress-fill-large.approved {
-  background: #52c41a;
-}
-.progress-fill-large.ongoing {
-  background: #b31b1b;
-}
-.progress-fill-large.completed {
-  background: #52c41a;
-}
-
-.progress-text-large {
-  font-size: 16px;
-  font-weight: 500;
-  color: #2c3e50;
-}
-
-/* 底部操作栏 */
-.action-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-}
-
-.action-left,
-.action-right {
-  display: flex;
-  gap: 12px;
-}
-
-/* 空状态 */
-.empty-state {
-  text-align: center;
-  padding: 40px 20px;
-  color: #7f8c8d;
-  background: #fafafa;
-  border-radius: 8px;
-  border: 1px dashed #f0f0f0;
-}
-
-.empty-state .hint {
-  margin-top: 12px;
-  font-size: 13px;
-  color: #999;
-}
-
-/* 错误提示 */
-.error-alert {
-  background: #fff2f0;
-  border: 1px solid #ffccc7;
-  border-radius: 8px;
-  padding: 12px 16px;
-  margin-bottom: 20px;
-}
-
-.error-content {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.error-icon {
-  font-size: 18px;
-}
-.error-text {
-  flex: 1;
-  color: #ff4d4f;
-}
-.error-close {
-  background: none;
-  border: none;
-  font-size: 20px;
-  cursor: pointer;
-  color: #999;
-}
-
-/* 加载状态 */
-.loading-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 400px;
-}
-
-.loading-spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid #f3f3f3;
-  border-top: 3px solid #b31b1b;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: 16px;
-}
-
-@keyframes spin {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-.loading-text {
-  color: #666;
-  font-size: 16px;
-}
-
-.loading-indicator {
-  color: #999;
-  font-size: 14px;
-}
-
-/* 图片展示 */
+/* 图片网格 */
 .images-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -1491,9 +1519,132 @@ onMounted(() => {
   padding: 0 12px 12px;
 }
 
-.image-actions .download-btn {
-  flex: 1;
+/* 评审意见 */
+.reviews-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.review-card {
+  border: 1px solid #e8e8e8;
+  border-radius: 12px;
+  padding: 20px;
+  background: #fafafa;
+}
+
+.review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.reviewer-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.reviewer-name {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.review-date {
+  font-size: 13px;
+  color: #999;
+}
+
+.review-score {
+  font-size: 14px;
+  color: #666;
+}
+
+.review-score strong {
+  color: #b31b1b;
+  font-size: 18px;
+}
+
+.review-section {
+  margin-bottom: 16px;
+}
+
+.review-section h4 {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.review-section p {
+  margin: 0;
+  line-height: 1.6;
+  color: #2c3e50;
+}
+
+.recommendation-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.recommendation-badge.approve {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.recommendation-badge.revision {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+.recommendation-badge.reject {
+  background: #fff2f0;
+  color: #ff4d4f;
+}
+
+/* 评审统计 */
+.review-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.stat-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.stat-label {
+  color: #666;
+}
+
+.stat-value {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+/* 空状态 */
+.empty-state {
   text-align: center;
+  padding: 40px 20px;
+  color: #7f8c8d;
+  background: #fafafa;
+  border-radius: 8px;
+  border: 1px dashed #f0f0f0;
+}
+
+.empty-state .hint {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #999;
 }
 
 /* 现代评审卡片样式 */
@@ -1631,36 +1782,73 @@ onMounted(() => {
   white-space: pre-wrap;
 }
 
+/* 底部操作栏 */
+.action-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.action-left,
+.action-right {
+  display: flex;
+  gap: 12px;
+}
+
 /* 响应式 */
 @media (max-width: 768px) {
-  .reviewer-project-detail {
+  .manager-project-detail {
     padding: 16px;
   }
+
   .page-header {
     flex-direction: column;
     gap: 16px;
   }
+
   .header-left {
     flex-wrap: wrap;
   }
+
   .back-workbench-box {
     width: 100%;
     justify-content: center;
   }
+
+  .header-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .action-btn {
+    flex: 1;
+  }
+
   .tab-navigation {
     overflow-x: auto;
   }
+
   .tab-btn {
     min-width: 100px;
   }
+
   .action-bar {
     flex-direction: column;
     gap: 16px;
   }
+
   .action-left,
   .action-right {
     width: 100%;
     justify-content: center;
+  }
+
+  .review-stats {
+    grid-template-columns: 1fr;
   }
 }
 </style>

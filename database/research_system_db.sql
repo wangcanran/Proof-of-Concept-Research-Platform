@@ -25,11 +25,11 @@ CREATE TABLE IF NOT EXISTS `ResearchDomain` (
 -- 2. 用户表
 CREATE TABLE IF NOT EXISTS `User` (
     `id` VARCHAR(36) PRIMARY KEY,
-    `username` VARCHAR(50) UNIQUE NOT NULL COMMENT '用户名',
-    `password` VARCHAR(255) NOT NULL COMMENT '密码',
+    `username` VARCHAR(50) UNIQUE COMMENT '用户名',
+    `password` VARCHAR(255) COMMENT '密码',
     `name` VARCHAR(100) NOT NULL COMMENT '真实姓名',
     `email` VARCHAR(100) UNIQUE NOT NULL COMMENT '邮箱',
-    `role` ENUM('applicant', 'reviewer', 'project_manager', 'admin') NOT NULL COMMENT '系统角色',
+    `role` ENUM('applicant', 'reviewer', 'project_manager', 'admin') DEFAULT 'applicant' COMMENT '系统角色',
     `department` VARCHAR(100) COMMENT '所属部门/单位',
     `title` VARCHAR(100) COMMENT '职称/职务',
     `phone` VARCHAR(20) COMMENT '联系电话',
@@ -178,6 +178,7 @@ CREATE TABLE IF NOT EXISTS `ProjectMember` (
     `title` VARCHAR(100) COMMENT '职称/职务',
     `organization` VARCHAR(200) COMMENT '所属单位',
     `email` VARCHAR(100) NOT NULL COMMENT '邮箱',
+    `phone` VARCHAR(20) COMMENT '联系电话',
     `sort_order` INT DEFAULT 0,
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (`project_id`) REFERENCES `Project`(`id`) ON DELETE CASCADE,

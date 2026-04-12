@@ -1,6 +1,6 @@
-<!-- src/views/applicant/ProjectManagement.vue -->
+<!-- src/views/reviewer/ReviewerProjects.vue -->
 <template>
-  <div class="applicant-projects-page">
+  <div class="reviewer-projects-page">
     <!-- 页面头部 -->
     <div class="page-header">
       <div class="header-left">
@@ -8,9 +8,9 @@
           <el-icon class="back-icon"><ArrowLeft /></el-icon>
           <span class="back-text">返回工作台</span>
         </button>
-        <h1>我的项目</h1>
+        <h1>项目管理</h1>
         <div class="header-subtitle">
-          管理您的项目申报
+          管理您的评审任务和评审历史
         </div>
       </div>
     </div>
@@ -20,21 +20,21 @@
       <div class="tabs">
         <button
           class="tab-btn"
-          :class="{ active: activeTab === 'draft' }"
-          @click="switchTab('draft')"
+          :class="{ active: activeTab === 'pending' }"
+          @click="switchTab('pending')"
         >
-          <span class="tab-icon">📝</span>
-          <span class="tab-text">草稿</span>
-          <span v-if="draftCount > 0" class="tab-badge">{{ draftCount }}</span>
+          <span class="tab-icon">📋</span>
+          <span class="tab-text">待评审项目</span>
+          <span v-if="pendingCount > 0" class="tab-badge">{{ pendingCount }}</span>
         </button>
         <button
           class="tab-btn"
-          :class="{ active: activeTab === 'submitted' }"
-          @click="switchTab('submitted')"
+          :class="{ active: activeTab === 'history' }"
+          @click="switchTab('history')"
         >
-          <span class="tab-icon">📤</span>
-          <span class="tab-text">已提交</span>
-          <span v-if="submittedCount > 0" class="tab-badge">{{ submittedCount }}</span>
+          <span class="tab-icon">📁</span>
+          <span class="tab-text">评审历史</span>
+          <span v-if="historyCount > 0" class="tab-badge">{{ historyCount }}</span>
         </button>
       </div>
     </div>
@@ -45,7 +45,7 @@
         <input
           v-model="searchKeyword"
           type="text"
-          placeholder="搜索项目标题、编号..."
+          placeholder="搜索项目标题、编号、申请人..."
           @keyup.enter="handleSearch"
         />
         <button class="search-btn" @click="handleSearch">🔍</button>
@@ -63,26 +63,22 @@
       <div class="loading-text">正在加载项目数据...</div>
     </div>
 
-    <!-- 草稿项目列表 -->
-    <div v-else-if="activeTab === 'draft'" class="projects-section">
-      <div v-if="draftProjects.length === 0" class="empty-state">
-        <div class="empty-icon">📝</div>
-        <h3>暂无草稿项目</h3>
-        <p>您还没有保存任何草稿项目</p>
-        <button class="action-btn primary" @click="goToCreateProject">
-          创建新项目
-        </button>
+    <!-- 待评审项目列表 -->
+    <div v-else-if="activeTab === 'pending'" class="projects-section">
+      <div v-if="pendingProjects.length === 0" class="empty-state">
+        <div class="empty-icon">📭</div>
+        <h3>暂无待评审项目</h3>
+        <p>当前没有需要您评审的项目</p>
       </div>
       <div v-else class="projects-grid">
         <div
-          v-for="project in filteredDraftProjects"
+          v-for="project in filteredPendingProjects"
           :key="project.id"
           class="project-card"
-          @click="viewProject(project.id)"
         >
           <div class="card-header">
             <div class="project-title">{{ project.title }}</div>
-            <div class="project-status draft">草稿</div>
+            <div class="project-status reviewing">待评审</div>
           </div>
 
           <div class="project-meta">
@@ -91,60 +87,65 @@
               <span class="meta-value">{{ project.project_code || '待生成' }}</span>
             </div>
             <div class="meta-item">
+              <span class="meta-label">申请人：</span>
+              <span class="meta-value">{{ project.applicant_name || '未知' }}</span>
+            </div>
+            <div class="meta-item">
               <span class="meta-label">所属领域：</span>
-              <span class="meta-value">{{ formatDomainsWithOther(project) }}</span>
+              <span class="meta-value">{{ project.research_field || '未指定' }}</span>
             </div>
             <div class="meta-item">
-              <span class="meta-label">技术成熟度：</span>
-              <span class="meta-value">{{ getTechMaturityText(project.tech_maturity) }}</span>
+              <span class="meta-label">经费预算：</span>
+              <span class="meta-value budget">{{ formatCurrency(project.budget_total) }}</span>
             </div>
             <div class="meta-item">
-              <span class="meta-label">预期成果转化：</span>
-              <span class="meta-value">{{ formatAchievementTransformWithOther(project) }}</span>
-            </div>
-            <div class="meta-item">
-              <span class="meta-label">概念验证需求：</span>
-              <span class="meta-value">{{ formatPocStageWithNote(project) }}</span>
+              <span class="meta-label">评审截止：</span>
+              <span class="meta-value" :class="getDeadlineClass(project.review_deadline)">
+                {{ formatDate(project.review_deadline) || '未设置' }}
+              </span>
             </div>
           </div>
 
           <div class="project-actions">
-            <button class="action-btn secondary" @click.stop="viewProject(project.id)">
+            <button class="action-btn secondary" @click.stop="viewProjectDetail(project.id, 'pending')">
               查看详情
             </button>
-            <button class="action-btn primary" @click.stop="editProject(project.id)">
-              继续编辑
+            <button class="action-btn primary" @click.stop="startReview(project)">
+              开始评审
             </button>
           </div>
 
           <div class="project-footer">
             <span class="footer-item">
               <span class="footer-icon">📅</span>
-              {{ formatDate(project.updated_at || project.created_at) }}
+              {{ formatDate(project.assigned_at) }}
+            </span>
+            <span class="footer-item">
+              <span class="footer-icon">👤</span>
+              {{ project.applicant_name || '申请人' }}
             </span>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 已提交项目列表 -->
-    <div v-else-if="activeTab === 'submitted'" class="projects-section">
-      <div v-if="submittedProjects.length === 0" class="empty-state">
-        <div class="empty-icon">📤</div>
-        <h3>暂无已提交项目</h3>
-        <p>您还没有提交任何项目</p>
+    <!-- 评审历史列表 -->
+    <div v-else-if="activeTab === 'history'" class="projects-section">
+      <div v-if="historyProjects.length === 0" class="empty-state">
+        <div class="empty-icon">📁</div>
+        <h3>暂无评审历史</h3>
+        <p>您还没有完成任何项目评审</p>
       </div>
       <div v-else class="projects-grid">
         <div
-          v-for="project in filteredSubmittedProjects"
+          v-for="project in filteredHistoryProjects"
           :key="project.id"
           class="project-card"
-          @click="viewProject(project.id)"
         >
           <div class="card-header">
-            <div class="project-title">{{ project.title }}</div>
-            <div class="project-status" :class="getStatusClass(project.status)">
-              {{ getStatusText(project.status) }}
+            <div class="project-title">{{ project.project_title }}</div>
+            <div class="project-status" :class="getReviewStatusClass(project.recommendation)">
+              {{ getReviewStatusText(project.recommendation) }}
             </div>
           </div>
 
@@ -154,25 +155,29 @@
               <span class="meta-value">{{ project.project_code || '待生成' }}</span>
             </div>
             <div class="meta-item">
+              <span class="meta-label">申请人：</span>
+              <span class="meta-value">{{ project.applicant_name || '未知' }}</span>
+            </div>
+            <div class="meta-item">
               <span class="meta-label">所属领域：</span>
-              <span class="meta-value">{{ formatDomainsWithOther(project) }}</span>
+              <span class="meta-value">{{ project.research_field || '未指定' }}</span>
             </div>
             <div class="meta-item">
-              <span class="meta-label">技术成熟度：</span>
-              <span class="meta-value">{{ getTechMaturityText(project.tech_maturity) }}</span>
+              <span class="meta-label">评审结论：</span>
+              <span class="meta-value">
+                <el-tag :type="getConclusionType(project.recommendation)" size="small">
+                  {{ getConclusionText(project.recommendation) }}
+                </el-tag>
+              </span>
             </div>
             <div class="meta-item">
-              <span class="meta-label">预期成果转化：</span>
-              <span class="meta-value">{{ formatAchievementTransformWithOther(project) }}</span>
-            </div>
-            <div class="meta-item">
-              <span class="meta-label">概念验证需求：</span>
-              <span class="meta-value">{{ formatPocStageWithNote(project) }}</span>
+              <span class="meta-label">评审时间：</span>
+              <span class="meta-value">{{ formatDate(project.review_date) }}</span>
             </div>
           </div>
 
           <div class="project-actions">
-            <button class="action-btn secondary" @click.stop="viewProject(project.id)">
+            <button class="action-btn secondary" @click.stop="viewProjectDetail(project.project_id, 'history')">
               查看详情
             </button>
           </div>
@@ -180,7 +185,11 @@
           <div class="project-footer">
             <span class="footer-item">
               <span class="footer-icon">📅</span>
-              {{ formatDate(project.submitted_at || project.created_at) }}
+              {{ formatDate(project.review_date) }}
+            </span>
+            <span class="footer-item">
+              <span class="footer-icon">👤</span>
+              {{ project.applicant_name || '申请人' }}
             </span>
           </div>
         </div>
@@ -190,138 +199,153 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
-import request from '@/utils/request'
+import axios from 'axios'
 
 const router = useRouter()
+const route = useRoute()
+
+// Props
+const props = defineProps<{
+  defaultTab?: string
+}>()
+
+// API配置
+const API_BASE_URL = 'http://localhost:3002/api'
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 10000,
+})
+
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => Promise.reject(error)
+)
+
+api.interceptors.response.use(
+  (response) => response.data,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('userInfo')
+      ElMessage.error('登录已过期，请重新登录')
+      router.push('/login')
+    }
+    return Promise.reject(error)
+  }
+)
 
 // 状态管理
 const loading = ref(false)
-const activeTab = ref('draft')
+const activeTab = ref<'pending' | 'history'>('pending')
 const searchKeyword = ref('')
-const projects = ref<any[]>([])
 
-// 计算属性 - 草稿项目
-const draftProjects = computed(() => {
-  return projects.value.filter(p => p.status === 'draft')
-})
+// 项目数据
+const pendingProjects = ref<any[]>([])
+const historyProjects = ref<any[]>([])
 
-// 计算属性 - 已提交项目（包括submitted, under_review, approved, rejected等状态）
-const submittedProjects = computed(() => {
-  return projects.value.filter(p => p.status !== 'draft')
-})
+// 计算属性
+const pendingCount = computed(() => pendingProjects.value.length)
+const historyCount = computed(() => historyProjects.value.length)
 
-// 统计数量
-const draftCount = computed(() => draftProjects.value.length)
-const submittedCount = computed(() => submittedProjects.value.length)
-
-// 过滤后的草稿项目
-const filteredDraftProjects = computed(() => {
-  if (!searchKeyword.value) return draftProjects.value
-  const keyword = searchKeyword.value.toLowerCase()
-  return draftProjects.value.filter(p =>
-    p.title.toLowerCase().includes(keyword) ||
-    (p.project_code && p.project_code.toLowerCase().includes(keyword))
+const filteredPendingProjects = computed(() => {
+  if (!searchKeyword.value.trim()) return pendingProjects.value
+  const keyword = searchKeyword.value.toLowerCase().trim()
+  return pendingProjects.value.filter(p =>
+    (p.title && p.title.toLowerCase().includes(keyword)) ||
+    (p.project_code && p.project_code.toLowerCase().includes(keyword)) ||
+    (p.applicant_name && p.applicant_name.toLowerCase().includes(keyword))
   )
 })
 
-// 过滤后的已提交项目
-const filteredSubmittedProjects = computed(() => {
-  if (!searchKeyword.value) return submittedProjects.value
-  const keyword = searchKeyword.value.toLowerCase()
-  return submittedProjects.value.filter(p =>
-    p.title.toLowerCase().includes(keyword) ||
-    (p.project_code && p.project_code.toLowerCase().includes(keyword))
+const filteredHistoryProjects = computed(() => {
+  if (!searchKeyword.value.trim()) return historyProjects.value
+  const keyword = searchKeyword.value.toLowerCase().trim()
+  return historyProjects.value.filter(p =>
+    (p.project_title && p.project_title.toLowerCase().includes(keyword)) ||
+    (p.project_code && p.project_code.toLowerCase().includes(keyword)) ||
+    (p.applicant_name && p.applicant_name.toLowerCase().includes(keyword))
   )
 })
 
-// 切换标签
-const switchTab = (tab: string) => {
+// 方法
+const switchTab = (tab: 'pending' | 'history') => {
   activeTab.value = tab
   searchKeyword.value = ''
+  // 更新URL但不刷新页面
+  if (tab === 'pending') {
+    router.replace('/reviewer/projects/pending')
+  } else {
+    router.replace('/reviewer/projects/history')
+  }
 }
 
-// 加载项目列表
+const goToWorkbench = () => {
+  router.push('/reviewer/dashboard')
+}
+
+const handleSearch = () => {
+  // 搜索逻辑已通过计算属性实现
+}
+
+const refreshData = async () => {
+  await loadProjects()
+}
+
 const loadProjects = async () => {
   loading.value = true
   try {
-    const response = await request.get('/api/projects')
-    if (response.success && response.data) {
-      projects.value = response.data
-    } else {
-      ElMessage.error(response.error || '加载项目列表失败')
+    // 加载待评审项目
+    const pendingRes = await api.get('/reviewer/pending-projects', {
+      params: { limit: 100 }
+    })
+    if (pendingRes.success) {
+      pendingProjects.value = pendingRes.data || []
     }
-  } catch (error: any) {
-    console.error('加载项目列表失败:', error)
-    ElMessage.error(error.message || '加载项目列表失败')
+
+    // 加载评审历史
+    const historyRes = await api.get('/reviewer/reviews', {
+      params: { limit: 100 }
+    })
+    if (historyRes.success) {
+      historyProjects.value = historyRes.data || []
+    }
+  } catch (error) {
+    console.error('加载项目失败:', error)
+    ElMessage.error('加载项目数据失败')
   } finally {
     loading.value = false
   }
 }
 
-// 刷新数据
-const refreshData = () => {
-  loadProjects()
+const viewProjectDetail = (projectId: string, source: 'pending' | 'history') => {
+  // 传递来源参数，区分待评审和评审历史
+  router.push(`/reviewer/project-detail/${projectId}?from=${source}`)
 }
 
-// 搜索
-const handleSearch = () => {
-  // 搜索已通过计算属性自动处理
+const startReview = (project: any) => {
+  router.push({
+    path: '/reviewer/review',
+    query: {
+      projectId: project.id,
+      projectCode: project.project_code,
+    },
+  })
 }
 
-// 导航
-const goToWorkbench = () => {
-  router.push('/applicant/dashboard')
-}
-
-const goToCreateProject = () => {
-  router.push('/projects/create')
-}
-
-const viewProject = (id: string) => {
-  router.push(`/projects/detail/${id}`)
-}
-
-const editProject = (id: string) => {
-  router.push(`/projects/edit/${id}`)
-}
-
-// 辅助函数
-const getStatusClass = (status: string) => {
-  const map: Record<string, string> = {
-    submitted: 'submitted',
-    under_review: 'reviewing',
-    batch_review: 'reviewing',
-    approved: 'approved',
-    incubating: 'in-progress',
-    in_progress: 'in-progress',
-    completed: 'completed',
-    rejected: 'rejected',
-    revision: 'revision',
-  }
-  return map[status] || 'submitted'
-}
-
-const getStatusText = (status: string) => {
-  const map: Record<string, string> = {
-    submitted: '已提交',
-    under_review: '评审中',
-    batch_review: '批量评审',
-    approved: '已批准',
-    incubating: '孵化中',
-    in_progress: '进行中',
-    completed: '已完成',
-    rejected: '已驳回',
-    revision: '待修改',
-  }
-  return map[status] || status
-}
-
+// 格式化方法
 const formatDate = (dateString?: string) => {
-  if (!dateString) return ''
+  if (!dateString) return '未设置'
   try {
     const date = new Date(dateString)
     return date.toLocaleDateString('zh-CN')
@@ -330,143 +354,102 @@ const formatDate = (dateString?: string) => {
   }
 }
 
-// 技术成熟度映射
-const getTechMaturityText = (techMaturity?: string) => {
+const formatCurrency = (amount: number) => {
+  if (!amount) return '¥0'
+  const num = Number(amount)
+  if (num >= 100000000) return '¥' + (num / 100000000).toFixed(2) + '亿'
+  if (num >= 10000) return '¥' + (num / 10000).toFixed(2) + '万'
+  return '¥' + num.toFixed(2)
+}
+
+const getDeadlineClass = (deadline: string) => {
+  if (!deadline) return ''
+  const date = new Date(deadline)
+  const now = new Date()
+  const diff = date.getTime() - now.getTime()
+  const diffDays = Math.ceil(diff / (1000 * 60 * 60 * 24))
+
+  if (diffDays < 0) return 'expired'
+  if (diffDays <= 3) return 'urgent'
+  if (diffDays <= 7) return 'warning'
+  return ''
+}
+
+const getReviewStatusClass = (recommendation: string) => {
+  if (recommendation === 'approve') return 'approved'
+  if (recommendation === 'reject') return 'rejected'
+  return 'reviewing'
+}
+
+const getReviewStatusText = (recommendation: string) => {
+  if (recommendation === 'approve') return '已通过'
+  if (recommendation === 'reject') return '未通过'
+  return '已评审'
+}
+
+const getConclusionType = (conclusion: string) => {
   const map: Record<string, string> = {
-    'rd': '研发阶段',
-    'pilot': '小试阶段',
-    'intermediate_trial': '中试阶段',
-    'small_batch_prod': '小批量生产',
+    approve: 'success',
+    approve_with_revision: 'warning',
+    reject: 'danger',
+    resubmit: 'info',
   }
-  return map[techMaturity || ''] || techMaturity || '未指定'
+  return map[conclusion] || 'info'
 }
 
-// 预期成果转化形式映射
-const achievementTransformMap: Record<string, string> = {
-  'tech_transfer': '技术转让',
-  'tech_license': '技术许可',
-  'equity_investment': '作价投资',
-  'joint_dev': '联合开发',
-  'other': '其他',
+const getConclusionText = (conclusion: string) => {
+  const map: Record<string, string> = {
+    approve: '通过',
+    approve_with_revision: '修改后通过',
+    reject: '不通过',
+    resubmit: '重新提交',
+  }
+  return map[conclusion] || conclusion
 }
 
-// 概念验证阶段需求映射
-const pocStageMap: Record<string, string> = {
-  'creative_verify': '创意性验证',
-  'feasibility_verify': '可行性验证',
-  'commercial_verify': '商业化验证',
-  'multi_stage_combo': '多阶段组合',
-}
-
-// 处理所属领域
-const formatDomainsWithOther = (project: any): string => {
-  let domains = project.research_domains
-  const otherText = project.project_domain_other_text
-
-  if (typeof domains === 'string') {
-    try {
-      domains = JSON.parse(domains)
-    } catch {
-      domains = domains ? [domains] : []
-    }
+// 监听props变化
+watch(() => props.defaultTab, (newTab) => {
+  if (newTab === 'pending' || newTab === 'history') {
+    activeTab.value = newTab
   }
-
-  if (!domains || !Array.isArray(domains) || domains.length === 0) {
-    return otherText || '未指定'
-  }
-
-  const domainNames = domains.map((d: any) => {
-    const name = d.name || d
-    if (name === '其他' || name === 'other') {
-      return otherText || name
-    }
-    return name
-  }).join('、')
-
-  return domainNames
-}
-
-// 处理预期成果转化
-const formatAchievementTransformWithOther = (project: any): string => {
-  let transforms = project.achievement_transform
-  const otherText = project.achievement_transform_other_text
-
-  if (typeof transforms === 'string') {
-    try {
-      transforms = JSON.parse(transforms)
-    } catch {
-      transforms = transforms.split(',').map((s: string) => s.trim()).filter(Boolean)
-    }
-  }
-
-  if (!transforms || !Array.isArray(transforms) || transforms.length === 0) {
-    return otherText || '未指定'
-  }
-
-  const transformTexts = transforms.map((t: string) => {
-    if (t === 'other') {
-      return otherText || achievementTransformMap[t] || t
-    }
-    return achievementTransformMap[t] || t
-  }).join('、')
-
-  return transformTexts
-}
-
-// 处理概念验证阶段需求
-const formatPocStageWithNote = (project: any): string => {
-  let stages = project.poc_stage_requirement
-  const note = project.poc_multi_stage_note
-
-  if (typeof stages === 'string') {
-    try {
-      stages = JSON.parse(stages)
-    } catch {
-      stages = stages.split(',').map((s: string) => s.trim()).filter(Boolean)
-    }
-  }
-
-  if (!stages || !Array.isArray(stages) || stages.length === 0) {
-    return note || '未指定'
-  }
-
-  const stageTexts = stages.map((s: string) => {
-    if (s === 'multi_stage_combo' && note) {
-      return note
-    }
-    return pocStageMap[s] || s
-  }).join('、')
-
-  return stageTexts
-}
+}, { immediate: true })
 
 // 初始化
-onMounted(() => {
-  loadProjects()
+onMounted(async () => {
+  await loadProjects()
 })
 </script>
 
 <style scoped>
-.applicant-projects-page {
+.reviewer-projects-page {
   min-height: 100vh;
   background: #f5f7fa;
-  padding: 20px;
+  padding: 24px;
 }
 
 /* 页面头部 */
 .page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  padding: 20px 24px;
   background: white;
   border-radius: 12px;
-  padding: 24px;
-  margin-bottom: 24px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .back-workbench-box {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
   padding: 10px 18px;
   border: 1px solid rgba(179, 27, 27, 0.35);
   border-radius: 8px;
@@ -476,7 +459,7 @@ onMounted(() => {
   font-weight: 500;
   font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
   cursor: pointer;
-  transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+  transition: all 0.2s;
 }
 
 .back-workbench-box:hover {
@@ -492,12 +475,11 @@ onMounted(() => {
 .header-left h1 {
   margin: 0 0 8px 0;
   font-size: 24px;
-  color: #303133;
-  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
+  color: #2c3e50;
 }
 
 .header-subtitle {
-  color: #909399;
+  color: #666;
   font-size: 14px;
 }
 
@@ -619,11 +601,6 @@ onMounted(() => {
   cursor: not-allowed;
 }
 
-/* 项目列表 */
-.projects-section {
-  margin-bottom: 24px;
-}
-
 /* 加载状态 */
 .loading-container {
   display: flex;
@@ -656,7 +633,11 @@ onMounted(() => {
   font-weight: bold;
 }
 
-/* 空状态 */
+/* 项目列表 */
+.projects-section {
+  margin-bottom: 24px;
+}
+
 .empty-state {
   text-align: center;
   padding: 60px 20px;
@@ -738,38 +719,12 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.project-status.draft {
-  background: #fff7e6;
-  color: #fa8c16;
-}
-
-.project-status.submitted {
-  background: rgba(179, 27, 27, 0.06);
-  color: #b31b1b;
-}
-
 .project-status.reviewing {
   background: #f0f5ff;
   color: #2f54eb;
 }
 
-.project-status.revision {
-  background: #fff0f6;
-  color: #eb2f96;
-}
-
 .project-status.approved {
-  background: #f6ffed;
-  color: #52c41a;
-}
-
-.project-status.incubating,
-.project-status.in-progress {
-  background: #e6fffb;
-  color: #13c2c2;
-}
-
-.project-status.completed {
   background: #f6ffed;
   color: #52c41a;
 }
@@ -797,7 +752,7 @@ onMounted(() => {
 
 .meta-label {
   color: #999;
-  min-width: 100px;
+  min-width: 80px;
 }
 
 .meta-value {
@@ -808,10 +763,27 @@ onMounted(() => {
   margin-left: 12px;
 }
 
+.meta-value.budget {
+  color: #e6a23c;
+}
+
+.meta-value.expired {
+  color: #ff4d4f;
+  font-weight: bold;
+}
+
+.meta-value.urgent {
+  color: #fa8c16;
+  font-weight: bold;
+}
+
+.meta-value.warning {
+  color: #fadb14;
+}
+
 /* 项目操作按钮 */
 .project-actions {
   display: flex;
-  flex-direction: column;
   gap: 8px;
   margin-bottom: 20px;
 }
@@ -896,7 +868,7 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
-  .applicant-projects-page {
+  .reviewer-projects-page {
     padding: 16px;
   }
 

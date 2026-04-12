@@ -56,14 +56,6 @@ const checkRolePermission = (to: any, userRole: string): boolean => {
   return true
 }
 
-// 检查具体权限的函数
-const checkPermission = (to: any, permissions: string[]): boolean => {
-  if (to.meta?.permissions && to.meta.permissions.length > 0) {
-    return to.meta.permissions.some((permission: string) => permissions.includes(permission))
-  }
-  return true
-}
-
 const routes: Array<RouteRecordRaw> = [
   {
     path: '/',
@@ -110,7 +102,6 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       requiresAuth: true,
       role: 'APPLICANT',
-      permissions: ['view_projects', 'create_project'],
     },
   },
   {
@@ -125,7 +116,6 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       requiresAuth: true,
       role: 'APPLICANT',
-      permissions: ['create_project'],
     },
   },
   {
@@ -136,7 +126,6 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       requiresAuth: true,
       role: 'APPLICANT',
-      permissions: ['edit_project'],
     },
   },
   {
@@ -146,7 +135,6 @@ const routes: Array<RouteRecordRaw> = [
     props: true,
     meta: {
       requiresAuth: true,
-      permissions: ['view_project_detail'],
     },
   },
   {
@@ -157,7 +145,6 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       requiresAuth: true,
       role: 'APPLICANT',
-      permissions: ['view_project_progress'],
     },
   },
 
@@ -201,6 +188,50 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       requiresAuth: true,
       permissions: ['view_achievement_detail'],
+    },
+  },
+
+  // ============ 孵化服务模块（申请人） ============
+  {
+    path: '/incubation/service-request',
+    name: 'ServiceRequest',
+    component: () => import('../views/incubation/ServiceRequest.vue'),
+    meta: {
+      title: '服务申请',
+      requiresAuth: true,
+      role: 'APPLICANT',
+    },
+  },
+  {
+    path: '/incubation/result-feedback',
+    name: 'ResultFeedback',
+    component: () => import('../views/incubation/ResultFeedback.vue'),
+    meta: {
+      title: '成果反馈',
+      requiresAuth: true,
+      role: 'APPLICANT',
+    },
+  },
+  // 服务申请详情（申请人和项目经理都可访问）
+  {
+    path: '/incubation/request/:id',
+    name: 'IncubationRequestDetail',
+    component: () => import('../views/incubation/IncubationRequestDetail.vue'),
+    meta: {
+      title: '服务申请详情',
+      requiresAuth: true,
+      role: ['APPLICANT', 'PROJECT_MANAGER'],
+    },
+  },
+  // 服务申请反馈（项目经理）
+  {
+    path: '/incubation/feedback',
+    name: 'ServiceFeedback',
+    component: () => import('../views/incubation/ServiceFeedback.vue'),
+    meta: {
+      title: '服务申请反馈',
+      requiresAuth: true,
+      role: 'PROJECT_MANAGER',
     },
   },
 
@@ -260,11 +291,31 @@ const routes: Array<RouteRecordRaw> = [
       },
       {
         path: 'projects',
-        name: 'ReviewerAllProjects',
-        component: () => import('@/views/reviewer/AllProjects.vue'),
+        name: 'ReviewerProjects',
+        component: () => import('@/views/reviewer/ReviewerProjects.vue'),
         meta: {
-          title: '项目浏览',
+          title: '项目管理',
           permissions: ['view_all_projects'],
+        },
+      },
+      {
+        path: 'projects/pending',
+        name: 'ReviewerProjectsPending',
+        component: () => import('@/views/reviewer/ReviewerProjects.vue'),
+        props: { defaultTab: 'pending' },
+        meta: {
+          title: '待评审项目',
+          permissions: ['view_pending_projects'],
+        },
+      },
+      {
+        path: 'projects/history',
+        name: 'ReviewerProjectsHistory',
+        component: () => import('@/views/reviewer/ReviewerProjects.vue'),
+        props: { defaultTab: 'history' },
+        meta: {
+          title: '评审历史',
+          permissions: ['view_review_history'],
         },
       },
       {
@@ -294,27 +345,62 @@ const routes: Array<RouteRecordRaw> = [
       permissions: ['view_assistant_dashboard'],
     },
   },
+  // ============ 项目经理项目管理模块（合并领取项目和专家分配） ============
   {
-    path: '/assistant/applications',
-    name: 'AssistantApplications',
-    component: () => import('@/views/assistant/Applications.vue'),
+    path: '/assistant/projects',
+    name: 'ManagerProjects',
+    component: () => import('@/views/assistant/ManagerProjects.vue'),
     meta: {
-      title: '项目申请管理',
+      title: '项目管理',
       requiresAuth: true,
       role: ['project_manager'],
       permissions: ['view_applications', 'review_applications'],
     },
   },
   {
-    path: '/assistant/application/:id',
-    name: 'AssistantApplicationDetail',
-    component: () => import('@/views/assistant/ApplicationDetail.vue'),
+    path: '/assistant/projects/unassigned',
+    name: 'ManagerUnassignedProjects',
+    component: () => import('@/views/assistant/ManagerProjects.vue'),
+    props: { defaultTab: 'unassigned' },
     meta: {
-      title: '申请详情',
+      title: '待领取项目',
+      requiresAuth: true,
+      role: ['project_manager'],
+      permissions: ['view_applications', 'review_applications'],
+    },
+  },
+  {
+    path: '/assistant/projects/my',
+    name: 'ManagerMyProjects',
+    component: () => import('@/views/assistant/ManagerProjects.vue'),
+    props: { defaultTab: 'my' },
+    meta: {
+      title: '我的项目',
+      requiresAuth: true,
+      role: ['project_manager'],
+      permissions: ['view_applications', 'review_applications'],
+    },
+  },
+  {
+    path: '/assistant/projects/detail/:id',
+    name: 'ManagerProjectDetail',
+    component: () => import('@/views/assistant/ManagerProjectDetail.vue'),
+    props: true,
+    meta: {
+      title: '项目详情',
       requiresAuth: true,
       role: ['project_manager'],
       permissions: ['view_application_detail', 'review_applications'],
     },
+  },
+  // 保留旧路由重定向（兼容性）
+  {
+    path: '/assistant/applications',
+    redirect: '/assistant/projects',
+  },
+  {
+    path: '/assistant/application/:id',
+    redirect: (to) => `/assistant/projects/detail/${to.params.id}`,
   },
   {
     path: '/assistant/achievements',
@@ -349,6 +435,29 @@ const routes: Array<RouteRecordRaw> = [
       permissions: ['view_activities'],
     },
   },
+  // 终止项目管理
+  {
+    path: '/assistant/terminate-projects',
+    name: 'TerminateProjects',
+    component: () => import('@/views/assistant/TerminateProjects.vue'),
+    meta: {
+      title: '终止项目',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  // 孵化服务处理
+  {
+    path: '/assistant/incubation-requests',
+    name: 'IncubationRequests',
+    component: () => import('@/views/assistant/IncubationRequests.vue'),
+    meta: {
+      title: '服务申请处理',
+      requiresAuth: true,
+      role: ['project_manager'],
+      permissions: ['view_applications', 'review_applications'],
+    },
+  },
   {
     path: '/audit/projects',
     name: 'AuditProjects',
@@ -369,21 +478,12 @@ const routes: Array<RouteRecordRaw> = [
       permissions: ['audit_achievements'],
     },
   },
+  // 专家分配功能整合到项目管理中
   {
-    path: '/assistant/reviewer-assignment',
-    name: 'ReviewerAssignment',
-    component: () => import('@/views/assistant/ReviewerAssignment.vue'),
-    meta: {
-      title: '评审专家分配',
-      requiresAuth: true,
-      role: ['project_manager'],
-      permissions: ['manage_reviewer_assignment'],
-    },
-  },
-  {
-    path: '/assistant/reviewer-assignment/project/:id',
-    name: 'ReviewerAssignmentDetail',
+    path: '/assistant/projects/:id/assign-reviewers',
+    name: 'ManagerAssignReviewers',
     component: () => import('@/views/assistant/ReviewerAssignmentDetail.vue'),
+    props: true,
     meta: {
       title: '分配评审专家',
       requiresAuth: true,
@@ -661,14 +761,6 @@ const routes: Array<RouteRecordRaw> = [
     },
   },
 
-  // ============ 测试页面 ============
-  {
-    path: '/test-db',
-    name: 'TestDatabase',
-    component: () => import('@/views/TestDatabase.vue'),
-    meta: { title: '数据库测试' },
-  },
-
   // ============ 404页面 ============
   {
     path: '/:pathMatch(.*)*',
@@ -691,13 +783,6 @@ router.beforeEach(async (to, from, next) => {
     initializeAuthFromStorage()
   }
 
-  console.log('=== 路由守卫开始 ===')
-  console.log(`从: ${from.path} -> 到: ${to.path}`)
-  console.log(`认证状态: ${authStore.isAuthenticated}`)
-  console.log(`用户角色: ${authStore.userRole}`)
-  console.log(`localStorage userRole: ${localStorage.getItem('userRole')}`)
-  console.log(`localStorage token: ${localStorage.getItem('token') ? '存在' : '不存在'}`)
-
   /** 子路由会丢失父级 meta，合并整条 matched 链上的 requiresAuth / role */
   const mergedMeta: Record<string, unknown> = { ...to.meta }
   for (const m of to.matched) {
@@ -713,14 +798,10 @@ router.beforeEach(async (to, from, next) => {
 
   // 2. 检查是否需要认证
   if (mergedMeta.requiresAuth) {
-    console.log(`页面需要认证: ${to.path}`)
-
     // 检查是否有token（更可靠的方式）
     const token = localStorage.getItem('token') || sessionStorage.getItem('token')
-    const userRole = localStorage.getItem('userRole')
 
     if (!token) {
-      console.log('❌ 没有token，跳转到登录页')
       ElMessage.warning('请先登录')
       next('/login')
       return
@@ -728,7 +809,6 @@ router.beforeEach(async (to, from, next) => {
 
     // 如果有token但authStore未初始化，手动初始化
     if (!authStore.isAuthenticated && token) {
-      console.log('🔄 检测到token但authStore未初始化，尝试初始化...')
       try {
         // 从localStorage恢复用户信息
         const userStr = localStorage.getItem('user') || sessionStorage.getItem('user')
@@ -737,7 +817,6 @@ router.beforeEach(async (to, from, next) => {
           authStore.user = user
           authStore.token = token
           authStore.isAuthenticated = true
-          console.log('✅ 从localStorage恢复用户信息成功:', user.username)
         }
       } catch (error) {
         console.error('恢复用户信息失败:', error)
@@ -750,7 +829,6 @@ router.beforeEach(async (to, from, next) => {
   if (token && (to.path === '/login' || to.path === '/register')) {
     const userRole = localStorage.getItem('userRole') || authStore.userRole
     const dashboardPath = getDashboardPath(userRole)
-    console.log(`已登录，重定向登录页到: ${dashboardPath}`)
     next(dashboardPath)
     return
   }
@@ -760,14 +838,9 @@ router.beforeEach(async (to, from, next) => {
     const userRole = localStorage.getItem('userRole') || authStore.userRole || ''
     const hasRole = checkRolePermission(toForGuard, userRole)
 
-    console.log(
-      `检查角色权限: 需要 ${mergedMeta.role}, 用户有 ${userRole}, 结果: ${hasRole ? '通过' : '拒绝'}`,
-    )
-
     if (!hasRole) {
       ElMessage.warning('您没有权限访问此页面')
       const dashboardPath = getDashboardPath(userRole)
-      console.log(`权限不足，重定向到: ${dashboardPath}`)
       next(dashboardPath)
       return
     }
@@ -779,13 +852,11 @@ router.beforeEach(async (to, from, next) => {
     const dashboardPath = getDashboardPath(userRole)
 
     if (dashboardPath !== '/dashboard') {
-      console.log(`通用仪表板重定向到: ${dashboardPath}`)
       next(dashboardPath)
       return
     }
   }
 
-  console.log('✅ 路由守卫通过，跳转到:', to.path)
   next()
 })
 

@@ -60,60 +60,7 @@
       <div class="loading-text">正在加载项目详情...</div>
     </div>
 
-    <!-- 项目信息卡片 -->
-    <div v-if="project" class="project-info-card">
-      <div class="info-header">
-        <h2>{{ project.title }}</h2>
-      </div>
 
-      <div class="info-grid">
-        <div class="info-item">
-          <label>研究领域：</label>
-          <div class="domain-tags">
-            <span v-for="domain in project.research_domains" :key="domain.id" class="domain-tag">
-              {{ domain.name }}
-            </span>
-            <span v-if="!project.research_domains?.length">未指定</span>
-          </div>
-        </div>
-        <div class="info-item">
-          <label>技术成熟度：</label>
-          <span>{{ getTechMaturityText(project.tech_maturity) }}</span>
-        </div>
-        <div class="info-item">
-          <label>项目负责人：</label>
-          <span>{{ project.applicant_name || currentUser?.name || '申请人' }}</span>
-        </div>
-        <div class="info-item">
-          <label>项目经理：</label>
-          <span>{{ project.manager_name || '待分配' }}</span>
-        </div>
-        <div class="info-item">
-          <label>提交日期：</label>
-          <span>{{ formatDate(project.submit_date) || '未提交' }}</span>
-        </div>
-        <div class="info-item">
-          <label>批准日期：</label>
-          <span>{{ formatDate(project.approval_date) || '未批准' }}</span>
-        </div>
-        <div class="info-item">
-          <label>创建时间：</label>
-          <span>{{ formatDateTime(project.created_at) }}</span>
-        </div>
-        <div class="info-item">
-          <label>最后更新：</label>
-          <span>{{ formatDateTime(project.updated_at || project.created_at) }}</span>
-        </div>
-        <div class="info-item full-width">
-          <label>关键词：</label>
-          <div class="keywords">
-            <span v-for="(keyword, index) in keywordsArray" :key="index" class="keyword-tag">
-              {{ keyword }}
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- 标签导航 -->
     <div v-if="project" class="tab-navigation">
@@ -131,7 +78,74 @@
     <!-- 标签内容 -->
     <div v-if="project" class="tab-content">
       <!-- 基本信息 -->
-      <div v-if="activeTab === 'basic'" class="tab-panel">
+      <div v-if="activeTab === 'basicInfo'" class="tab-panel">
+        <!-- 项目标题 -->
+        <div class="section">
+          <h3>项目标题</h3>
+          <div class="content-box">{{ project.title || '未设置' }}</div>
+        </div>
+
+        <!-- 研究领域 -->
+        <div class="section">
+          <h3>研究领域</h3>
+          <div class="content-box">
+            <div class="domain-tags">
+              <span v-for="(domain, idx) in formatDomainsWithOther(project.research_domains, project.project_domain_other_text)" :key="idx" class="domain-tag">
+                {{ domain }}
+              </span>
+              <span v-if="!formatDomainsWithOther(project.research_domains, project.project_domain_other_text).length">未指定</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 技术成熟度 -->
+        <div class="section">
+          <h3>技术成熟度</h3>
+          <div class="content-box">{{ getTechMaturityText(project.tech_maturity) }}</div>
+        </div>
+
+        <!-- 预期成果转化形式 -->
+        <div class="section">
+          <h3>预期成果转化形式</h3>
+          <div class="content-box">
+            <div class="transform-tags">
+              <span v-for="(item, idx) in formatAchievementTransformWithOther(project.achievement_transform, project.achievement_transform_other_text)" :key="idx" class="transform-tag">
+                {{ item }}
+              </span>
+              <span v-if="!formatAchievementTransformWithOther(project.achievement_transform, project.achievement_transform_other_text).length">未指定</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 概念验证阶段需求 -->
+        <div class="section">
+          <h3>概念验证阶段需求</h3>
+          <div class="content-box">
+            <div class="poc-tags">
+              <span v-for="(item, idx) in formatPocStageWithNote(project.poc_stage_requirement, project.poc_multi_stage_note)" :key="idx" class="poc-tag">
+                {{ item }}
+              </span>
+              <span v-if="!formatPocStageWithNote(project.poc_stage_requirement, project.poc_multi_stage_note).length">未指定</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 关键词 -->
+        <div class="section">
+          <h3>关键词</h3>
+          <div class="content-box">
+            <div class="keywords">
+              <span v-for="(keyword, index) in keywordsArray" :key="index" class="keyword-tag">
+                {{ keyword }}
+              </span>
+              <span v-if="!keywordsArray.length">未设置</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 项目详情 -->
+      <div v-if="activeTab === 'detail'" class="tab-panel">
         <div class="section">
           <h3>项目摘要</h3>
           <div class="content-box">{{ project.abstract || '暂无摘要' }}</div>
@@ -160,36 +174,6 @@
         <div class="section" v-if="project.supplementary_info">
           <h3>其他补充说明</h3>
           <div class="content-box">{{ project.supplementary_info }}</div>
-        </div>
-
-        <!-- 成果转化形式 -->
-        <div class="section" v-if="project.achievement_transform?.length">
-          <h3>预期成果转化形式</h3>
-          <div class="content-box">
-            <div class="transform-tags">
-              <span v-for="item in project.achievement_transform" :key="item" class="transform-tag">
-                {{ getTransformText(item) }}
-              </span>
-              <span v-if="project.achievement_transform_other_text" class="transform-tag other">
-                {{ project.achievement_transform_other_text }}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 概念验证需求 -->
-        <div class="section" v-if="project.poc_stage_requirement?.length">
-          <h3>概念验证阶段需求</h3>
-          <div class="content-box">
-            <div class="poc-tags">
-              <span v-for="item in project.poc_stage_requirement" :key="item" class="poc-tag">
-                {{ getPocText(item) }}
-              </span>
-              <span v-if="project.poc_multi_stage_note" class="poc-note">
-                说明：{{ project.poc_multi_stage_note }}
-              </span>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -268,12 +252,58 @@
           </div>
         </div>
 
-        <div class="section" v-if="project.approved_budget">
-          <h3>批准经费</h3>
-          <div class="content-box">
-            <p class="approved-budget-text">
-              批准金额：¥ {{ formatAmount(project.approved_budget) }}
+      </div>
+
+      <!-- 评审意见 -->
+      <div v-if="activeTab === 'reviews'" class="tab-panel">
+        <div class="section">
+          <h3>评审专家意见</h3>
+          <div v-if="reviewFeedback.length === 0" class="empty-state">
+            <p>暂无评审意见</p>
+            <p class="hint" v-if="project && ['submitted', 'under_review'].includes(project.status)">
+              项目正在评审中，评审意见将在专家提交后显示
             </p>
+          </div>
+          <div v-else class="reviews-list">
+            <div v-for="(review, index) in reviewFeedback" :key="index" class="review-card-modern">
+              <!-- 顶部：评审结论（突出显示） -->
+              <div class="review-conclusion-header" :class="review.review_status">
+                <div class="conclusion-main">
+                  <span class="conclusion-label">评审结论</span>
+                  <span class="conclusion-value">{{ getReviewStatusText(review.review_status) }}</span>
+                </div>
+              </div>
+              
+              <!-- 中部：专家信息 -->
+              <div class="reviewer-info-section">
+                <div class="info-row">
+                  <div class="info-item">
+                    <span class="info-label">评审专家</span>
+                    <span class="info-value name">{{ review.reviewer_name || '未知专家' }}</span>
+                  </div>
+                  <div class="info-item">
+                    <span class="info-label">所属部门</span>
+                    <span class="info-value">{{ review.reviewer_department || '未填写' }}</span>
+                  </div>
+                </div>
+                <div class="info-row" v-if="review.reviewer_research_field">
+                  <div class="info-item full-width">
+                    <span class="info-label">研究领域</span>
+                    <span class="info-value field">{{ review.reviewer_research_field }}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- 底部：评审意见 -->
+              <div class="review-content-section">
+                <div class="content-header">
+                  <span class="content-label">评审意见</span>
+                </div>
+                <div class="content-body">
+                  <p>{{ review.comments || '暂无详细评审意见' }}</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -309,76 +339,30 @@
           </div>
         </div>
 
+      </div>
+
+      <!-- 图片展示 -->
+      <div v-if="activeTab === 'images'" class="tab-panel">
         <div class="section">
-          <h3>时间线</h3>
-          <div class="timeline">
-            <div class="timeline-item" :class="{ active: true }">
-              <div class="timeline-dot"></div>
-              <div class="timeline-content">
-                <div class="timeline-date">项目创建</div>
-                <div class="timeline-desc">{{ formatDateTime(project.created_at) }}</div>
+          <h3>项目图片</h3>
+          <div v-if="images.length === 0" class="empty-state">
+            <p>暂无项目图片</p>
+          </div>
+          <div v-else class="images-grid">
+            <div v-for="image in images" :key="image.id" class="image-card">
+              <div class="image-preview">
+                <img :src="`http://localhost:3002${image.file_path}`" :alt="image.file_name" />
               </div>
-            </div>
-            <div class="timeline-item" :class="{ active: project.status !== 'draft' }">
-              <div class="timeline-dot"></div>
-              <div class="timeline-content">
-                <div class="timeline-date">项目提交</div>
-                <div class="timeline-desc" v-if="project.submit_date">
-                  已提交 ({{ formatDate(project.submit_date) }})
+              <div class="image-info">
+                <div class="image-name">{{ image.file_name }}</div>
+                <div class="image-desc" v-if="image.description">{{ image.description }}</div>
+                <div class="image-meta">
+                  <span>{{ formatFileSize(image.file_size) }}</span>
+                  <span>{{ formatDateTime(image.created_at) }}</span>
                 </div>
-                <div class="timeline-desc" v-else>待提交</div>
               </div>
-            </div>
-            <div
-              class="timeline-item"
-              :class="{
-                active: [
-                  'under_review',
-                  'revision',
-                  'batch_review',
-                  'approved',
-                  'incubating',
-                  'completed',
-                ].includes(project.status),
-              }"
-            >
-              <div class="timeline-dot"></div>
-              <div class="timeline-content">
-                <div class="timeline-date">评审阶段</div>
-                <div class="timeline-desc">{{ getStatusText(project.status) }}</div>
-              </div>
-            </div>
-            <div
-              class="timeline-item"
-              :class="{
-                active:
-                  project.status === 'approved' ||
-                  project.status === 'incubating' ||
-                  project.status === 'completed',
-              }"
-            >
-              <div class="timeline-dot"></div>
-              <div class="timeline-content">
-                <div class="timeline-date">批准立项</div>
-                <div class="timeline-desc" v-if="project.approval_date">
-                  批准日期：{{ formatDate(project.approval_date) }}
-                </div>
-                <div class="timeline-desc" v-else>待批准</div>
-              </div>
-            </div>
-            <div class="timeline-item" :class="{ active: project.status === 'incubating' }">
-              <div class="timeline-dot"></div>
-              <div class="timeline-content">
-                <div class="timeline-date">孵化阶段</div>
-                <div class="timeline-desc">项目孵化中</div>
-              </div>
-            </div>
-            <div class="timeline-item" :class="{ active: project.status === 'completed' }">
-              <div class="timeline-dot"></div>
-              <div class="timeline-content">
-                <div class="timeline-date">项目完成</div>
-                <div class="timeline-desc" v-if="project.status === 'completed'">已完成</div>
-                <div class="timeline-desc" v-else>进行中</div>
+              <div class="image-actions">
+                <button class="download-btn" @click="downloadAttachment(image)">下载</button>
               </div>
             </div>
           </div>
@@ -390,39 +374,12 @@
         <div class="section">
           <h3>附件清单</h3>
 
-          <!-- 上传附件区域 -->
-          <div
-            class="upload-area"
-            @dragover.prevent
-            @drop.prevent="handleDrop"
-            @click="triggerFileUpload"
-          >
-            <input
-              type="file"
-              ref="fileInput"
-              multiple
-              style="display: none"
-              @change="handleFileSelect"
-            />
-            <div class="upload-icon">📁</div>
-            <div class="upload-text">
-              <strong>点击或拖拽文件到此处上传</strong>
-              <span>支持图片、文档等格式，单个文件不超过10MB</span>
-            </div>
-            <div v-if="uploading" class="upload-progress">
-              <div class="progress-bar-small">
-                <div class="progress-fill-small" :style="{ width: uploadProgress + '%' }"></div>
-              </div>
-              <span>上传中... {{ uploadProgress }}%</span>
-            </div>
-          </div>
-
           <!-- 附件列表 -->
-          <div v-if="attachments.length === 0" class="empty-state">
+          <div v-if="documents.length === 0" class="empty-state">
             <p>暂无附件材料</p>
           </div>
           <div v-else class="attachments-list">
-            <div v-for="attachment in attachments" :key="attachment.id" class="attachment-item">
+            <div v-for="attachment in documents" :key="attachment.id" class="attachment-item">
               <div class="attachment-icon">{{ getFileIcon(attachment.mime_type) }}</div>
               <div class="attachment-info">
                 <div class="attachment-name">{{ attachment.file_name }}</div>
@@ -437,7 +394,6 @@
               </div>
               <div class="attachment-actions">
                 <button class="download-btn" @click="downloadAttachment(attachment)">下载</button>
-                <button class="delete-btn" @click="deleteAttachment(attachment)">删除</button>
               </div>
             </div>
           </div>
@@ -648,19 +604,32 @@ const currentUser = ref<User | null>(null)
 const teamMembers = ref<TeamMember[]>([])
 const budgetItems = ref<BudgetItem[]>([])
 const attachments = ref<Attachment[]>([])
+const reviewFeedback = ref<any[]>([])
 
 // UI状态
-const activeTab = ref('basic')
+const activeTab = ref('basicInfo')
 const showDeleteConfirm = ref(false)
 
-// 标签页
-const tabs = [
-  { key: 'basic', label: '基本信息' },
-  { key: 'team', label: '研究团队' },
-  { key: 'budget', label: '经费预算' },
-  { key: 'progress', label: '项目进展' },
-  { key: 'attachments', label: '附件材料' },
-]
+// 标签页 - 根据项目状态动态显示
+const tabs = computed(() => {
+  const baseTabs = [
+    { key: 'basicInfo', label: '基本信息' },
+    { key: 'detail', label: '项目详情' },
+    { key: 'team', label: '研究团队' },
+    { key: 'budget', label: '经费预算' },
+    { key: 'images', label: '图片展示' },
+    { key: 'attachments', label: '附件材料' },
+  ]
+  
+  // 非草稿状态才显示评审意见
+  if (project.value && project.value.status !== 'draft') {
+    baseTabs.push({ key: 'reviews', label: '评审意见' })
+  }
+  
+  baseTabs.push({ key: 'progress', label: '项目进展' })
+  
+  return baseTabs
+})
 
 // 计算属性
 const keywordsArray = computed(() => {
@@ -669,7 +638,19 @@ const keywordsArray = computed(() => {
 })
 
 const totalBudget = computed(() => {
-  return budgetItems.value.reduce((sum, item) => sum + (item.amount || 0), 0)
+  return budgetItems.value.reduce((sum, item) => {
+    const amount = parseFloat(String(item.amount)) || 0
+    return sum + amount
+  }, 0)
+})
+
+// 分离图片和附件
+const images = computed(() => {
+  return attachments.value.filter(a => a.type === 'image' || (a.mime_type && a.mime_type.startsWith('image/')))
+})
+
+const documents = computed(() => {
+  return attachments.value.filter(a => a.type !== 'image' && !(a.mime_type && a.mime_type.startsWith('image/')))
 })
 
 const currentTabName = computed(() => {
@@ -709,6 +690,16 @@ const getStatusClass = (status?: string) => {
     terminated: 'rejected',
   }
   return classMap[status || ''] || ''
+}
+
+const getReviewStatusText = (status?: string) => {
+  const map: Record<string, string> = {
+    accepted: '通过',
+    declined: '拒绝',
+    reviewing: '评审中',
+    draft: '待评审',
+  }
+  return map[status || ''] || status || '未知'
 }
 
 const getStatusDescription = (status?: string) => {
@@ -756,6 +747,104 @@ const getPocText = (value: string) => {
     multi_stage_combo: '多阶段组合',
   }
   return map[value] || value
+}
+
+// 映射表定义
+const achievementTransformMap: Record<string, string> = {
+  'patent': '专利',
+  'paper': '论文',
+  'software_copyright': '软件著作权',
+  'technical_standard': '技术标准',
+  'prototype': '原型产品',
+  'pilot': '中试产品',
+  'industrialization': '产业化成果',
+  'other': '其他',
+  // 新增映射
+  'tech_transfer': '技术转让',
+  'tech_license': '技术许可',
+  'equity_investment': '作价投资',
+  'joint_dev': '联合开发',
+}
+
+const pocStageMap: Record<string, string> = {
+  'principle_validation': '原理验证',
+  'prototype_development': '样机开发',
+  'pilot_test': '中试',
+  'market_validation': '市场验证',
+  'multi_stage': '多阶段组合',
+  'multi_stage_combo': '多阶段组合',
+  // 新增映射
+  'creative_verify': '创意性验证',
+  'feasibility_verify': '可行性验证',
+  'commercial_verify': '商业化验证',
+}
+
+// 处理所属领域（带其他说明替换）
+const formatDomainsWithOther = (domains: any[], otherText?: string): string[] => {
+  if (!domains || !Array.isArray(domains)) return []
+  
+  return domains.map((d: any) => {
+    const name = d.name || d
+    // 如果领域名是"其他"或"other"且有其他说明文本，则替换
+    if ((name === '其他' || name === 'other') && otherText) {
+      return otherText
+    }
+    return name
+  })
+}
+
+// 处理预期成果转化（带其他说明替换）
+const formatAchievementTransformWithOther = (transforms: any, otherText?: string): string[] => {
+  if (!transforms) return []
+  
+  // 如果是字符串，尝试解析为数组
+  let arr = transforms
+  if (typeof transforms === 'string') {
+    try {
+      // 先尝试 JSON 解析
+      arr = JSON.parse(transforms)
+    } catch {
+      // JSON 解析失败，尝试按逗号分割（处理 "a,b,c" 格式）
+      arr = transforms.split(',').map((s: string) => s.trim()).filter(Boolean)
+    }
+  }
+  
+  if (!Array.isArray(arr) || arr.length === 0) return []
+  
+  return arr.map((t: string) => {
+    // 如果是"other"且有其他说明文本，则替换
+    if (t === 'other' && otherText) {
+      return otherText
+    }
+    return achievementTransformMap[t] || t
+  })
+}
+
+// 处理概念验证阶段需求（带多阶段说明替换）
+const formatPocStageWithNote = (stages: any, note?: string): string[] => {
+  if (!stages) return []
+  
+  // 如果是字符串，尝试解析为数组
+  let arr = stages
+  if (typeof stages === 'string') {
+    try {
+      // 先尝试 JSON 解析
+      arr = JSON.parse(stages)
+    } catch {
+      // JSON 解析失败，尝试按逗号分割（处理 "a,b,c" 格式）
+      arr = stages.split(',').map((s: string) => s.trim()).filter(Boolean)
+    }
+  }
+  
+  if (!Array.isArray(arr) || arr.length === 0) return []
+  
+  return arr.map((s: string) => {
+    // 如果是"multi_stage"或"multi_stage_combo"且有多阶段说明，则替换
+    if ((s === 'multi_stage' || s === 'multi_stage_combo') && note) {
+      return note
+    }
+    return pocStageMap[s] || s
+  })
 }
 
 const getProgressWidth = (status: string) => {
@@ -842,12 +931,13 @@ const getFileIcon = (mimeType?: string) => {
   return '📎'
 }
 
-const formatAmount = (amount: number) => {
-  if (!amount) return '0.00'
+const formatAmount = (amount: number | string | undefined) => {
+  const num = parseFloat(String(amount || 0))
+  if (isNaN(num)) return '0.00'
   return new Intl.NumberFormat('zh-CN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(amount)
+  }).format(num)
 }
 
 const formatDate = (dateString?: string) => {
@@ -1454,6 +1544,11 @@ const loadProjectDetail = async () => {
       teamMembers.value = response.data.team_members || []
       budgetItems.value = response.data.budget_items || []
       attachments.value = response.data.attachments || []
+      
+      // 非草稿状态才加载评审意见
+      if (response.data.status !== 'draft') {
+        await loadReviewFeedback(projectId)
+      }
 
       dbConnected.value = true
       console.log('✅ 项目详情加载成功')
@@ -1468,6 +1563,21 @@ const loadProjectDetail = async () => {
     ElMessage.error('加载项目详情失败')
   } finally {
     loading.value = false
+  }
+}
+
+const loadReviewFeedback = async (projectId: string) => {
+  try {
+    console.log('📥 加载评审意见, 项目ID:', projectId)
+    const response = await api.get(`/projects/${projectId}/reviews`)
+    console.log('📋 评审意见响应:', response)
+    if (response.success) {
+      reviewFeedback.value = response.data || []
+      console.log('✅ 评审意见加载成功, 数量:', reviewFeedback.value.length)
+    }
+  } catch (error) {
+    console.error('加载评审意见失败:', error)
+    reviewFeedback.value = []
   }
 }
 
@@ -1613,15 +1723,15 @@ onMounted(async () => {
 
 .header-left {
   display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .header-subtitle {
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-top: 8px;
 }
 
 .project-no {
@@ -2438,5 +2548,234 @@ onMounted(async () => {
   .tab-content {
     display: block !important;
   }
+}
+
+/* 图片展示 */
+.images-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+  margin-top: 16px;
+}
+
+.image-card {
+  border: 1px solid #e8e8e8;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  transition: all 0.3s;
+}
+
+.image-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-color: #b31b1b;
+}
+
+.image-preview {
+  width: 100%;
+  height: 200px;
+  overflow: hidden;
+  background: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s;
+}
+
+.image-card:hover .image-preview img {
+  transform: scale(1.05);
+}
+
+.image-info {
+  padding: 12px;
+}
+
+.image-name {
+  font-weight: 500;
+  color: #2c3e50;
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
+.image-desc {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.image-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #999;
+}
+
+.image-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.image-actions .download-btn,
+.image-actions .delete-btn {
+  flex: 1;
+  text-align: center;
+}
+
+/* 现代评审卡片样式 */
+.review-card-modern {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  margin-bottom: 20px;
+  transition: box-shadow 0.3s ease;
+}
+
+.review-card-modern:hover {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+}
+
+/* 评审结论头部 - 突出显示 */
+.review-conclusion-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  color: white;
+}
+
+.review-conclusion-header.accepted {
+  background: linear-gradient(135deg, #52c41a 0%, #389e0d 100%);
+}
+
+.review-conclusion-header.declined {
+  background: linear-gradient(135deg, #ff4d4f 0%, #cf1322 100%);
+}
+
+.review-conclusion-header.reviewing {
+  background: linear-gradient(135deg, #faad14 0%, #d48806 100%);
+}
+
+.conclusion-main {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.conclusion-label {
+  font-size: 13px;
+  opacity: 0.9;
+  font-weight: 400;
+}
+
+.conclusion-value {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+/* 专家信息区域 */
+.reviewer-info-section {
+  padding: 20px;
+  background: #fafbfc;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.info-row {
+  display: flex;
+  gap: 40px;
+  margin-bottom: 12px;
+}
+
+.info-row:last-child {
+  margin-bottom: 0;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.info-item.full-width {
+  width: 100%;
+}
+
+.info-label {
+  font-size: 12px;
+  color: #8c8c8c;
+  font-weight: 400;
+}
+
+.info-value {
+  font-size: 15px;
+  color: #262626;
+  font-weight: 500;
+}
+
+.info-value.name {
+  font-size: 17px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.info-value.field {
+  color: #595959;
+  line-height: 1.5;
+}
+
+/* 评审意见区域 */
+.review-content-section {
+  padding: 20px;
+}
+
+.content-header {
+  margin-bottom: 12px;
+}
+
+.content-label {
+  font-size: 13px;
+  color: #8c8c8c;
+  font-weight: 500;
+  padding-left: 8px;
+  border-left: 3px solid #1890ff;
+}
+
+.content-body {
+  background: #f6ffed;
+  border-radius: 8px;
+  padding: 16px;
+  border-left: 4px solid #52c41a;
+}
+
+.content-body p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.8;
+  color: #262626;
+  white-space: pre-wrap;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #7f8c8d;
+  background: #fafafa;
+  border-radius: 8px;
+  border: 1px dashed #f0f0f0;
+}
+
+.empty-state .hint {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #999;
 }
 </style>

@@ -7,15 +7,11 @@
       <div class="header-left">
         <el-button @click="goBack">
           <el-icon><ArrowLeft /></el-icon>
-          返回列表
+          返回项目管理
         </el-button>
         <h1 class="page-title">评审专家分配详情</h1>
       </div>
       <div class="header-actions">
-        <el-button type="primary" @click="assignMoreReviewer">
-          <el-icon><Plus /></el-icon>
-          分配更多专家
-        </el-button>
         <el-button @click="refreshData">
           <el-icon><Refresh /></el-icon>
           刷新
@@ -59,7 +55,7 @@
             </div>
           </div>
 
-          <div class="project-meta-grid">
+          <div class="project-meta-grid three-columns">
             <div class="meta-item">
               <div class="meta-label">申请人</div>
               <div class="meta-value">{{ project.applicant_name }}</div>
@@ -68,19 +64,21 @@
               <div class="meta-label">所属部门</div>
               <div class="meta-value">{{ project.applicant_department || '未填写' }}</div>
             </div>
-            <div class="meta-item">
+            <div class="meta-item research-domains-item">
               <div class="meta-label">研究领域</div>
-              <div class="meta-value">
-                <el-tag type="info">{{ project.research_field || '未指定' }}</el-tag>
+              <div class="meta-value domains-container">
+                <template v-if="project.research_domains && project.research_domains.length > 0">
+                  <el-tag 
+                    v-for="(domain, idx) in formatResearchDomains(project.research_domains, project.project_domain_other_text)" 
+                    :key="idx" 
+                    type="info"
+                    class="domain-tag"
+                  >
+                    {{ domain }}
+                  </el-tag>
+                </template>
+                <el-tag v-else type="info">未指定</el-tag>
               </div>
-            </div>
-            <div class="meta-item">
-              <div class="meta-label">提交时间</div>
-              <div class="meta-value">{{ formatDate(project.submit_date) }}</div>
-            </div>
-            <div class="meta-item">
-              <div class="meta-label">预算总额</div>
-              <div class="meta-value">{{ formatCurrency(project.budget_total) }}</div>
             </div>
           </div>
 
@@ -131,26 +129,7 @@
                   <div class="expertise-value">{{ reviewer.research_field || '未指定' }}</div>
                 </div>
 
-                <div class="reviewer-stats">
-                  <div class="stat-item">
-                    <div class="stat-label">评审状态</div>
-                    <div class="stat-value">{{ getReviewerStatusText(reviewer.status) }}</div>
-                  </div>
-                  <div class="stat-item">
-                    <div class="stat-label">提交时间</div>
-                    <div class="stat-value">{{ formatDate(reviewer.submitted_at) || '-' }}</div>
-                  </div>
-                </div>
-
                 <div class="reviewer-actions">
-                  <el-button
-                    type="primary"
-                    size="small"
-                    :icon="ChatDotRound"
-                    @click="contactReviewer(reviewer)"
-                  >
-                    联系
-                  </el-button>
                   <el-button
                     v-if="['draft', 'reviewing'].includes(reviewer.status)"
                     type="danger"
@@ -171,29 +150,6 @@
           </div>
         </div>
 
-        <!-- 分配记录 -->
-        <div class="assignment-history">
-          <div class="history-title">
-            <el-icon><Clock /></el-icon>
-            分配记录
-          </div>
-
-          <el-timeline>
-            <el-timeline-item
-              v-for="record in assignmentHistory"
-              :key="record.id"
-              :timestamp="formatDateTime(record.created_at)"
-              :color="getTimelineColor(record.action)"
-            >
-              <div class="timeline-content">
-                <div class="timeline-action">{{ getActionText(record.action) }}</div>
-                <div class="timeline-details">
-                  {{ record.details }}
-                </div>
-              </div>
-            </el-timeline-item>
-          </el-timeline>
-        </div>
       </el-card>
     </div>
 
@@ -209,52 +165,88 @@
     <el-dialog
       v-model="showAssignDialog"
       :title="`分配评审专家 - ${project?.title}`"
-      width="800px"
+      width="900px"
       destroy-on-close
     >
       <div v-if="project" class="assign-dialog-content">
-        <!-- 关键词 + 领域，搜索后再展示列表 -->
-        <div class="search-section assign-filters-row">
-          <el-input
-            v-model="reviewerSearch"
-            placeholder="姓名、部门、邮箱等关键词"
-            clearable
-            class="assign-search-input"
-            @keyup.enter="runReviewerSearch"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-          <el-select
-            v-model="selectedDomainId"
-            placeholder="按研究领域筛选"
-            clearable
-            filterable
-            class="assign-domain-select"
-          >
-            <el-option
-              v-for="d in researchDomains"
-              :key="d.id"
-              :label="d.name"
-              :value="d.id"
-            />
-          </el-select>
-          <el-button type="primary" :loading="reviewerSearchLoading" @click="runReviewerSearch">
-            搜索
-          </el-button>
+        <!-- 搜索和筛选区域 -->
+        <div class="search-section">
+          <div class="assign-filters-row">
+            <el-input
+              v-model="reviewerSearch"
+              placeholder="姓名、部门、邮箱等关键词搜索"
+              clearable
+              class="assign-search-input"
+              @keyup.enter="runReviewerSearch"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+            <el-button type="primary" :loading="reviewerSearchLoading" @click="runReviewerSearch">
+              搜索
+            </el-button>
+          </div>
+          
+          <!-- 研究领域筛选 -->
+          <div class="domain-filter-row">
+            <span class="filter-label">研究领域筛选：</span>
+            <el-select
+              v-model="selectedDomainIds"
+              placeholder="请选择研究领域（可多选，满足任一即可）"
+              clearable
+              filterable
+              multiple
+              collapse-tags
+              collapse-tags-tooltip
+              class="assign-domain-select-multiple"
+              @change="runReviewerSearch"
+            >
+              <el-option
+                v-for="d in researchDomains"
+                :key="d.id"
+                :label="d.name"
+                :value="d.id"
+              />
+            </el-select>
+            <el-button 
+              v-if="selectedDomainIds.length > 0" 
+              link 
+              type="primary" 
+              @click="clearDomainFilter"
+            >
+              清除筛选
+            </el-button>
+          </div>
+          
+          <!-- 项目领域提示 -->
+          <div v-if="project.research_domains && project.research_domains.length > 0" class="project-domains-hint">
+            <span class="hint-label">本项目研究领域：</span>
+            <el-tag 
+              v-for="(domain, idx) in formatResearchDomains(project.research_domains, project.project_domain_other_text)" 
+              :key="idx"
+              size="small"
+              type="success"
+              class="hint-tag"
+            >
+              {{ domain }}
+            </el-tag>
+          </div>
         </div>
-        <p class="assign-search-hint">请先输入关键词和/或选择领域，点击「搜索」后显示可分配专家（不会默认列出全部）。</p>
 
         <!-- 专家列表 -->
         <div class="available-reviewers-list">
-          <div v-if="!reviewerListShown" class="empty-reviewers">
-            <el-empty description="等待搜索" :image-size="72" />
+          <div v-if="reviewerSearchLoading" class="empty-reviewers">
+            <el-empty description="正在搜索..." :image-size="72" />
+          </div>
+          <div v-else-if="!reviewerListShown" class="empty-reviewers">
+            <el-empty description="正在加载专家列表..." :image-size="72" />
           </div>
           <div v-else-if="availableReviewers.length === 0" class="empty-reviewers">
             <el-empty description="没有找到符合条件的可用专家" />
           </div>
           <div v-else class="reviewer-select-list">
+            <div class="reviewers-count">共找到 {{ availableReviewers.length }} 位专家</div>
             <div
               v-for="reviewer in availableReviewers"
               :key="reviewer.id"
@@ -270,11 +262,18 @@
               </div>
               <div class="reviewer-select-info">
                 <div class="reviewer-select-name">{{ reviewer.name }}</div>
-                <div class="reviewer-select-department">{{ reviewer.department }}</div>
-                <div class="reviewer-select-field">
-                  <el-tag size="small" type="info">{{
-                    reviewer.research_field || '未指定'
-                  }}</el-tag>
+                <div class="reviewer-select-department">{{ reviewer.department || '未填写' }}</div>
+                <div class="reviewer-select-email" v-if="reviewer.email">{{ reviewer.email }}</div>
+                <div class="reviewer-select-fields">
+                  <el-tag 
+                    v-for="(field, idx) in reviewer.expertise_domains || [reviewer.research_field]" 
+                    :key="idx"
+                    size="small" 
+                    :type="isMatchingDomain(field) ? 'success' : 'info'"
+                    class="field-tag"
+                  >
+                    {{ field || '未指定' }}
+                  </el-tag>
                 </div>
               </div>
               <div class="reviewer-select-check">
@@ -314,8 +313,6 @@ import {
   Refresh,
   View,
   User,
-  Clock,
-  ChatDotRound,
   Delete,
   Plus,
   Search,
@@ -356,13 +353,12 @@ const assignLoading = ref(false)
 const showAssignDialog = ref(false)
 const project = ref<any>(null)
 const assignedReviewers = ref<any[]>([])
-const assignmentHistory = ref<any[]>([])
 const availableReviewers = ref<any[]>([])
 const selectedReviewerIds = ref<string[]>([])
 const reviewerSearch = ref('')
 /** 研究领域下拉（/api/research-domains） */
 const researchDomains = ref<{ id: string; name: string }[]>([])
-const selectedDomainId = ref<string>('')
+const selectedDomainIds = ref<string[]>([])
 /** 是否已执行过搜索（未搜索前不展示专家列表） */
 const reviewerListShown = ref(false)
 const reviewerSearchLoading = ref(false)
@@ -389,6 +385,20 @@ const formatCurrency = (amount: number) => {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
+}
+
+// 格式化研究领域，处理"其他"替换
+const formatResearchDomains = (domains: any[], otherText?: string): string[] => {
+  if (!domains || !Array.isArray(domains)) return []
+  
+  return domains.map((d: any) => {
+    const name = d.name || d
+    // 如果领域名是"其他"或"other"且有其他说明文本，则替换
+    if ((name === '其他' || name === 'other') && otherText) {
+      return otherText
+    }
+    return name
+  })
 }
 
 const getStatusText = (status: string) => {
@@ -445,35 +455,39 @@ const getReviewerStatusText = (status: string) => {
   return textMap[status] || status
 }
 
-const getTimelineColor = (action: string) => {
-  const colorMap: Record<string, string> = {
-    assign_reviewer: '#b31b1b',
-    remove_reviewer: '#ff4d4f',
-  }
-  return colorMap[action] || '#8c8c8c'
-}
-
-const getActionText = (action: string) => {
-  const textMap: Record<string, string> = {
-    assign_reviewer: '分配评审专家',
-    remove_reviewer: '移除评审专家',
-  }
-  return textMap[action] || action
-}
-
 // 加载项目详情
 const loadProjectDetail = async () => {
   loading.value = true
   try {
     const response = await api.get(`/projects/${projectId}`)
+    console.log('项目详情API响应:', response)
     if (response.success && response.data) {
-      const data = response.data.project || response.data
+      const data = response.data
+      console.log('项目详情数据:', data)
+      console.log('申请人部门:', data.applicant_department, data.department)
+      // 解析研究领域
+      let researchDomains = data.research_domains || []
+      if (typeof researchDomains === 'string') {
+        try {
+          researchDomains = JSON.parse(researchDomains)
+        } catch {
+          researchDomains = []
+        }
+      }
+      // 确保正确获取申请人部门
+      const applicantDept = data.applicant_department || data.department || data.applicant?.department
+      console.log('申请人部门原始值:', data.applicant_department)
+      console.log('申请人部门最终值:', applicantDept)
+      
       project.value = {
         ...data,
-        applicant_name: data.applicant_name,
-        applicant_department: data.department,
-        research_field: data.research_field,
+        applicant_name: data.applicant_name || data.applicant?.name || '未知',
+        applicant_department: applicantDept,
+        research_domains: researchDomains,
+        project_domain_other_text: data.project_domain_other_text,
       }
+      console.log('设置后的项目对象:', project.value)
+      console.log('项目对象中的部门:', project.value.applicant_department)
     }
   } catch (error) {
     console.error('加载项目详情失败:', error)
@@ -515,7 +529,7 @@ const confirmAssign = async () => {
       ElMessage.success(`成功分配 ${selectedReviewerIds.value.length} 位专家`)
       showAssignDialog.value = false
       selectedReviewerIds.value = []
-      await Promise.all([loadAssignedReviewers(), loadAssignmentHistory()])
+      await loadAssignedReviewers()
     } else {
       ElMessage.error(response.error || '分配失败')
     }
@@ -546,7 +560,7 @@ const removeReviewer = async (reviewer: any) => {
 
     if (response.success) {
       ElMessage.success('专家移除成功')
-      await Promise.all([loadAssignedReviewers(), loadAssignmentHistory()])
+      await loadAssignedReviewers()
     } else {
       ElMessage.error(response.error || '移除失败')
     }
@@ -555,24 +569,6 @@ const removeReviewer = async (reviewer: any) => {
     if (error !== 'cancel') {
       ElMessage.error('移除专家失败')
     }
-  }
-}
-
-// 加载分配历史
-const loadAssignmentHistory = async () => {
-  try {
-    const response = await api.get('/auditlog', {
-      params: {
-        table_name: 'ProjectReview',
-        record_id: projectId,
-        limit: 20,
-      },
-    })
-    if (response.success && response.data) {
-      assignmentHistory.value = response.data
-    }
-  } catch (error) {
-    console.error('加载分配历史失败:', error)
   }
 }
 
@@ -588,26 +584,38 @@ const loadResearchDomainsForAssign = async () => {
   }
 }
 
-/** 用户点击「搜索」或回车后拉取专家（打开弹窗时不自动拉全量） */
+/** 用户点击「搜索」或回车后拉取专家 */
 const runReviewerSearch = async () => {
-  const kw = reviewerSearch.value.trim()
-  if (!kw && !selectedDomainId.value) {
-    ElMessage.warning('请输入关键词或选择研究领域后再搜索')
-    return
-  }
   reviewerSearchLoading.value = true
   try {
-    const params: Record<string, string> = {
+    const params: Record<string, any> = {
       role: 'reviewer',
       status: 'active',
+      projectId: projectId,
     }
+    
+    const kw = reviewerSearch.value.trim()
     if (kw) params.keyword = kw
-    if (selectedDomainId.value) params.domain_id = selectedDomainId.value
+    
+    // 支持多选领域，满足任一即可
+    if (selectedDomainIds.value.length > 0) {
+      params.domain_ids = selectedDomainIds.value.join(',')
+    }
 
-    const response: any = await api.get('/users', { params })
+    const response: any = await api.get('/assistant/reviewers/available', { params })
     if (response.success && response.data) {
       const assignedIds = assignedReviewers.value.map((r) => r.id)
-      availableReviewers.value = response.data.filter((r: any) => !assignedIds.includes(r.id))
+      const reviewers = response.data.reviewers || []
+      availableReviewers.value = reviewers
+        .filter((r: any) => !assignedIds.includes(r.id))
+        .sort((a: any, b: any) => {
+          // 领域匹配的排在前面
+          const aMatch = a.is_domain_match || false
+          const bMatch = b.is_domain_match || false
+          if (aMatch && !bMatch) return -1
+          if (!aMatch && bMatch) return 1
+          return 0
+        })
       reviewerListShown.value = true
     }
   } catch (error) {
@@ -632,42 +640,124 @@ const toggleReviewerSelection = (reviewerId: string) => {
 const assignMoreReviewer = async () => {
   selectedReviewerIds.value = []
   reviewerSearch.value = ''
-  selectedDomainId.value = ''
+  selectedDomainIds.value = []
   availableReviewers.value = []
   reviewerListShown.value = false
   await loadResearchDomainsForAssign()
   showAssignDialog.value = true
+  // 自动加载与项目领域匹配的专家
+  await loadMatchingReviewers()
+}
+
+// 清除领域筛选
+const clearDomainFilter = () => {
+  selectedDomainIds.value = []
+  runReviewerSearch()
+}
+
+// 检查领域是否匹配（用于高亮显示）
+const isMatchingDomain = (field: string): boolean => {
+  if (!project.value?.research_domains) return false
+  const projectDomains = formatResearchDomains(
+    project.value.research_domains, 
+    project.value.project_domain_other_text
+  )
+  return projectDomains.some(pd => field && field.includes(pd))
+}
+
+// 自动加载与项目领域匹配的专家
+const loadMatchingReviewers = async () => {
+  reviewerSearchLoading.value = true
+  try {
+    // 获取项目的领域ID列表
+    const projectDomainIds: string[] = []
+    if (project.value?.research_domains && researchDomains.value.length > 0) {
+      const projectDomainNames = formatResearchDomains(
+        project.value.research_domains,
+        project.value.project_domain_other_text
+      )
+      projectDomainNames.forEach(name => {
+        const domain = researchDomains.value.find(d => d.name === name)
+        if (domain) projectDomainIds.push(domain.id)
+      })
+    }
+    
+    // 如果有项目领域，自动选中
+    if (projectDomainIds.length > 0) {
+      selectedDomainIds.value = projectDomainIds
+    }
+    
+    // 构建查询参数
+    const params: Record<string, any> = {
+      role: 'reviewer',
+      status: 'active',
+    }
+    if (projectDomainIds.length > 0) {
+      params.domain_ids = projectDomainIds.join(',')
+    }
+    
+    const response: any = await api.get('/assistant/reviewers/available', { 
+      params: { ...params, projectId }
+    })
+    
+    if (response.success && response.data) {
+      const assignedIds = assignedReviewers.value.map((r) => r.id)
+      // 优先显示领域匹配的专家
+      const reviewers = response.data.reviewers || []
+      availableReviewers.value = reviewers
+        .filter((r: any) => !assignedIds.includes(r.id))
+        .sort((a: any, b: any) => {
+          // 领域匹配的排在前面
+          const aMatch = a.is_domain_match || false
+          const bMatch = b.is_domain_match || false
+          if (aMatch && !bMatch) return -1
+          if (!aMatch && bMatch) return 1
+          return 0
+        })
+      reviewerListShown.value = true
+    }
+  } catch (error) {
+    console.error('加载匹配专家失败:', error)
+    ElMessage.error('加载专家列表失败')
+  } finally {
+    reviewerSearchLoading.value = false
+  }
 }
 
 // 处理分配成功
 const handleAssignmentSuccess = () => {
   loadAssignedReviewers()
-  loadAssignmentHistory()
   ElMessage.success('评审专家分配成功')
 }
 
 // 查看项目详情
 const viewProjectDetail = () => {
-  router.push(`/projects/detail/${projectId}`)
-}
-
-// 联系评审专家
-const contactReviewer = (reviewer: any) => {
-  if (reviewer.email) {
-    window.location.href = `mailto:${reviewer.email}`
+  // 传递来源参数，保持返回链路
+  const from = route.query.from as string
+  if (from) {
+    router.push(`/assistant/projects/detail/${projectId}?from=${from}`)
   } else {
-    ElMessage.warning('该评审专家没有留下联系方式')
+    router.push(`/assistant/projects/detail/${projectId}`)
   }
 }
 
-// 返回列表
+// 返回项目管理页面
 const goBack = () => {
-  router.push('/assistant/reviewer-assignment')
+  // 根据来源参数返回正确的页面
+  const from = route.query.from as string
+  if (from === 'my') {
+    router.push('/assistant/projects/my')
+  } else if (from === 'unassigned') {
+    router.push('/assistant/projects/unassigned')
+  } else {
+    // 默认返回项目管理页面
+    router.push('/assistant/projects')
+  }
 }
 
 // 刷新数据
 const refreshData = async () => {
-  await Promise.all([loadProjectDetail(), loadAssignedReviewers(), loadAssignmentHistory()])
+  await Promise.all([loadProjectDetail(), loadAssignedReviewers()])
 }
 
 // 组件挂载
@@ -791,6 +881,36 @@ onMounted(() => {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 20px;
   margin-bottom: 24px;
+}
+
+.project-meta-grid.three-columns {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+@media (max-width: 992px) {
+  .project-meta-grid.three-columns {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .project-meta-grid.three-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.research-domains-item {
+  grid-column: span 1;
+}
+
+.domains-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.domain-tag {
+  margin-right: 0;
 }
 
 .meta-item {
@@ -926,29 +1046,6 @@ onMounted(() => {
   font-weight: 500;
 }
 
-.reviewer-stats {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.stat-item {
-  text-align: center;
-}
-
-.stat-label {
-  font-size: 11px;
-  color: #999;
-  margin-bottom: 2px;
-}
-
-.stat-value {
-  font-size: 14px;
-  font-weight: 600;
-  color: #b31b1b;
-}
-
 .reviewer-actions {
   display: flex;
   gap: 8px;
@@ -973,45 +1070,16 @@ onMounted(() => {
   line-height: 1.5;
 }
 
-.assignment-history {
-  padding: 24px;
-}
-
-.history-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 18px;
-  font-weight: 600;
-  color: #1a1a1a;
-  margin-bottom: 20px;
-}
-
-.timeline-content {
-  background: #fafafa;
-  padding: 12px 16px;
-  border-radius: 6px;
-}
-
-.timeline-action {
-  font-weight: 500;
-  color: #1a1a1a;
-  margin-bottom: 4px;
-}
-
-.timeline-details {
-  font-size: 14px;
-  color: #666;
-}
-
 /* 分配对话框样式 */
 .assign-dialog-content {
-  max-height: 500px;
+  max-height: 600px;
   overflow-y: auto;
 }
 
 .search-section {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f0f0f0;
 }
 
 .assign-filters-row {
@@ -1019,22 +1087,51 @@ onMounted(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+  margin-bottom: 12px;
 }
 
 .assign-search-input {
   flex: 1;
-  min-width: 200px;
+  min-width: 280px;
 }
 
-.assign-domain-select {
-  width: 220px;
+.domain-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
-.assign-search-hint {
-  margin: 0 0 16px;
-  font-size: 12px;
-  color: #909399;
-  line-height: 1.5;
+.filter-label {
+  font-size: 14px;
+  color: #666;
+  white-space: nowrap;
+}
+
+.assign-domain-select-multiple {
+  flex: 1;
+  min-width: 300px;
+}
+
+.project-domains-hint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #f6ffed;
+  border-radius: 6px;
+  border: 1px solid #b7eb8f;
+}
+
+.hint-label {
+  font-size: 13px;
+  color: #52c41a;
+  font-weight: 500;
+}
+
+.hint-tag {
+  margin-right: 0;
 }
 
 .available-reviewers-list {
@@ -1096,6 +1193,30 @@ onMounted(() => {
   font-size: 12px;
 }
 
+.reviewer-select-email {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 4px;
+}
+
+.reviewer-select-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.field-tag {
+  margin-right: 0;
+}
+
+.reviewers-count {
+  padding: 8px 0;
+  font-size: 13px;
+  color: #666;
+  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 12px;
+}
+
 .reviewer-select-check {
   flex-shrink: 0;
 }
@@ -1127,8 +1248,5 @@ onMounted(() => {
 }
 
 @media (max-width: 480px) {
-  .reviewer-stats {
-    grid-template-columns: repeat(2, 1fr);
-  }
 }
 </style>

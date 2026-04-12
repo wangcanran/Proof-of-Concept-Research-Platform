@@ -12,7 +12,7 @@ const DB_CONFIG = {
   host: 'localhost',
   port: 3306,
   user: 'root',
-  password: '051005',
+  password: 'wn20041008',
   database: 'research_system',
   waitForConnections: true,
   connectionLimit: 10,
@@ -683,10 +683,25 @@ if (pathname === '/api/home/notices' && req.method === 'GET') {
       }
     }
     
+    // 获取用户权限列表
+    let userPermissions = [];
+    try {
+      const [permissions] = await pool.query(
+        'SELECT permission_code FROM `RolePermission` WHERE role = ? AND enabled = 1',
+        [user.role]
+      );
+      userPermissions = permissions.map(p => p.permission_code);
+    } catch (permError) {
+      console.log('获取用户权限失败:', permError.message);
+      // 如果权限表不存在或查询失败，使用默认权限
+      userPermissions = getDefaultPermissions(user.role);
+    }
+    
     console.log('✅ 用户登录成功:', { 
       username: user.username, 
       role: user.role,
       userId: user.id,
+      permissions: userPermissions,
       loginTime: new Date().toISOString()
     });
     
@@ -697,7 +712,8 @@ if (pathname === '/api/home/notices' && req.method === 'GET') {
       user: {
         ...userWithoutPassword,
         expertDomains: expertDomains
-      }
+      },
+      permissions: userPermissions
     });
   } catch (error) {
     console.error('登录错误:', error);
@@ -941,6 +957,56 @@ function generateToken(user) {
   };
   // 将对象转为 JSON 字符串后再 Base64 编码
   return Buffer.from(JSON.stringify(payload)).toString('base64');
+}
+
+// 获取角色默认权限
+function getDefaultPermissions(role) {
+  const defaultPermissions = {
+    'applicant': [
+      'view_dashboard',
+      'view_projects',
+      'create_project',
+      'edit_project',
+      'view_project_detail',
+      'view_project_progress',
+      'view_achievements',
+      'create_achievement',
+      'edit_achievement',
+      'view_funding',
+      'create_funding_application'
+    ],
+    'reviewer': [
+      'view_dashboard',
+      'view_review_tasks',
+      'submit_review',
+      'view_projects',
+      'view_project_detail'
+    ],
+    'project_manager': [
+      'view_dashboard',
+      'view_applications',
+      'review_applications',
+      'view_projects',
+      'view_project_detail',
+      'manage_project_progress',
+      'view_achievements',
+      'review_achievements',
+      'view_funding',
+      'review_funding_applications'
+    ],
+    'admin': [
+      'view_dashboard',
+      'view_admin_dashboard',
+      'manage_users',
+      'manage_projects',
+      'manage_achievements',
+      'manage_funding',
+      'manage_system',
+      'view_logs',
+      'manage_roles'
+    ]
+  };
+  return defaultPermissions[role] || [];
 }
 
 // 辅助函数：解码Token
@@ -5872,7 +5938,7 @@ if (pathname === '/api/assistant/applications' && req.method === 'GET') {
         p.manager_id,
         mgr.name as manager_name,
         u.name as applicant_name,
-        u.department,
+        u.department as applicant_department,
         u.title as applicant_title,
         u.email as applicant_email,
         u.phone as applicant_phone
@@ -5986,7 +6052,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
          ORDER BY rd.sort_order ASC
          LIMIT 1) AS first_domain_name,
         u.name as applicant_name,
-        u.department,
+        u.department as applicant_department,
         u.title as applicant_title,
         u.email as applicant_email,
         u.phone as applicant_phone,
@@ -6040,6 +6106,7 @@ if (pathname.startsWith('/api/assistant/applications/') && pathname.includes('/d
         pm.title,
         pm.organization,
         pm.email,
+        pm.phone,
         pm.sort_order,
         u.name AS linked_user_name,
         u.department,
@@ -10442,8 +10509,9 @@ function getRoleText(role) {
         const query = url.parse(req.url, true).query;
         const projectId = query.projectId;
         const keyword = query.keyword || '';
+        const domainIds = query.domain_ids ? query.domain_ids.split(',') : [];
         
-        console.log('获取可用评审专家列表，助理ID:', user.id, '项目ID:', projectId);
+        console.log('获取可用评审专家列表，助理ID:', user.id, '项目ID:', projectId, '领域IDs:', domainIds);
         
         // 获取当前项目已分配的评审专家ID
         let assignedReviewerIds = [];
@@ -10457,6 +10525,30 @@ function getRoleText(role) {
             [projectId],
           );
           assignedReviewerIds = assigned.map((item) => item.expert_id);
+        }
+        
+        // 获取项目的研究领域名称（用于领域匹配）
+        let projectDomainNames = [];
+        if (projectId) {
+          const [projectDomains] = await pool.query(
+            `
+            SELECT rd.name
+            FROM \`ProjectResearchDomain\` prd
+            INNER JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+            WHERE prd.project_id = ?
+          `,
+            [projectId],
+          );
+          projectDomainNames = projectDomains.map(d => d.name);
+        }
+        
+        // 构建查询条件
+        let whereConditions = ['u.role = ?', 'u.status = ?'];
+        let queryParams = ['reviewer', 'active'];
+        
+        if (keyword) {
+          whereConditions.push('(u.name LIKE ? OR u.department LIKE ? OR u.email LIKE ?)');
+          queryParams.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
         }
         
         // 查询评审专家
@@ -10483,24 +10575,23 @@ function getRoleText(role) {
             ) as recent_reviews
           FROM \`User\` u
           LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.id
-          WHERE u.role = 'reviewer'
-            AND u.status = 'active'
-            AND (u.name LIKE ? OR u.department LIKE ? OR u.title LIKE ?)
+          WHERE ${whereConditions.join(' AND ')}
           ORDER BY 
-            (u.name LIKE ?) DESC,
             completed_reviews ASC,
             u.name ASC
         `,
-          [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`],
+          queryParams,
         );
         
         // 获取专家的研究领域
         const reviewerIds = reviewers.map(r => r.id);
         let expertDomains = {};
+        let expertDomainIds = {};
         if (reviewerIds.length > 0) {
           const [domains] = await pool.query(`
             SELECT 
               ed.expert_id,
+              rd.id as domain_id,
               rd.name as research_field
             FROM \`ExpertDomain\` ed
             LEFT JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
@@ -10509,29 +10600,65 @@ function getRoleText(role) {
           
           domains.forEach(d => {
             if (!expertDomains[d.expert_id]) expertDomains[d.expert_id] = [];
+            if (!expertDomainIds[d.expert_id]) expertDomainIds[d.expert_id] = [];
             expertDomains[d.expert_id].push(d.research_field);
+            expertDomainIds[d.expert_id].push(d.domain_id);
           });
         }
         
-        // 格式化专家数据
-        const formattedReviewers = reviewers.map(reviewer => ({
-          id: reviewer.id,
-          name: reviewer.name,
-          email: reviewer.email,
-          department: reviewer.department,
-          title: reviewer.title,
-          phone: reviewer.phone,
-          research_field: expertDomains[reviewer.id] ? expertDomains[reviewer.id].join(', ') : '未指定',
-          organization: reviewer.department || '',
-          expertise_description: reviewer.expertise_description,
-          is_external: false,
-          status: reviewer.status,
-          completed_reviews: reviewer.completed_reviews || 0,
-          recent_reviews: reviewer.recent_reviews || 0,
-          created_at: reviewer.created_at ? reviewer.created_at.toISOString() : null,
-          is_assigned: assignedReviewerIds.includes(reviewer.id),
-          workload_score: calculateWorkloadScore(reviewer.recent_reviews || 0)
-        }));
+        // 格式化专家数据，并计算领域匹配
+        let formattedReviewers = reviewers.map(reviewer => {
+          const reviewerDomainIds = expertDomainIds[reviewer.id] || [];
+          const reviewerDomainNames = expertDomains[reviewer.id] || [];
+          
+          // 检查是否与项目领域匹配
+          let isDomainMatch = false;
+          if (projectDomainNames.length > 0 && reviewerDomainNames.length > 0) {
+            isDomainMatch = reviewerDomainNames.some(name => projectDomainNames.includes(name));
+          }
+          
+          // 检查是否满足筛选条件（如果有筛选）
+          let matchesFilter = true;
+          if (domainIds.length > 0) {
+            // 多选领域时，满足任一即可
+            matchesFilter = domainIds.some(id => reviewerDomainIds.includes(id));
+          }
+          
+          return {
+            id: reviewer.id,
+            name: reviewer.name,
+            email: reviewer.email,
+            department: reviewer.department,
+            title: reviewer.title,
+            phone: reviewer.phone,
+            research_field: reviewerDomainNames.join(', ') || '未指定',
+            expertise_domains: reviewerDomainNames,
+            expertise_domain_ids: reviewerDomainIds,
+            organization: reviewer.department || '',
+            expertise_description: reviewer.expertise_description,
+            is_external: false,
+            status: reviewer.status,
+            completed_reviews: reviewer.completed_reviews || 0,
+            recent_reviews: reviewer.recent_reviews || 0,
+            created_at: reviewer.created_at ? reviewer.created_at.toISOString() : null,
+            is_assigned: assignedReviewerIds.includes(reviewer.id),
+            is_domain_match: isDomainMatch,
+            workload_score: calculateWorkloadScore(reviewer.recent_reviews || 0),
+            matches_filter: matchesFilter
+          };
+        });
+        
+        // 如果有过滤条件，只返回匹配的专家
+        if (domainIds.length > 0) {
+          formattedReviewers = formattedReviewers.filter(r => r.matches_filter);
+        }
+        
+        // 按领域匹配排序（匹配的排在前面）
+        formattedReviewers.sort((a, b) => {
+          if (a.is_domain_match && !b.is_domain_match) return -1;
+          if (!a.is_domain_match && b.is_domain_match) return 1;
+          return 0;
+        });
         
         sendResponse(res, 200, {
           success: true,
@@ -10548,7 +10675,255 @@ function getRoleText(role) {
       return;
     }
 
-    // 3. 项目经理领取已提交项目（绑定 manager_id，后续由该经理负责）
+    // 3. 获取待领取项目列表（已提交但没有项目经理的项目）
+    if (pathname === '/api/assistant/projects/unassigned' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      try {
+        console.log('获取待领取项目列表，用户:', user.id);
+
+        // 查询已提交但没有项目经理的项目
+        const [projects] = await pool.query(
+          `
+          SELECT 
+            p.id,
+            p.project_code,
+            p.title,
+            p.status,
+            p.tech_maturity,
+            p.achievement_transform,
+            p.achievement_transform_other_text,
+            p.poc_stage_requirement,
+            p.poc_multi_stage_note,
+            p.project_domain_other_text,
+            p.created_at,
+            p.submit_date,
+            u.name as applicant_name,
+            u.department as applicant_department,
+            (
+              SELECT JSON_ARRAYAGG(
+                JSON_OBJECT('name', rd.name)
+              )
+              FROM \`ProjectResearchDomain\` prd
+              INNER JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+              WHERE prd.project_id = p.id
+            ) as research_domains
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE p.status = 'submitted'
+            AND (p.manager_id IS NULL OR p.manager_id = '')
+          ORDER BY p.created_at DESC
+        `
+        );
+
+        // 格式化数据
+        const formattedProjects = projects.map(project => ({
+          ...project,
+          research_domains: project.research_domains ? 
+            (typeof project.research_domains === 'string' ? 
+              JSON.parse(project.research_domains) : project.research_domains) : []
+        }));
+
+        sendResponse(res, 200, {
+          success: true,
+          data: formattedProjects
+        });
+
+      } catch (error) {
+        console.error('获取待领取项目列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取待领取项目列表失败' });
+      }
+      return;
+    }
+
+    // 4. 获取当前项目经理负责的项目列表
+    if (pathname === '/api/assistant/projects/my' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      try {
+        console.log('获取我的项目列表，项目经理:', user.id);
+
+        // 查询当前项目经理负责的项目
+        const [projects] = await pool.query(
+          `
+          SELECT 
+            p.id,
+            p.project_code,
+            p.title,
+            p.status,
+            p.tech_maturity,
+            p.achievement_transform,
+            p.achievement_transform_other_text,
+            p.poc_stage_requirement,
+            p.poc_multi_stage_note,
+            p.project_domain_other_text,
+            p.created_at,
+            p.submit_date,
+            u.name as applicant_name,
+            u.department as applicant_department,
+            (
+              SELECT COUNT(*) 
+              FROM \`ExpertAssignment\` ea 
+              WHERE ea.project_id = p.id
+            ) as review_count,
+            (
+              SELECT JSON_ARRAYAGG(
+                JSON_OBJECT('name', rd.name)
+              )
+              FROM \`ProjectResearchDomain\` prd
+              INNER JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+              WHERE prd.project_id = p.id
+            ) as research_domains
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE p.manager_id = ?
+          ORDER BY 
+            CASE p.status
+              WHEN 'under_review' THEN 1
+              WHEN 'submitted' THEN 2
+              WHEN 'approved' THEN 3
+              ELSE 4
+            END,
+            p.created_at DESC
+        `,
+          [user.id]
+        );
+
+        // 格式化数据
+        const formattedProjects = projects.map(project => ({
+          ...project,
+          research_domains: project.research_domains ? 
+            (typeof project.research_domains === 'string' ? 
+              JSON.parse(project.research_domains) : project.research_domains) : []
+        }));
+
+        sendResponse(res, 200, {
+          success: true,
+          data: formattedProjects
+        });
+
+      } catch (error) {
+        console.error('获取我的项目列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取我的项目列表失败' });
+      }
+      return;
+    }
+
+    // 5. 获取项目的评审意见列表（项目经理查看）
+    if (pathname.startsWith('/api/assistant/projects/') && pathname.endsWith('/reviews') && req.method === 'GET') {
+      const match = pathname.match(/\/api\/assistant\/projects\/(.+)\/reviews/);
+      if (!match) {
+        sendResponse(res, 400, { success: false, error: '无效的项目ID' });
+        return;
+      }
+
+      const projectId = match[1];
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      try {
+        // 验证项目经理是否有权限查看该项目
+        const [projects] = await pool.query(
+          'SELECT manager_id FROM \`Project\` WHERE id = ?',
+          [projectId]
+        );
+
+        if (projects.length === 0) {
+          sendResponse(res, 404, { success: false, error: '项目不存在' });
+          return;
+        }
+
+        // 项目经理只能查看自己负责的项目的评审意见，管理员可以查看所有
+        if (user.role !== 'admin' && projects[0].manager_id !== user.id) {
+          sendResponse(res, 403, { success: false, error: '您没有权限查看该项目的评审意见' });
+          return;
+        }
+
+        // 查询评审意见
+        const [reviews] = await pool.query(
+          `
+          SELECT 
+            ea.id,
+            ea.project_id,
+            ea.expert_id as reviewer_id,
+            u.name as reviewer_name,
+            u.department as reviewer_department,
+            u.title as reviewer_title,
+            ea.comment,
+            ea.status as review_status,
+            ea.assigned_at as created_at
+          FROM \`ExpertAssignment\` ea
+          LEFT JOIN \`User\` u ON ea.expert_id = u.id
+          WHERE ea.project_id = ? AND ea.status IN ('accepted', 'declined')
+          ORDER BY ea.assigned_at DESC
+        `,
+          [projectId]
+        );
+                
+        // 获取专家的研究领域
+        const expertIds = reviews.map(r => r.reviewer_id).filter(Boolean);
+        let expertDomains = {};
+        if (expertIds.length > 0) {
+          const [domains] = await pool.query(
+            `SELECT ed.expert_id, GROUP_CONCAT(rd.name SEPARATOR '、') as research_fields
+             FROM \`ExpertDomain\` ed
+             INNER JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
+             WHERE ed.expert_id IN (?)
+             GROUP BY ed.expert_id`,
+            [expertIds]
+          );
+          domains.forEach(d => {
+            expertDomains[d.expert_id] = d.research_fields || '';
+          });
+        }
+                
+        // 格式化返回数据
+        const parsedReviews = reviews.map((review) => {
+          return {
+            id: review.id,
+            project_id: review.project_id,
+            reviewer_id: review.reviewer_id,
+            reviewer_name: review.reviewer_name || '未知专家',
+            reviewer_department: review.reviewer_department || '',
+            reviewer_title: review.reviewer_title || '',
+            reviewer_research_field: expertDomains[review.reviewer_id] || '',
+            comments: review.comment || '',
+            recommendation: review.review_status === 'accepted' ? 'approve' : 'reject',
+            review_status: review.review_status,
+            created_at: review.created_at ? review.created_at.toISOString() : null
+          };
+        });
+        
+        sendResponse(res, 200, {
+          success: true,
+          data: parsedReviews
+        });
+
+      } catch (error) {
+        console.error('获取评审意见失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取评审意见失败' });
+      }
+      return;
+    }
+
+    // 6. 项目经理领取已提交项目（绑定 manager_id，后续由该经理负责）
     if (pathname === '/api/assistant/projects/claim' && req.method === 'POST') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -10600,7 +10975,7 @@ function getRoleText(role) {
             return;
           }
           await pool.query(
-            'UPDATE `Project` SET manager_id = ?, updated_at = NOW() WHERE id = ?',
+            'UPDATE \`Project\` SET manager_id = ?, status = \'under_review\', updated_at = NOW() WHERE id = ?',
             [managerId, projectId]
           );
           await pool.query(
@@ -10634,7 +11009,7 @@ function getRoleText(role) {
         }
 
         await pool.query(
-          'UPDATE `Project` SET manager_id = ?, updated_at = NOW() WHERE id = ?',
+          'UPDATE \`Project\` SET manager_id = ?, status = \'under_review\', updated_at = NOW() WHERE id = ?',
           [user.id, projectId]
         );
         await pool.query(
@@ -10654,7 +11029,85 @@ function getRoleText(role) {
       }
       return;
     }
-
+    
+    // 审批入库API
+    if (pathname.match(/^\/api\/assistant\/projects\/[^\/]+\/approve$/) && req.method === 'POST') {
+      const match = pathname.match(/\/api\/assistant\/projects\/([^\/]+)\/approve/);
+      const projectId = match ? match[1] : null;
+          
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+          
+      if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+          
+      try {
+        const body = await getBody(req);
+        const { result } = body;
+            
+        if (!result || !['accepted', 'rejected'].includes(result)) {
+          sendResponse(res, 400, { success: false, error: '请提供有效的审批结果(accepted/rejected)' });
+          return;
+        }
+        
+        // 映射审批结果到数据库status字段：accepted -> approved, rejected -> rejected
+        const dbStatus = result === 'accepted' ? 'approved' : 'rejected';
+            
+        // 检查项目是否存在且是当前用户负责
+        const [projects] = await pool.query(
+          'SELECT * FROM \`Project\` WHERE id = ?',
+          [projectId]
+        );
+            
+        if (projects.length === 0) {
+          sendResponse(res, 404, { success: false, error: '项目不存在' });
+          return;
+        }
+            
+        const project = projects[0];
+            
+        // 验证是否是项目负责人（使用字符串比较避免类型不匹配）
+        const isManager = String(project.manager_id) === String(user.id);
+        if (!isManager && user.role !== 'admin') {
+          sendResponse(res, 403, { success: false, error: '只有项目负责人才能审批' });
+          return;
+        }
+            
+        // 更新项目状态
+        await pool.query(
+          'UPDATE \`Project\` SET status = ?, updated_at = NOW() WHERE id = ?',
+          [dbStatus, projectId]
+        );
+            
+        // 如果项目被批准，同时设置批准日期
+        if (dbStatus === 'approved') {
+          await pool.query(
+            'UPDATE \`Project\` SET approval_date = CURDATE() WHERE id = ?',
+            [projectId]
+          );
+        }
+        
+        // 记录日志
+        await pool.query(
+          `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+           VALUES (?, 'project_approve', 'Project', ?, ?, NOW())`,
+          [user.id, projectId, JSON.stringify({ status: dbStatus })]
+        );
+            
+        sendResponse(res, 200, {
+          success: true,
+          message: result === 'accepted' ? '项目已接收入库' : '项目已拒绝入库',
+          data: { projectId, status: dbStatus }
+        });
+      } catch (error) {
+        console.error('审批失败:', error);
+        sendResponse(res, 500, { success: false, error: '审批失败' });
+      }
+      return;
+    }
+    
     // 4. 为项目分配评审专家（原 3）
     // 为项目分配评审专家
     if (pathname === '/api/assistant/projects/assign-reviewer' && req.method === 'POST') {
@@ -11162,7 +11615,10 @@ if (pathname === '/api/projects' && req.method === 'GET') {
           p.title,
           p.tech_maturity,
           p.achievement_transform,
+          p.achievement_transform_other_text,
           p.poc_stage_requirement,
+          p.poc_multi_stage_note,
+          p.project_domain_other_text,
           p.implementation_plan,
           p.keywords,
           p.abstract,
@@ -11246,7 +11702,10 @@ if (pathname === '/api/projects' && req.method === 'GET') {
         p.title,
         p.tech_maturity,
         p.achievement_transform,
+        p.achievement_transform_other_text,
         p.poc_stage_requirement,
+        p.poc_multi_stage_note,
+        p.project_domain_other_text,
         p.implementation_plan,
         p.keywords,
         p.abstract,
@@ -11258,6 +11717,7 @@ if (pathname === '/api/projects' && req.method === 'GET') {
         p.start_date,
         p.end_date,
         p.created_at,
+        p.updated_at,
         u.name as applicant_name
       FROM \`Project\` p
       LEFT JOIN \`User\` u ON p.applicant_id = u.id
@@ -11273,6 +11733,17 @@ if (pathname === '/api/projects' && req.method === 'GET') {
     query += ' ORDER BY p.created_at DESC';
     
     const [projects] = await pool.query(query, params);
+    
+    // 获取每个项目的研究领域
+    for (const project of projects) {
+      const [domains] = await pool.query(`
+        SELECT rd.id, rd.name, rd.code
+        FROM \`ProjectResearchDomain\` prd
+        JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+        WHERE prd.project_id = ?
+      `, [project.id]);
+      project.research_domains = domains;
+    }
     
     sendResponse(res, 200, {
       success: true,
@@ -11327,7 +11798,73 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
   }
   return;
 }
-    // ==================== 更新项目API ====================
+
+// ==================== 根据邮箱查找用户API ====================
+if (pathname === '/api/users/by-email' && req.method === 'GET') {
+  const token = req.headers.authorization;
+  const user = await verifyToken(token);
+  
+  if (!user) {
+    sendResponse(res, 401, {
+      success: false,
+      error: '认证失败'
+    });
+    return;
+  }
+  
+  const reqUrl = new URL(req.url, `http://${req.headers.host}`);
+  const email = reqUrl.searchParams.get('email');
+  
+  console.log('🔍 根据邮箱查找用户:', email);
+  
+  if (!email) {
+    sendResponse(res, 400, {
+      success: false,
+      error: '邮箱参数不能为空'
+    });
+    return;
+  }
+  
+  try {
+    const trimmedEmail = email.trim();
+    console.log('🔍 查询邮箱:', trimmedEmail);
+    
+    const [users] = await pool.query(
+      'SELECT id, name, email, department, title, phone FROM `User` WHERE email = ?',
+      [trimmedEmail]
+    );
+    
+    console.log('🔍 查询结果:', users.length > 0 ? '找到用户' : '未找到用户', users[0] || null);
+    
+    if (users.length > 0) {
+      sendResponse(res, 200, {
+        success: true,
+        data: {
+          exists: true,
+          user: users[0]
+        }
+      });
+    } else {
+      sendResponse(res, 200, {
+        success: true,
+        data: {
+          exists: false,
+          user: null
+        }
+      });
+    }
+  } catch (error) {
+    console.error('查找用户失败:', error);
+    sendResponse(res, 500, {
+      success: false,
+      error: '查找用户失败',
+      message: error.message
+    });
+  }
+  return;
+}
+
+// ==================== 更新项目API ====================
     if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'PUT') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -11366,7 +11903,8 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
         const project = projects[0];
         
         // 检查权限
-        const isOwner = project.applicant_id === user.id;
+        const userId = user.userId || user.id;
+        const isOwner = project.applicant_id === userId;
         const isAdmin = checkPermission(user.role, 'admin');
         
         if (!isOwner && !isAdmin) {
@@ -11378,6 +11916,11 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
         }
         
         const body = await parseRequestBody(req);
+        
+        console.log('📥 更新项目收到的数据:', JSON.stringify(body, null, 2));
+        console.log('💰 预算数据:', JSON.stringify(body.budget_items, null, 2));
+        console.log('🎯 achievement_transform 类型:', typeof body.achievement_transform, '值:', body.achievement_transform);
+        console.log('🎯 poc_stage_requirement 类型:', typeof body.poc_stage_requirement, '值:', body.poc_stage_requirement);
         
         // 构建更新字段（与 database/research_system_db.sql `Project` 表一致）
         const updateFields = [];
@@ -11413,6 +11956,18 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
               nextNormStatus = normalizeProjectStatusForDb(v);
               v = nextNormStatus;
             }
+            // 处理数组类型字段（SET类型），转换为逗号分隔的字符串
+            if (field === 'achievement_transform' || field === 'poc_stage_requirement') {
+              if (Array.isArray(v)) {
+                // 如果数组为空，设置为null；否则转换为逗号分隔的字符串（去除每个值的前后空格）
+                v = v.length > 0 ? v.map(item => String(item).trim()).join(',') : null;
+              } else if (typeof v === 'string') {
+                // 如果已经是字符串，去除所有空格后如果为空则设为null
+                v = v.replace(/\s+/g, '').trim() || null;
+              } else {
+                v = null;
+              }
+            }
             updateFields.push(`${field} = ?`);
             updateValues.push(v);
           }
@@ -11433,19 +11988,228 @@ if (pathname === '/api/research-domains' && req.method === 'GET') {
         }
         
         if (updateFields.length === 0) {
-          sendResponse(res, 400, {
-            success: false,
-            error: '没有提供更新数据'
-          });
-          return;
+          // 如果没有 Project 表字段需要更新，检查是否有关联数据需要更新
+          const hasRelatedData = 
+            (body.team_members && Array.isArray(body.team_members)) ||
+            (body.budget_items && Array.isArray(body.budget_items)) ||
+            (body.images && Array.isArray(body.images)) ||
+            (body.attachments && Array.isArray(body.attachments)) ||
+            (body.research_domains && Array.isArray(body.research_domains));
+          
+          if (!hasRelatedData) {
+            sendResponse(res, 400, {
+              success: false,
+              error: '没有提供更新数据'
+            });
+            return;
+          }
+          // 有关联数据需要更新，跳过 Project 表更新
+          console.log('📝 没有 Project 表字段需要更新，但有关联数据需要更新');
+        } else {
+          updateValues.push(projectId);
+          const updateSql = `UPDATE \`Project\` SET ${updateFields.join(', ')}, updated_at = NOW() WHERE id = ?`;
+          console.log('📝 生成的SQL:', updateSql);
+          console.log('📝 SQL参数:', updateValues);
+          await pool.query(updateSql, updateValues);
         }
         
-        updateValues.push(projectId);
+        // 更新项目成员（如果提供了team_members）
+        if (body.team_members && Array.isArray(body.team_members)) {
+          console.log('👥 更新项目成员:', body.team_members.length);
+          
+          // 先删除现有成员
+          await pool.query('DELETE FROM `ProjectMember` WHERE project_id = ?', [projectId]);
+          
+          // 插入新成员
+          for (let i = 0; i < body.team_members.length; i++) {
+            const member = body.team_members[i];
+            // 根据邮箱查找或创建用户
+            let memberUserId = null;
+            let existingUser = null;
+            
+            if (member.email && member.email.trim()) {
+              const [users] = await pool.query(
+                'SELECT id, name, department, title, phone FROM `User` WHERE email = ?',
+                [member.email.trim()]
+              );
+              if (users.length > 0) {
+                existingUser = users[0];
+                memberUserId = existingUser.id;
+                // 如果申请人填写的内容与User表不同，更新User表
+                const needsUpdate = (
+                  (member.name && member.name !== existingUser.name) ||
+                  (member.organization && member.organization !== existingUser.department) ||
+                  (member.title && member.title !== existingUser.title) ||
+                  (member.phone && member.phone !== existingUser.phone)
+                );
+                if (needsUpdate) {
+                  await pool.query(
+                    `UPDATE \`User\` SET 
+                      name = COALESCE(?, name),
+                      department = COALESCE(?, department),
+                      title = COALESCE(?, title),
+                      phone = COALESCE(?, phone),
+                      updated_at = NOW()
+                    WHERE id = ?`,
+                    [
+                      member.name || existingUser.name,
+                      member.organization || existingUser.department,
+                      member.title || existingUser.title,
+                      member.phone || existingUser.phone,
+                      existingUser.id
+                    ]
+                  );
+                  console.log('🔄 更新现有用户信息:', member.email);
+                }
+              } else {
+                // 创建新用户（inactive状态）
+                memberUserId = randomUUID();
+                await pool.query(
+                  `INSERT INTO \`User\` (
+                    id, name, email, department, title, phone, role, status, created_at, updated_at
+                  ) VALUES (?, ?, ?, ?, ?, ?, 'applicant', 'inactive', NOW(), NOW())`,
+                  [
+                    memberUserId,
+                    member.name || '',
+                    member.email.trim(),
+                    member.organization || null,
+                    member.title || null,
+                    member.phone || null
+                  ]
+                );
+                console.log('✅ 创建新用户:', member.email);
+              }
+            }
+            
+            // 插入项目成员记录
+            if (member.name && member.name.trim()) {
+              await pool.query(`
+                INSERT INTO \`ProjectMember\` (
+                  id, project_id, name, user_id, role, title, 
+                  organization, email, phone, sort_order, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+              `, [
+                randomUUID(),
+                projectId,
+                member.name,
+                memberUserId,
+                member.role || 'other',
+                member.title || null,
+                member.organization || null,
+                member.email || '',
+                member.phone || null,
+                i
+              ]);
+            }
+          }
+          console.log('✅ 项目成员更新成功');
+        }
         
-        const updateSql = `UPDATE \`Project\` SET ${updateFields.join(', ')}, updated_at = NOW() WHERE id = ?`;
+        // 更新预算（如果提供了budget_items）
+        if (body.budget_items && Array.isArray(body.budget_items)) {
+          console.log('💰 更新预算:', body.budget_items.length);
+          console.log('💰 预算详细数据:', JSON.stringify(body.budget_items, null, 2));
+          await pool.query('DELETE FROM `ProjectBudget` WHERE project_id = ?', [projectId]);
+          let savedCount = 0;
+          for (let i = 0; i < body.budget_items.length; i++) {
+            const item = body.budget_items[i];
+            console.log(`💰 处理预算项 ${i}:`, { category: item.category, item_name: item.item_name, amount: item.amount });
+            if (item.category && item.item_name) {
+              await pool.query(`
+                INSERT INTO \`ProjectBudget\` (
+                  id, project_id, category, item_name, description, amount, sort_order, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+              `, [
+                randomUUID(),
+                projectId,
+                item.category,
+                item.item_name,
+                item.description || '',
+                parseFloat(item.amount) || 0,
+                i
+              ]);
+              savedCount++;
+              console.log(`✅ 预算项 ${i} 保存成功`);
+            } else {
+              console.log(`⚠️ 预算项 ${i} 缺少必填字段，跳过`);
+            }
+          }
+          console.log(`✅ 预算更新成功，共保存 ${savedCount} 条记录`);
+        }
+
+        // 更新图片（如果提供了images）
+        if (body.images && Array.isArray(body.images)) {
+          console.log('🖼️ 更新图片:', body.images.length);
+          await pool.query('DELETE FROM `ProjectAttachment` WHERE project_id = ? AND type = ?', [projectId, 'image']);
+          for (let i = 0; i < body.images.length; i++) {
+            const img = body.images[i];
+            if (img.file_path) {
+              await pool.query(`
+                INSERT INTO \`ProjectAttachment\` (
+                  id, project_id, file_name, file_path, file_size, mime_type, type, description, sort_order, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+              `, [
+                randomUUID(),
+                projectId,
+                img.file_name,
+                img.file_path,
+                img.file_size,
+                img.mime_type,
+                'image',
+                img.description || '',
+                i
+              ]);
+            }
+          }
+          console.log('✅ 图片更新成功');
+        }
+
+        // 更新附件（如果提供了attachments）
+        if (body.attachments && Array.isArray(body.attachments)) {
+          console.log('📎 更新附件:', body.attachments.length);
+          await pool.query('DELETE FROM `ProjectAttachment` WHERE project_id = ? AND type = ?', [projectId, 'attachment']);
+          for (let i = 0; i < body.attachments.length; i++) {
+            const att = body.attachments[i];
+            if (att.file_path) {
+              await pool.query(`
+                INSERT INTO \`ProjectAttachment\` (
+                  id, project_id, file_name, file_path, file_size, mime_type, type, description, sort_order, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+              `, [
+                randomUUID(),
+                projectId,
+                att.file_name,
+                att.file_path,
+                att.file_size,
+                att.mime_type,
+                'attachment',
+                att.description || '',
+                i
+              ]);
+            }
+          }
+          console.log('✅ 附件更新成功');
+        }
         
-        await pool.query(updateSql, updateValues);
-        
+        // 更新研究领域（如果提供了research_domains）
+        if (body.research_domains && Array.isArray(body.research_domains)) {
+          console.log('🔬 更新研究领域:', body.research_domains.length);
+                  
+          // 先删除现有研究领域关联
+          await pool.query('DELETE FROM \`ProjectResearchDomain\` WHERE project_id = ?', [projectId]);
+                  
+          // 插入新的研究领域关联
+          for (const domainId of body.research_domains) {
+            if (domainId) {
+              await pool.query(`
+                INSERT INTO \`ProjectResearchDomain\` (project_id, research_domain_id, created_at)
+                VALUES (?, ?, NOW())
+              `, [projectId, domainId]);
+            }
+          }
+          console.log('✅ 研究领域更新成功');
+        }
+                
         sendResponse(res, 200, {
           success: true,
           message: '项目更新成功',
@@ -12775,7 +13539,9 @@ if (pathname.startsWith('/api/projects/attachments/') && req.method === 'DELETE'
   return;
 }
 // 获取单个项目详情
-if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'GET') {
+// 注意：需要排除 /reviews 等子路由，它们有单独的处理逻辑
+if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'GET' && !pathname.endsWith('/reviews') && !pathname.includes('/reviews/')) {
+  console.log('📁 项目详情路由匹配:', pathname);
   const authHeader = req.headers.authorization;
   let token = authHeader;
   if (token && token.startsWith('Bearer ')) {
@@ -12838,7 +13604,8 @@ if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/
         p.created_at,
         p.updated_at,
         p.applicant_id,
-        u.name as applicant_name
+        u.name as applicant_name,
+        u.department as applicant_department
       FROM \`Project\` p
       LEFT JOIN \`User\` u ON p.applicant_id = u.id
       WHERE p.id = ?
@@ -12854,13 +13621,14 @@ if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/
     
     const project = projects[0];
     
-    // 检查权限：申请人本人、项目经理、管理员可以查看
+    // 检查权限：申请人本人、项目经理、管理员、评审专家可以查看
     const userId = user.userId || user.id;
     const isApplicant = project.applicant_id === userId;
     const isAdmin = checkPermission(user.role, 'admin');
     const isProjectManager = checkPermission(user.role, 'project_manager');
+    const isReviewer = checkPermission(user.role, 'reviewer');
     
-    if (!isApplicant && !isProjectManager && !isAdmin) {
+    if (!isApplicant && !isProjectManager && !isAdmin && !isReviewer) {
       sendResponse(res, 403, {
         success: false,
         error: '没有权限查看此项目'
@@ -12873,10 +13641,10 @@ if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/
     let pocStageRequirement = [];
     
     if (project.achievement_transform) {
-      achievementTransform = project.achievement_transform.split(',');
+      achievementTransform = project.achievement_transform.split(',').map(s => s.trim()).filter(Boolean);
     }
     if (project.poc_stage_requirement) {
-      pocStageRequirement = project.poc_stage_requirement.split(',');
+      pocStageRequirement = project.poc_stage_requirement.split(',').map(s => s.trim()).filter(Boolean);
     }
     
     // 获取项目研究领域（通过关联表）
@@ -12901,6 +13669,7 @@ if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/
         pm.title,
         pm.organization,
         pm.email,
+        pm.phone,
         pm.sort_order
       FROM \`ProjectMember\` pm
       WHERE pm.project_id = ?
@@ -12968,6 +13737,7 @@ if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/
         updated_at: project.updated_at,
         applicant_id: project.applicant_id,
         applicant_name: project.applicant_name,
+        applicant_department: project.applicant_department,
         research_domains: researchDomains,
         total_budget: totalBudget,
         team_members: members,
@@ -13055,7 +13825,9 @@ if ((pathname.match(/^\/api\/project\/[^\/]+$/) || pathname.match(/^\/api\/proje
         p.created_at,
         p.updated_at,
         p.applicant_id,
-        u.name as applicant_name
+        p.manager_id,
+        u.name as applicant_name,
+        u.department as applicant_department
       FROM \`Project\` p
       LEFT JOIN \`User\` u ON p.applicant_id = u.id
       WHERE p.id = ?
@@ -13090,10 +13862,10 @@ if ((pathname.match(/^\/api\/project\/[^\/]+$/) || pathname.match(/^\/api\/proje
     let pocStageRequirement = [];
     
     if (project.achievement_transform) {
-      achievementTransform = project.achievement_transform.split(',');
+      achievementTransform = project.achievement_transform.split(',').map(s => s.trim()).filter(Boolean);
     }
     if (project.poc_stage_requirement) {
-      pocStageRequirement = project.poc_stage_requirement.split(',');
+      pocStageRequirement = project.poc_stage_requirement.split(',').map(s => s.trim()).filter(Boolean);
     }
     
     // 获取研究领域
@@ -13106,7 +13878,7 @@ if ((pathname.match(/^\/api\/project\/[^\/]+$/) || pathname.match(/^\/api\/proje
     
     // 获取团队成员
     const [members] = await pool.query(`
-      SELECT id, name, user_id, role, title, organization, email, sort_order
+      SELECT id, name, user_id, role, title, organization, email, phone, sort_order
       FROM \`ProjectMember\`
       WHERE project_id = ?
       ORDER BY sort_order ASC
@@ -13150,6 +13922,127 @@ if ((pathname.match(/^\/api\/project\/[^\/]+$/) || pathname.match(/^\/api\/proje
   }
   return;
 }
+
+// 申请人获取项目评审意见
+if (pathname.match(/^\/api\/projects\/[^\/]+\/reviews$/) && req.method === 'GET') {
+  const match = pathname.match(/\/api\/projects\/([^\/]+)\/reviews/);
+  const projectId = match ? match[1] : null;
+  console.log('📋 申请人获取评审意见, 项目ID:', projectId);
+  
+  const authHeader = req.headers.authorization;
+  let token = authHeader;
+  if (token && token.startsWith('Bearer ')) {
+    token = token.substring(7);
+  }
+  
+  const user = await verifyToken(token);
+  console.log('👤 当前用户:', user ? { id: user.id, role: user.role } : null);
+  
+  if (!user) {
+    sendResponse(res, 401, { success: false, error: '认证失败' });
+    return;
+  }
+  
+  try {
+    // 验证是否是项目申请人
+    const [projects] = await pool.query(
+      'SELECT applicant_id FROM \`Project\` WHERE id = ?',
+      [projectId]
+    );
+    
+    if (projects.length === 0) {
+      sendResponse(res, 404, { success: false, error: '项目不存在' });
+      return;
+    }
+    
+    // 只有项目申请人、管理员、评审专家可以查看评审意见
+    const isApplicant = String(projects[0].applicant_id) === String(user.id);
+    const isAdmin = user.role === 'admin';
+    const isReviewer = user.role === 'reviewer';
+    console.log('🔐 权限检查:', { applicant_id: projects[0].applicant_id, user_id: user.id, isApplicant, isAdmin, isReviewer });
+    
+    if (!isApplicant && !isAdmin && !isReviewer) {
+      sendResponse(res, 403, { success: false, error: '您没有权限查看该项目的评审意见' });
+      return;
+    }
+        
+    // 查询评审意见
+    // 如果是评审专家，只能看到自己的评审意见
+    // 如果是申请人或管理员，可以看到所有评审意见
+    let reviewsQuery = `
+      SELECT
+        ea.id,
+        ea.project_id,
+        ea.expert_id as reviewer_id,
+        u.name as reviewer_name,
+        u.department as reviewer_department,
+        u.title as reviewer_title,
+        ea.comment,
+        ea.status as review_status,
+        ea.assigned_at as created_at
+      FROM \`ExpertAssignment\` ea
+      LEFT JOIN \`User\` u ON ea.expert_id = u.id
+      WHERE ea.project_id = ? AND ea.status IN ('accepted', 'declined')
+    `;
+    let queryParams = [projectId];
+        
+    // 如果是评审专家，只查看自己的评审意见
+    if (isReviewer && !isAdmin && !isApplicant) {
+      reviewsQuery += ` AND ea.expert_id = ?`;
+      queryParams.push(user.id);
+    }
+        
+    reviewsQuery += ` ORDER BY ea.assigned_at DESC`;
+        
+    const [reviews] = await pool.query(reviewsQuery, queryParams);
+    console.log('📊 查询到评审意见数量:', reviews.length);
+    
+    // 获取专家的研究领域
+    const expertIds = reviews.map(r => r.reviewer_id).filter(Boolean);
+    let expertDomains = {};
+    if (expertIds.length > 0) {
+      const [domains] = await pool.query(
+        `SELECT ed.expert_id, GROUP_CONCAT(rd.name SEPARATOR '、') as research_fields
+         FROM \`ExpertDomain\` ed
+         INNER JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
+         WHERE ed.expert_id IN (?)
+         GROUP BY ed.expert_id`,
+        [expertIds]
+      );
+      domains.forEach(d => {
+        expertDomains[d.expert_id] = d.research_fields || '';
+      });
+    }
+    
+    // 格式化返回数据
+    const parsedReviews = reviews.map((review) => {
+      return {
+        id: review.id,
+        project_id: review.project_id,
+        reviewer_id: review.reviewer_id,
+        reviewer_name: review.reviewer_name || '未知专家',
+        reviewer_department: review.reviewer_department || '',
+        reviewer_title: review.reviewer_title || '',
+        reviewer_research_field: expertDomains[review.reviewer_id] || '',
+        comments: review.comment || '',
+        recommendation: review.review_status === 'accepted' ? 'approve' : 'reject',
+        review_status: review.review_status,
+        created_at: review.created_at ? review.created_at.toISOString() : null
+      };
+    });
+
+    sendResponse(res, 200, {
+      success: true,
+      data: parsedReviews
+    });
+
+  } catch (error) {
+    console.error('获取评审意见失败:', error);
+    sendResponse(res, 500, { success: false, error: '获取评审意见失败' });
+  }
+  return;
+}
+
 // 创建项目
 if (pathname === '/api/projects' && req.method === 'POST') {
   const authHeader = req.headers.authorization;
@@ -13173,6 +14066,7 @@ if (pathname === '/api/projects' && req.method === 'POST') {
   
   console.log('👤 创建项目的用户:', { userId, username: user.username });
   console.log('📥 接收到的数据:', JSON.stringify(body, null, 2));
+  console.log('💰 创建项目 - 预算数据:', JSON.stringify(body.budget_items, null, 2));
   
   // 验证必填字段
   if (!body.title) {
@@ -13199,12 +14093,12 @@ if (pathname === '/api/projects' && req.method === 'POST') {
     console.log('📝 创建项目:', { projectId, projectCode, title: body.title });
     
     // 处理 SET 类型字段：将数组转换为逗号分隔的字符串
-    const achievementTransform = body.achievement_transform && body.achievement_transform.length > 0
-      ? body.achievement_transform.join(',')
+    const achievementTransform = body.achievement_transform && Array.isArray(body.achievement_transform) && body.achievement_transform.length > 0
+      ? body.achievement_transform.map(item => String(item).trim()).join(',')
       : null;
     
-    const pocStageRequirement = body.poc_stage_requirement && body.poc_stage_requirement.length > 0
-      ? body.poc_stage_requirement.join(',')
+    const pocStageRequirement = body.poc_stage_requirement && Array.isArray(body.poc_stage_requirement) && body.poc_stage_requirement.length > 0
+      ? body.poc_stage_requirement.map(item => String(item).trim()).join(',')
       : null;
     
     const submitDate = body.submit_date || new Date().toISOString().split('T')[0];
@@ -13285,21 +14179,81 @@ if (pathname === '/api/projects' && req.method === 'POST') {
       console.log('👥 插入项目成员:', body.team_members.length);
       for (let i = 0; i < body.team_members.length; i++) {
         const member = body.team_members[i];
+        // 根据邮箱查找或创建用户
+        let memberUserId = null;
+        let existingUser = null;
+        
+        if (member.email && member.email.trim()) {
+          const [users] = await pool.query(
+            'SELECT id, name, department, title, phone FROM `User` WHERE email = ?',
+            [member.email.trim()]
+          );
+          if (users.length > 0) {
+            existingUser = users[0];
+            memberUserId = existingUser.id;
+            // 如果申请人填写的内容与User表不同，更新User表
+            const needsUpdate = (
+              (member.name && member.name !== existingUser.name) ||
+              (member.organization && member.organization !== existingUser.department) ||
+              (member.title && member.title !== existingUser.title) ||
+              (member.phone && member.phone !== existingUser.phone)
+            );
+            if (needsUpdate) {
+              await pool.query(
+                `UPDATE \`User\` SET 
+                  name = COALESCE(?, name),
+                  department = COALESCE(?, department),
+                  title = COALESCE(?, title),
+                  phone = COALESCE(?, phone),
+                  updated_at = NOW()
+                WHERE id = ?`,
+                [
+                  member.name || existingUser.name,
+                  member.organization || existingUser.department,
+                  member.title || existingUser.title,
+                  member.phone || existingUser.phone,
+                  existingUser.id
+                ]
+              );
+              console.log('🔄 更新现有用户信息:', member.email);
+            }
+          } else {
+            // 创建新用户（inactive状态）
+            memberUserId = randomUUID();
+            await pool.query(
+              `INSERT INTO \`User\` (
+                id, name, email, department, title, phone, role, status, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, 'applicant', 'inactive', NOW(), NOW())`,
+              [
+                memberUserId,
+                member.name || '',
+                member.email.trim(),
+                member.organization || null,
+                member.title || null,
+                member.phone || null
+              ]
+            );
+            console.log('✅ 创建新用户:', member.email);
+          }
+        }
+        
+        // 插入项目成员记录
         if (member.name && member.name.trim()) {
           await pool.query(`
             INSERT INTO \`ProjectMember\` (
               id, project_id, name, user_id, role, title, 
-              organization, email, sort_order, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+              organization, email, phone, sort_order, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
           `, [
             randomUUID(),
             projectId,
             member.name,
-            member.user_id || null,
+            memberUserId,
             member.role || 'other',
             member.title || null,
             member.organization || null,
             member.email || '',
+            member.phone || null,
             i
           ]);
         }
@@ -13308,16 +14262,16 @@ if (pathname === '/api/projects' && req.method === 'POST') {
     } else {
       // 默认添加申请人作为负责人
       const [userInfo] = await pool.query(
-        'SELECT name, email, department, title FROM `User` WHERE id = ?',
+        'SELECT name, email, department, title, phone FROM `User` WHERE id = ?',
         [userId]
       );
-      const currentUser = userInfo[0] || { name: user.username, email: '', department: '', title: '' };
+      const currentUser = userInfo[0] || { name: user.username, email: '', department: '', title: '', phone: '' };
       
       await pool.query(`
         INSERT INTO \`ProjectMember\` (
           id, project_id, name, user_id, role, title, 
-          organization, email, sort_order, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+          organization, email, phone, sort_order, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `, [
         randomUUID(),
         projectId,
@@ -13327,6 +14281,7 @@ if (pathname === '/api/projects' && req.method === 'POST') {
         currentUser.title || null,
         currentUser.department || null,
         currentUser.email || '',
+        currentUser.phone || null,
         0
       ]);
       console.log('✅ 默认负责人添加成功');
@@ -13335,9 +14290,13 @@ if (pathname === '/api/projects' && req.method === 'POST') {
     // 4. 插入预算明细
     if (body.budget_items && body.budget_items.length > 0) {
       console.log('💰 插入预算明细:', body.budget_items.length);
+      console.log('💰 预算详细数据:', JSON.stringify(body.budget_items, null, 2));
+      let savedCount = 0;
       for (let i = 0; i < body.budget_items.length; i++) {
         const item = body.budget_items[i];
-        if (item.category && item.item_name && item.amount > 0) {
+        console.log(`💰 处理预算项 ${i}:`, { category: item.category, item_name: item.item_name, amount: item.amount });
+        // 只要有科目和项目名称就保存，金额可以为0
+        if (item.category && item.item_name) {
           await pool.query(`
             INSERT INTO \`ProjectBudget\` (
               id, project_id, category, item_name, description, 
@@ -13352,12 +14311,41 @@ if (pathname === '/api/projects' && req.method === 'POST') {
             parseFloat(item.amount) || 0,
             i
           ]);
+          savedCount++;
+          console.log(`✅ 预算项 ${i} 保存成功`);
+        } else {
+          console.log(`⚠️ 预算项 ${i} 缺少必填字段，跳过`);
         }
       }
-      console.log('✅ 预算明细插入成功');
+      console.log(`✅ 预算明细插入成功，共保存 ${savedCount} 条记录`);
     }
 
-    // 5. 保存项目附件（须在 sendResponse 之前，且与 projectId 同处 try 内）
+    // 5. 保存项目图片
+    if (body.images && body.images.length > 0) {
+      console.log('🖼️ 保存项目图片:', body.images.length);
+      for (let i = 0; i < body.images.length; i++) {
+        const img = body.images[i];
+        await pool.query(`
+          INSERT INTO \`ProjectAttachment\` (
+            id, project_id, file_name, file_path, file_size, 
+            mime_type, type, description, sort_order, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `, [
+          randomUUID(),
+          projectId,
+          img.file_name,
+          img.file_path,
+          img.file_size,
+          img.mime_type,
+          'image',
+          img.description || '',
+          i
+        ]);
+      }
+      console.log('✅ 项目图片保存成功');
+    }
+
+    // 6. 保存项目附件
     if (body.attachments && body.attachments.length > 0) {
       console.log('📎 保存项目附件:', body.attachments.length);
       for (let i = 0; i < body.attachments.length; i++) {
@@ -13374,7 +14362,7 @@ if (pathname === '/api/projects' && req.method === 'POST') {
           att.file_path,
           att.file_size,
           att.mime_type,
-          att.type || 'attachment',
+          'attachment',
           att.description || '',
           i
         ]);
@@ -20159,8 +21147,8 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
     const buildAssignmentReviewComment = (payload) =>
       JSON.stringify({ type: 'expert_review', updated_at: new Date().toISOString(), ...payload });
     const recommendationToAssignmentStatus = (recommendation) => {
-      if (recommendation === 'reject') return 'declined';
-      if (recommendation === 'approve') return 'accepted';
+      if (recommendation === 'reject' || recommendation === 'declined') return 'declined';
+      if (recommendation === 'approve' || recommendation === 'accepted') return 'accepted';
       return 'reviewing';
     };
     const assignmentStatusToRecommendation = (status, fallback = '') => {
@@ -20449,15 +21437,14 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           LIMIT ?
         `, [user.id, limit]);
         const data = rows.map((r) => {
-          const parsed = parseAssignmentReviewComment(r.comment);
           return {
             id: r.id,
             project_id: r.project_id,
             project_title: r.project_title,
             project_code: r.project_code,
-            recommendation: parsed.recommendation || assignmentStatusToRecommendation(r.status, ''),
-            comments: parsed.comments || '',
-            suggestions: parsed.suggestions || '',
+            recommendation: r.status === 'accepted' ? 'approve' : 'reject',
+            comments: r.comment || '',
+            review_status: r.status,
             submitted_at: r.assigned_at ? r.assigned_at.toISOString() : null,
             review_date: r.assigned_at ? r.assigned_at.toISOString() : null,
           };
@@ -20567,16 +21554,15 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const [countRows] = await pool.query(countSql, countParams);
         const total = countRows[0]?.total || 0;
         const data = rows.map((r) => {
-          const parsed = parseAssignmentReviewComment(r.comment);
           return {
             id: r.id,
             project_id: r.project_id,
             project_code: r.project_code,
             project_title: r.project_title,
             research_field: r.research_field || '未指定',
-            recommendation: parsed.recommendation || assignmentStatusToRecommendation(r.assignment_status, ''),
-            comments: parsed.comments || '',
-            suggestions: parsed.suggestions || '',
+            recommendation: r.assignment_status === 'accepted' ? 'approve' : 'reject',
+            comments: r.comment || '',
+            review_status: r.assignment_status,
             submitted_at: r.assigned_at ? r.assigned_at.toISOString() : null,
             review_date: r.assigned_at ? r.assigned_at.toISOString() : null,
             applicant_name: r.applicant_name,
@@ -20689,10 +21675,9 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           return;
         }
         const assignment = assignmentRows[0];
-        const parsedSelf = parseAssignmentReviewComment(assignment.comment);
 
         const [membersResult] = await pool.query(`
-          SELECT pm.name, pm.role, pm.title, pm.organization, pm.email
+          SELECT pm.name, pm.role, pm.title, pm.organization, pm.email, pm.phone
           FROM \`ProjectMember\` pm
           WHERE pm.project_id = ?
           ORDER BY CASE pm.role WHEN 'principal' THEN 1 WHEN 'contact' THEN 2 WHEN 'other' THEN 3 ELSE 4 END,
@@ -20701,29 +21686,6 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const [budgetResult] = await pool.query(`
           SELECT * FROM \`ProjectBudget\` WHERE project_id = ? ORDER BY sort_order ASC
         `, [projectId]);
-        const [otherRows] = await pool.query(`
-          SELECT ea.id, ea.expert_id, ea.status, ea.comment, ea.assigned_at as review_date,
-                 u.name as reviewer_name, u.title as reviewer_title
-          FROM \`ExpertAssignment\` ea
-          LEFT JOIN \`User\` u ON ea.expert_id = u.id
-          WHERE ea.project_id = ? AND ea.expert_id != ? AND ea.status IN ('accepted', 'declined')
-        `, [projectId, user.id]);
-        const otherReviews = otherRows.map((item) => {
-          const parsed = parseAssignmentReviewComment(item.comment);
-          return {
-            id: item.id,
-            expert_id: item.expert_id,
-            review_date: item.review_date ? item.review_date.toISOString() : null,
-            recommendation: parsed.recommendation || assignmentStatusToRecommendation(item.status, ''),
-            comments: parsed.comments || '',
-            suggestions: parsed.suggestions || '',
-            strengths: parsed.strengths || '',
-            weaknesses: parsed.weaknesses || '',
-            reviewer_name: item.reviewer_name,
-            reviewer_title: item.reviewer_title,
-            is_confidential: !!parsed.is_confidential,
-          };
-        });
 
         sendResponse(res, 200, {
           success: true,
@@ -20742,14 +21704,9 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
                 ? assignment.assigned_at.toISOString()
                 : null,
               deadline: assignment.deadline ? assignment.deadline.toISOString() : null,
-              strengths: parsedSelf.strengths || '',
-              weaknesses: parsedSelf.weaknesses || '',
-              recommendation: parsedSelf.recommendation || assignmentStatusToRecommendation(assignment.status, ''),
-              comments: parsedSelf.comments || '',
-              suggestions: parsedSelf.suggestions || '',
-              is_confidential: !!parsedSelf.is_confidential,
-            },
-            otherReviews
+              recommendation: assignment.status === 'accepted' ? 'approve' : (assignment.status === 'declined' ? 'reject' : ''),
+              comments: assignment.comment || '',
+            }
           }
         });
       } catch (error) {
@@ -20769,8 +21726,12 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       try {
         const body = await getBody(req);
         const { project_id, recommendation, comments } = body;
-        if (!project_id || !comments) {
-          sendResponse(res, 400, { success: false, error: '项目和评审意见不能为空' });
+        if (!project_id) {
+          sendResponse(res, 400, { success: false, error: '项目ID不能为空' });
+          return;
+        }
+        if (!comments || !comments.trim()) {
+          sendResponse(res, 400, { success: false, error: '评审意见不能为空' });
           return;
         }
         if (recommendation !== 'approve' && recommendation !== 'reject') {
@@ -20795,20 +21756,12 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           sendResponse(res, 400, { success: false, error: '该评审任务已结束，无法再次提交' });
           return;
         }
-        const reviewComment = buildAssignmentReviewComment({
-          recommendation,
-          comments: body.comments,
-          suggestions: body.suggestions || '',
-          strengths: body.strengths || '',
-          weaknesses: body.weaknesses || '',
-          is_confidential: false,
-          submitted: true,
-        });
-        const nextStatus = recommendationToAssignmentStatus(recommendation);
+        // 评审结论映射为status：approve -> accepted, reject -> declined
+        const nextStatus = recommendation === 'approve' ? 'accepted' : 'declined';
         const reviewId = assignmentRows[0].id;
         await pool.query(`
           UPDATE \`ExpertAssignment\` SET status = ?, comment = ? WHERE id = ?
-        `, [nextStatus, reviewComment, reviewId]);
+        `, [nextStatus, comments.trim(), reviewId]);
 
         await createNotification(
           projectResult[0].applicant_id,
@@ -20834,7 +21787,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       }
       try {
         const body = await getBody(req);
-        const { project_id } = body;
+        const { project_id, comments } = body;
         if (!project_id) {
           sendResponse(res, 400, { success: false, error: '项目ID不能为空' });
           return;
@@ -20850,23 +21803,11 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           sendResponse(res, 400, { success: false, error: '该评审任务已结束，无法保存草稿' });
           return;
         }
-        const draftRec = body.recommendation || '';
-        if (draftRec && draftRec !== 'approve' && draftRec !== 'reject') {
-          sendResponse(res, 400, { success: false, error: '评审结论仅支持「通过」或「不通过」' });
-          return;
-        }
-        const reviewComment = buildAssignmentReviewComment({
-          recommendation: body.recommendation || '',
-          comments: body.comments || '',
-          suggestions: body.suggestions || '',
-          strengths: body.strengths || '',
-          weaknesses: body.weaknesses || '',
-          is_confidential: false,
-          submitted: false,
-        });
+        // 草稿只保存评审意见，status保持reviewing
+        const draftComment = comments || '';
         await pool.query(`
           UPDATE \`ExpertAssignment\` SET status = 'reviewing', comment = ? WHERE id = ?
-        `, [reviewComment, assignmentRows[0].id]);
+        `, [draftComment, assignmentRows[0].id]);
         sendResponse(res, 200, { success: true, message: '草稿保存成功' });
       } catch (error) {
         console.error('保存评审草稿失败:', error);
@@ -20891,7 +21832,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         const [rows] = await pool.query(`
           SELECT ea.id, ea.status as assignment_status, ea.comment, ea.assigned_at, ea.project_id, ea.expert_id,
                  p.title as project_title, p.project_code, p.abstract,
-                 u_app.name as applicant_name, u_rev.name as reviewer_name, u_rev.title as reviewer_title
+                 u_app.name as applicant_name, u_rev.name as reviewer_name, u_rev.title as reviewer_title, u_rev.department as reviewer_department
           FROM \`ExpertAssignment\` ea
           JOIN \`Project\` p ON ea.project_id = p.id
           JOIN \`User\` u_app ON p.applicant_id = u_app.id
@@ -20903,7 +21844,6 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           return;
         }
         const row = rows[0];
-        const parsed = parseAssignmentReviewComment(row.comment);
         const review = {
           id: row.id,
           project_id: row.project_id,
@@ -20914,13 +21854,10 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           applicant_name: row.applicant_name,
           reviewer_name: row.reviewer_name,
           reviewer_title: row.reviewer_title,
-          review_type: 'initial',
-          strengths: parsed.strengths || '',
-          weaknesses: parsed.weaknesses || '',
-          recommendation: parsed.recommendation || assignmentStatusToRecommendation(row.assignment_status, ''),
-          comments: parsed.comments || '',
-          suggestions: parsed.suggestions || '',
-          is_confidential: !!parsed.is_confidential,
+          reviewer_department: row.reviewer_department,
+          recommendation: row.assignment_status === 'accepted' ? 'approve' : 'reject',
+          comments: row.comment || '',
+          review_status: row.assignment_status,
           submitted_at: row.assigned_at ? row.assigned_at.toISOString() : null,
         };
         sendResponse(res, 200, {
@@ -20939,6 +21876,707 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       return;
     }
 
+    // 评审专家：根据项目ID获取自己的评审详情（用于评审历史查看）
+    if (pathname === '/api/reviewer/my-review' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const { projectId } = url.parse(req.url, true).query;
+        if (!projectId) {
+          sendResponse(res, 400, { success: false, error: '项目ID不能为空' });
+          return;
+        }
+        const [rows] = await pool.query(`
+          SELECT ea.id, ea.status as assignment_status, ea.comment, ea.assigned_at, ea.project_id,
+                 p.title as project_title, p.project_code,
+                 u_app.name as applicant_name
+          FROM \`ExpertAssignment\` ea
+          JOIN \`Project\` p ON ea.project_id = p.id
+          LEFT JOIN \`User\` u_app ON p.applicant_id = u_app.id
+          WHERE ea.project_id = ? AND ea.expert_id = ?
+        `, [projectId, user.id]);
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '未找到该项目的评审记录' });
+          return;
+        }
+        const row = rows[0];
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            id: row.id,
+            project_id: row.project_id,
+            project_title: row.project_title,
+            project_code: row.project_code,
+            applicant_name: row.applicant_name,
+            recommendation: row.assignment_status === 'accepted' ? 'approve' : 'reject',
+            comments: row.comment || '',
+            review_status: row.assignment_status,
+            submitted_at: row.assigned_at ? row.assigned_at.toISOString() : null,
+            review_date: row.assigned_at ? row.assigned_at.toISOString() : null
+          }
+        });
+      } catch (error) {
+        console.error('获取我的评审详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取评审详情失败' });
+      }
+      return;
+    }
+
+
+    // ==================== 孵化服务API ====================
+    
+    // 孵化服务附件上传目录
+    const incubationUploadsDir = path.join(__dirname, 'uploads', 'incubation');
+    if (!fs.existsSync(incubationUploadsDir)) {
+      fs.mkdirSync(incubationUploadsDir, { recursive: true });
+    }
+    
+    // 申请人：获取可发起服务申请的项目列表（状态为approved的项目）
+    if (pathname === '/api/incubation/eligible-projects' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'applicant') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        // 获取申请人已被批准的项目（只有approved状态才能提交服务申请）
+        const [projects] = await pool.query(`
+          SELECT p.id, p.project_code, p.title, p.status, p.approval_date,
+                 (SELECT COUNT(*) FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id) as service_count,
+                 (SELECT ip.status FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id ORDER BY ip.created_at DESC LIMIT 1) as latest_service_status
+          FROM \`Project\` p
+          WHERE p.applicant_id = ? AND p.status = 'approved'
+          ORDER BY p.updated_at DESC
+        `, [user.id]);
+        
+        // 对每个项目添加是否可终止的标识
+        const projectsWithFlag = projects.map(p => ({
+          ...p,
+          can_terminate: p.service_count > 0 && p.status === 'approved'
+        }));
+        
+        sendResponse(res, 200, { success: true, data: projectsWithFlag });
+      } catch (error) {
+        console.error('获取可申请服务的项目失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目列表失败' });
+      }
+      return;
+    }
+    
+    // 申请人：获取自己的服务申请列表
+    if (pathname === '/api/incubation/my-requests' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'applicant') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const query = url.parse(req.url, true).query;
+        const status = query.status; // pending, feedback_given, result_submitted
+        
+        let sql = `
+          SELECT ip.*, p.title as project_title, p.project_code,
+                 u.name as manager_name
+          FROM \`IncubationProgress\` ip
+          JOIN \`Project\` p ON ip.project_id = p.id
+          LEFT JOIN \`User\` u ON ip.feedback_by = u.id
+          WHERE ip.applicant_id = ?
+        `;
+        const params = [user.id];
+        
+        if (status) {
+          sql += ' AND ip.status = ?';
+          params.push(status);
+        }
+        
+        sql += ' ORDER BY ip.created_at DESC';
+        
+        const [requests] = await pool.query(sql, params);
+        
+        // 获取每个请求的附件
+        for (const req of requests) {
+          const [files] = await pool.query(
+            'SELECT * FROM \`IncubationProgressFile\` WHERE progress_id = ?',
+            [req.id]
+          );
+          req.files = files;
+        }
+        
+        sendResponse(res, 200, { success: true, data: requests });
+      } catch (error) {
+        console.error('获取服务申请列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取服务申请列表失败' });
+      }
+      return;
+    }
+    
+    // 申请人：提交服务申请
+    if (pathname === '/api/incubation/service-request' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'applicant') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const body = await parseRequestBody(req);
+        const { project_id, service_requirement } = body;
+        
+        if (!project_id || !service_requirement) {
+          sendResponse(res, 400, { success: false, error: '项目ID和服务需求描述为必填项' });
+          return;
+        }
+        
+        // 检查项目是否存在且状态为approved
+        const [projects] = await pool.query(
+          'SELECT * FROM \`Project\` WHERE id = ? AND applicant_id = ?',
+          [project_id, user.id]
+        );
+        
+        if (projects.length === 0) {
+          sendResponse(res, 404, { success: false, error: '项目不存在或无权限' });
+          return;
+        }
+        
+        const project = projects[0];
+        // 只有项目状态为approved的才能提交服务申请
+        if (project.status !== 'approved') {
+          sendResponse(res, 400, { success: false, error: '只有已批准的项目才能提交服务申请' });
+          return;
+        }
+        
+        const progressId = randomUUID();
+        
+        // 创建服务申请记录
+        await pool.query(
+          `INSERT INTO \`IncubationProgress\` 
+           (id, project_id, applicant_id, application_date, service_requirement, status)
+           VALUES (?, ?, ?, NOW(), ?, 'pending')`,
+          [progressId, project_id, user.id, service_requirement]
+        );
+        
+        // 更新项目状态为incubating
+        await pool.query(
+          "UPDATE \`Project\` SET status = 'incubating', updated_at = NOW() WHERE id = ?",
+          [project_id]
+        );
+        
+        // 发送通知给项目经理
+        if (project.manager_id) {
+          await pool.query(
+            `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+             VALUES (?, ?, 'incubation', ?, ?, ?, 'IncubationProgress', NOW())`,
+            [randomUUID(), project.manager_id, '新的服务申请', 
+             `项目「${project.title}」提交了服务申请，请及时处理。`, progressId]
+          );
+        }
+        
+        sendResponse(res, 200, { 
+          success: true, 
+          message: '服务申请提交成功',
+          data: { id: progressId }
+        });
+      } catch (error) {
+        console.error('提交服务申请失败:', error);
+        sendResponse(res, 500, { success: false, error: '提交服务申请失败' });
+      }
+      return;
+    }
+    
+    // 项目经理：获取可终止的项目列表（状态为approved且至少有一条服务申请记录）
+    if (pathname === '/api/incubation/terminable-projects' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        // 获取状态为approved且至少有一条服务申请记录的项目
+        const [projects] = await pool.query(`
+          SELECT 
+            p.id, p.project_code, p.title, p.status,
+            u.name as applicant_name,
+            (SELECT COUNT(*) FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id) as total_requests,
+            (SELECT COUNT(*) FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id AND ip.feedback_action = 'approved') as approved_requests,
+            (SELECT COUNT(*) FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id AND ip.feedback_action = 'rejected') as rejected_requests
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE p.status = 'approved'
+            AND EXISTS (SELECT 1 FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id)
+          ORDER BY p.updated_at DESC
+        `);
+        
+        sendResponse(res, 200, { success: true, data: projects });
+      } catch (error) {
+        console.error('获取可终止项目列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目列表失败' });
+      }
+      return;
+    }
+    
+    // 项目经理：获取待处理的服务申请列表
+    if (pathname === '/api/incubation/pending-requests' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const query = url.parse(req.url, true).query;
+        const status = query.status || 'pending'; // pending, feedback_given, result_submitted, all
+        
+        let sql = `
+          SELECT ip.*, p.title as project_title, p.project_code, p.status as project_status,
+                 u.name as applicant_name, u.email as applicant_email, u.phone as applicant_phone
+          FROM \`IncubationProgress\` ip
+          JOIN \`Project\` p ON ip.project_id = p.id
+          JOIN \`User\` u ON ip.applicant_id = u.id
+          WHERE p.manager_id = ?
+        `;
+        const params = [user.id];
+        
+        if (status !== 'all') {
+          sql += ' AND ip.status = ?';
+          params.push(status);
+        }
+        
+        sql += ' ORDER BY ip.created_at DESC';
+        
+        const [requests] = await pool.query(sql, params);
+        
+        // 获取每个请求的附件
+        for (const req of requests) {
+          const [files] = await pool.query(
+            'SELECT * FROM \`IncubationProgressFile\` WHERE progress_id = ?',
+            [req.id]
+          );
+          req.files = files;
+        }
+        
+        sendResponse(res, 200, { success: true, data: requests });
+      } catch (error) {
+        console.error('获取待处理服务申请失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取服务申请列表失败' });
+      }
+      return;
+    }
+    
+    // 项目经理：给予服务申请反馈
+    if (pathname.match(/^\/api\/incubation\/requests\/[^/]+\/feedback$/) && req.method === 'PUT') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const progressId = pathname.split('/')[4];
+        const body = await parseRequestBody(req);
+        const { feedback_action, feedback_comment } = body;
+        
+        if (!feedback_action || !['approved', 'rejected'].includes(feedback_action)) {
+          sendResponse(res, 400, { success: false, error: '请选择是否提供服务' });
+          return;
+        }
+        
+        // 获取服务申请记录和项目信息
+        const [progressRows] = await pool.query(
+          `SELECT ip.*, p.id as project_id, p.title as project_title, p.manager_id, p.status as project_status, u.name as applicant_name, u.id as applicant_id
+           FROM \`IncubationProgress\` ip
+           JOIN \`Project\` p ON ip.project_id = p.id
+           JOIN \`User\` u ON ip.applicant_id = u.id
+           WHERE ip.id = ?`,
+          [progressId]
+        );
+        
+        if (progressRows.length === 0) {
+          sendResponse(res, 404, { success: false, error: '服务申请不存在' });
+          return;
+        }
+        
+        const progress = progressRows[0];
+        
+        // 验证是否是该项目的项目经理
+        if (progress.manager_id !== user.id) {
+          sendResponse(res, 403, { success: false, error: '您不是该项目的项目经理' });
+          return;
+        }
+        
+        if (progress.status !== 'pending') {
+          sendResponse(res, 400, { success: false, error: '该服务申请已处理' });
+          return;
+        }
+        
+        // 更新服务申请记录
+        await pool.query(
+          `UPDATE \`IncubationProgress\` 
+           SET feedback_date = NOW(), feedback_by = ?, feedback_action = ?, feedback_comment = ?, status = 'feedback_given', updated_at = NOW()
+           WHERE id = ?`,
+          [user.id, feedback_action, feedback_comment || null, progressId]
+        );
+        
+        // 如果rejected，将项目状态改回approved
+        if (feedback_action === 'rejected') {
+          await pool.query(
+            "UPDATE \`Project\` SET status = 'approved', updated_at = NOW() WHERE id = ?",
+            [progress.project_id]
+          );
+        }
+        // 如果approved，项目状态保持incubating
+        
+        // 发送通知给申请人
+        await pool.query(
+          `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+           VALUES (?, ?, 'incubation', ?, ?, ?, 'IncubationProgress', NOW())`,
+          [randomUUID(), progress.applicant_id, '服务申请反馈',
+           `您的服务申请已收到反馈，项目：「${progress.project_title}」，反馈结果：${feedback_action === 'approved' ? '同意提供服务' : '拒绝提供服务'}`, progressId]
+        );
+        
+        sendResponse(res, 200, { 
+          success: true, 
+          message: feedback_action === 'approved' ? '已同意提供服务' : '已拒绝服务申请'
+        });
+      } catch (error) {
+        console.error('处理服务申请反馈失败:', error);
+        sendResponse(res, 500, { success: false, error: '处理服务申请反馈失败' });
+      }
+      return;
+    }
+    
+    // 申请人：提交成果反馈
+    if (pathname.match(/^\/api\/incubation\/requests\/[^/]+\/result$/) && req.method === 'PUT') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'applicant') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const progressId = pathname.split('/')[4];
+        const body = await parseRequestBody(req);
+        const { result_description } = body;
+        
+        if (!result_description) {
+          sendResponse(res, 400, { success: false, error: '成果描述为必填项' });
+          return;
+        }
+        
+        // 获取服务申请记录
+        const [progressRows] = await pool.query(
+          `SELECT ip.*, p.title as project_title, p.manager_id
+           FROM \`IncubationProgress\` ip
+           JOIN \`Project\` p ON ip.project_id = p.id
+           WHERE ip.id = ? AND ip.applicant_id = ?`,
+          [progressId, user.id]
+        );
+        
+        if (progressRows.length === 0) {
+          sendResponse(res, 404, { success: false, error: '服务申请不存在或无权限' });
+          return;
+        }
+        
+        const progress = progressRows[0];
+        
+        if (progress.status !== 'feedback_given') {
+          sendResponse(res, 400, { success: false, error: '该服务申请尚未收到反馈或已提交成果' });
+          return;
+        }
+        
+        if (progress.feedback_action !== 'approved') {
+          sendResponse(res, 400, { success: false, error: '服务申请未获批准，无法提交成果' });
+          return;
+        }
+        
+        // 更新服务申请记录
+        await pool.query(
+          `UPDATE \`IncubationProgress\` 
+           SET result_date = NOW(), result_description = ?, status = 'result_submitted', updated_at = NOW()
+           WHERE id = ?`,
+          [result_description, progressId]
+        );
+        
+        // 更新项目状态为approved
+        await pool.query(
+          "UPDATE \`Project\` SET status = 'approved', updated_at = NOW() WHERE id = ?",
+          [progress.project_id]
+        );
+        
+        // 发送通知给项目经理
+        if (progress.manager_id) {
+          await pool.query(
+            `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+             VALUES (?, ?, 'incubation', ?, ?, ?, 'IncubationProgress', NOW())`,
+            [randomUUID(), progress.manager_id, '成果反馈已提交',
+             `项目「${progress.project_title}」已提交成果反馈。`, progressId]
+          );
+        }
+        
+        sendResponse(res, 200, { 
+          success: true, 
+          message: '成果反馈提交成功'
+        });
+      } catch (error) {
+        console.error('提交成果反馈失败:', error);
+        sendResponse(res, 500, { success: false, error: '提交成果反馈失败' });
+      }
+      return;
+    }
+    
+    // 项目经理：终止项目
+    if (pathname.match(/^\/api\/incubation\/projects\/[^/]+\/terminate$/) && req.method === 'PUT') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const projectId = pathname.split('/')[4];
+        
+        // 获取项目信息
+        const [projects] = await pool.query(
+          'SELECT * FROM \`Project\` WHERE id = ?',
+          [projectId]
+        );
+        
+        if (projects.length === 0) {
+          sendResponse(res, 404, { success: false, error: '项目不存在' });
+          return;
+        }
+        
+        const project = projects[0];
+        
+        // 验证是否是该项目的项目经理
+        if (project.manager_id !== user.id) {
+          sendResponse(res, 403, { success: false, error: '您不是该项目的项目经理' });
+          return;
+        }
+        
+        // 检查项目是否满足终止条件：至少提过一次服务申请，当前状态为approved
+        const [progressRows] = await pool.query(
+          'SELECT COUNT(*) as count FROM \`IncubationProgress\` WHERE project_id = ?',
+          [projectId]
+        );
+        
+        if (progressRows[0].count === 0) {
+          sendResponse(res, 400, { success: false, error: '项目尚未提交过服务申请，无法终止' });
+          return;
+        }
+        
+        if (project.status !== 'approved') {
+          sendResponse(res, 400, { success: false, error: '只有状态为已批准的项目才能终止' });
+          return;
+        }
+        
+        // 更新项目状态为completed
+        await pool.query(
+          "UPDATE \`Project\` SET status = 'completed', updated_at = NOW() WHERE id = ?",
+          [projectId]
+        );
+        
+        // 发送通知给申请人
+        await pool.query(
+          `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+           VALUES (?, ?, 'project', ?, ?, ?, 'Project', NOW())`,
+          [randomUUID(), project.applicant_id, '项目已终止',
+           `您的项目「${project.title}」已被项目经理标记为终止。`, projectId]
+        );
+        
+        sendResponse(res, 200, { 
+          success: true, 
+          message: '项目已终止'
+        });
+      } catch (error) {
+        console.error('终止项目失败:', error);
+        sendResponse(res, 500, { success: false, error: '终止项目失败' });
+      }
+      return;
+    }
+    
+    // 上传孵化服务附件
+    if (pathname === '/api/incubation/upload' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      
+      const form = formidable({
+        uploadDir: incubationUploadsDir,
+        keepExtensions: true,
+        maxFileSize: 10 * 1024 * 1024,
+        filename: (name, ext, part) => {
+          return `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+        }
+      });
+      
+      form.parse(req, async (err, fields, files) => {
+        if (err) {
+          console.error('文件上传失败:', err);
+          sendResponse(res, 500, { success: false, error: '文件上传失败' });
+          return;
+        }
+        
+        const file = files.file;
+        if (!file) {
+          sendResponse(res, 400, { success: false, error: '未找到上传文件' });
+          return;
+        }
+        
+        try {
+          // formidable v3+ fields值为数组格式，需要取第一个元素
+          let progressId = fields.progress_id;
+          let attachmentType = fields.attachment_type;
+          
+          // 如果是数组，取第一个元素
+          if (Array.isArray(progressId)) progressId = progressId[0];
+          if (Array.isArray(attachmentType)) attachmentType = attachmentType[0];
+          
+          if (!progressId || !attachmentType) {
+            sendResponse(res, 400, { success: false, error: '缺少必要参数' });
+            return;
+          }
+          
+          const fileId = randomUUID();
+          // formidable v3+ 文件信息在 file[0] 中
+          const fileData = Array.isArray(file) ? file[0] : file;
+          const filePath = fileData.filepath || fileData.path;
+          const fileName = fileData.originalFilename || fileData.name;
+          const fileSize = fileData.size;
+          const mimeType = fileData.mimetype || fileData.type;
+          
+          console.log('孵化服务附件上传:', { progressId, attachmentType, fileName, fileSize });
+          
+          await pool.query(
+            `INSERT INTO \`IncubationProgressFile\` 
+             (id, progress_id, attachment_type, file_name, file_path, file_size, mime_type, uploaded_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [fileId, progressId, attachmentType, fileName, filePath, fileSize, mimeType, user.id]
+          );
+          
+          sendResponse(res, 200, {
+            success: true,
+            message: '文件上传成功',
+            data: {
+              id: fileId,
+              file_name: fileName,
+              file_size: fileSize
+            }
+          });
+        } catch (dbError) {
+          console.error('保存文件记录失败:', dbError);
+          sendResponse(res, 500, { success: false, error: '保存文件记录失败: ' + dbError.message });
+        }
+      });
+      return;
+    }
+    
+    // 下载孵化服务附件
+    if (pathname.match(/^\/api\/incubation\/files\/[a-f0-9-]+$/) && req.method === 'GET') {
+      // 支持从URL参数或header获取token
+      const token = parsedUrl.query.token || req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      
+      try {
+        const fileId = pathname.split('/')[4];
+        
+        // 查询文件信息
+        const [files] = await pool.query(
+          'SELECT * FROM `IncubationProgressFile` WHERE id = ?',
+          [fileId]
+        );
+        
+        if (files.length === 0) {
+          sendResponse(res, 404, { success: false, error: '文件不存在' });
+          return;
+        }
+        
+        const fileInfo = files[0];
+        
+        // 检查文件是否存在
+        if (!fs.existsSync(fileInfo.file_path)) {
+          sendResponse(res, 404, { success: false, error: '文件已丢失' });
+          return;
+        }
+        
+        // 设置响应头
+        res.setHeader('Content-Type', fileInfo.mime_type);
+        res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(fileInfo.file_name)}`);
+        res.setHeader('Content-Length', fileInfo.file_size);
+        
+        // 发送文件
+        const fileStream = fs.createReadStream(fileInfo.file_path);
+        fileStream.pipe(res);
+        fileStream.on('error', (err) => {
+          console.error('文件读取错误:', err);
+          if (!res.headersSent) {
+            sendResponse(res, 500, { success: false, error: '文件读取失败' });
+          }
+        });
+      } catch (error) {
+        console.error('下载文件失败:', error);
+        sendResponse(res, 500, { success: false, error: '下载文件失败' });
+      }
+      return;
+    }
+    
+    // 获取服务申请详情
+    if (pathname.match(/^\/api\/incubation\/requests\/[^/]+$/) && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const progressId = pathname.split('/')[4];
+        
+        const [progressRows] = await pool.query(
+          `SELECT ip.*, p.title as project_title, p.project_code, p.status as project_status,
+                  u_app.name as applicant_name, u_app.email as applicant_email, u_app.phone as applicant_phone,
+                  u_mgr.name as manager_name
+           FROM \`IncubationProgress\` ip
+           JOIN \`Project\` p ON ip.project_id = p.id
+           JOIN \`User\` u_app ON ip.applicant_id = u_app.id
+           LEFT JOIN \`User\` u_mgr ON ip.feedback_by = u_mgr.id
+           WHERE ip.id = ?`,
+          [progressId]
+        );
+        
+        if (progressRows.length === 0) {
+          sendResponse(res, 404, { success: false, error: '服务申请不存在' });
+          return;
+        }
+        
+        const progress = progressRows[0];
+        
+        // 获取附件
+        const [files] = await pool.query(
+          'SELECT * FROM \`IncubationProgressFile\` WHERE progress_id = ? ORDER BY created_at',
+          [progressId]
+        );
+        progress.files = files;
+        
+        sendResponse(res, 200, { success: true, data: progress });
+      } catch (error) {
+        console.error('获取服务申请详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取服务申请详情失败' });
+      }
+      return;
+    }
 
     // ==================== 404处理 ====================
     
@@ -21041,6 +22679,19 @@ server.listen(PORT,'127.0.0.1', () => {
   console.log(`   DELETE /api/notifications/{id} - 删除通知`);
   console.log(`   DELETE /api/notifications/clear-read - 清空已读通知`);
   console.log(`   POST /api/notifications/create - 创建系统通知（管理员）`);
+  console.log('');
+  console.log('🏭 孵化服务API:');
+  console.log(`   GET  /api/incubation/eligible-projects - 获取可申请服务的项目列表（申请人）`);
+  console.log(`   GET  /api/incubation/my-requests - 获取自己的服务申请列表（申请人）`);
+  console.log(`   POST /api/incubation/service-request - 提交服务申请（申请人）`);
+  console.log(`   GET  /api/incubation/pending-requests - 获取待处理服务申请列表（项目经理）`);
+  console.log(`   PUT  /api/incubation/requests/{id}/feedback - 给予服务申请反馈（项目经理）`);
+  console.log(`   PUT  /api/incubation/requests/{id}/result - 提交成果反馈（申请人）`);
+  console.log(`   PUT  /api/incubation/projects/{id}/terminate - 终止项目（项目经理）`);
+  console.log(`   GET  /api/incubation/requests/{id} - 获取服务申请详情`);
+  console.log(`   POST /api/incubation/upload - 上传孵化服务附件`);
+  console.log(`   GET  /api/incubation/files/{id} - 下载孵化服务附件`);
+  console.log('');
   console.log('👑 管理员API:');
   console.log(`   GET  /api/admin/dashboard     - 管理员仪表板数据`);
   console.log(`   GET  /api/admin/users         - 管理员用户管理`);

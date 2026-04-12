@@ -1413,7 +1413,7 @@ const viewApplicationDetail = async (application: any) => {
 }
 
 const goAssignExperts = (application: any) => {
-  router.push(`/assistant/reviewer-assignment/project/${application.id}`)
+  router.push(`/assistant/projects/${application.id}/assign-reviewers`)
 }
 
 const claimApplication = async (application: any) => {

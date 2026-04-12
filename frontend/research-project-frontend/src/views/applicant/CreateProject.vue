@@ -209,38 +209,6 @@
         </div>
       </div>
 
-      <div class="section-card">
-        <h3 class="section-title">二、项目负责人信息</h3>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label>负责人姓名</label>
-            <input type="text" :value="currentUser?.name || '未登录'" disabled />
-          </div>
-
-          <div class="form-group">
-            <label>所属部门/单位</label>
-            <input type="text" :value="currentUser?.department || '未设置'" disabled />
-          </div>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label>职称/职务</label>
-            <input type="text" :value="currentUser?.title || '未设置'" disabled />
-          </div>
-
-          <div class="form-group">
-            <label>联系电话</label>
-            <input type="text" :value="currentUser?.phone || '未设置'" disabled />
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label>电子邮箱</label>
-          <input type="email" :value="currentUser?.email || '未设置'" disabled />
-        </div>
-      </div>
     </div>
 
     <!-- 步骤2：项目详细介绍 -->
@@ -316,7 +284,8 @@
     <!-- 步骤3：团队与成员 -->
     <div v-show="currentStep === 3" class="step-content">
       <div class="section-card">
-        <h3 class="section-title">四、研究团队</h3>
+        <h3 class="section-title">三、研究团队</h3>
+        <p class="section-subtitle">请填写项目团队成员信息，至少需要一个成员且至少有一个项目负责人</p>
 
         <div class="team-members">
           <div class="team-header">
@@ -340,58 +309,89 @@
               </button>
             </div>
 
+            <!-- 第一步：只显示邮箱输入 -->
             <div class="form-row">
-              <div class="form-group">
-                <label>姓名 <span class="required">*</span></label>
-                <input
-                  type="text"
-                  v-model="member.name"
-                  placeholder="请输入姓名"
-                  required
-                  :disabled="loading"
-                />
-              </div>
-
-              <div class="form-group">
-                <label>邮箱</label>
+              <div class="form-group" style="flex: 2;">
+                <label>邮箱 <span class="required">*</span></label>
                 <input
                   type="email"
                   v-model="member.email"
                   placeholder="请输入邮箱"
+                  required
                   :disabled="loading"
                 />
+                <div v-if="member.isChecking" class="form-hint">正在查找...</div>
+                <div v-else-if="member.email && member.emailConfirmed" class="form-hint" :style="{ color: member.isExistingUser ? '#52c41a' : '#666' }">
+                  {{ member.isExistingUser ? '已找到用户，信息已自动填充' : '未找到用户，请填写以下信息' }}
+                </div>
+              </div>
+              <div class="form-group" style="flex: 1; display: flex; align-items: flex-end;">
+                <button 
+                  type="button" 
+                  class="confirm-email-btn"
+                  @click="searchUserByEmail(index)"
+                  :disabled="loading || !member.email || member.isChecking"
+                >
+                  {{ member.isChecking ? '搜索中...' : '搜索' }}
+                </button>
               </div>
             </div>
 
-            <div class="form-row">
-              <div class="form-group">
-                <label>所属单位</label>
-                <input
-                  type="text"
-                  v-model="member.organization"
-                  placeholder="请输入所在单位"
-                  :disabled="loading"
-                />
+            <!-- 第二步：确认邮箱后显示其他字段 -->
+            <div v-if="member.emailConfirmed" class="member-details">
+              <div class="form-row">
+                <div class="form-group">
+                  <label>姓名 <span class="required">*</span></label>
+                  <input
+                    type="text"
+                    v-model="member.name"
+                    placeholder="请输入姓名"
+                    required
+                    :disabled="loading"
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label>所属单位</label>
+                  <input
+                    type="text"
+                    v-model="member.organization"
+                    placeholder="请输入所在单位"
+                    :disabled="loading"
+                  />
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label>职称</label>
+                  <input
+                    type="text"
+                    v-model="member.title"
+                    placeholder="请输入职称"
+                    :disabled="loading"
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label>联系电话</label>
+                  <input
+                    type="text"
+                    v-model="member.phone"
+                    placeholder="请输入联系电话"
+                    :disabled="loading"
+                  />
+                </div>
               </div>
 
               <div class="form-group">
-                <label>职称</label>
-                <input
-                  type="text"
-                  v-model="member.title"
-                  placeholder="请输入职称"
-                  :disabled="loading"
-                />
+                <label>项目角色 <span class="required">*</span></label>
+                <select v-model="member.role" :disabled="loading">
+                  <option value="principal">项目负责人</option>
+                  <option value="contact">联系人</option>
+                  <option value="other">其他成员</option>
+                </select>
               </div>
-            </div>
-
-            <div class="form-group">
-              <label>项目角色 <span class="required">*</span></label>
-              <select v-model="member.role" :disabled="loading">
-                <option value="principal">项目负责人</option>
-                <option value="contact">联系人</option>
-                <option value="other">其他成员</option>
-              </select>
             </div>
           </div>
         </div>
@@ -401,7 +401,7 @@
     <!-- 步骤4：经费预算 -->
     <div v-show="currentStep === 4" class="step-content">
       <div class="section-card">
-        <h3 class="section-title">五、经费预算</h3>
+        <h3 class="section-title">四、经费预算</h3>
         <p class="section-subtitle">请根据项目实际需求填写经费预算（单位：元）</p>
 
         <div class="budget-table">
@@ -436,7 +436,8 @@
                   <input
                     type="text"
                     v-model="item.item_name"
-                    placeholder="填写预算项目名称"
+                    placeholder="填写预算项目名称（必填）"
+                    required
                     :disabled="loading"
                   />
                 </td>
@@ -492,11 +493,91 @@
       </div>
     </div>
 
-    <!-- 步骤5：附件材料 -->
+    <!-- 步骤5：图片展示 -->
     <div v-show="currentStep === 5" class="step-content">
       <div class="section-card">
+        <h3 class="section-title">五、图片展示</h3>
+        <p class="section-subtitle">请上传项目相关图片，至少上传1张图片，每张图片可添加文字说明</p>
+
+        <!-- 图片上传区域 -->
+        <div class="images-section">
+          <div
+            class="upload-area"
+            @dragover.prevent
+            @drop.prevent="handleImageDrop"
+            @click="triggerImageInput"
+          >
+            <div class="upload-icon">🖼️</div>
+            <div class="upload-text">
+              <span>点击或拖拽图片到此区域上传</span>
+              <span class="upload-hint">支持 JPG、PNG 格式，单个文件不超过10MB</span>
+            </div>
+            <input
+              type="file"
+              ref="imageInput"
+              multiple
+              accept="image/*"
+              style="display: none"
+              @change="handleImageSelect"
+            />
+          </div>
+
+          <!-- 图片列表 -->
+          <div v-if="images.length > 0" class="images-list">
+            <div
+              v-for="(image, index) in images"
+              :key="image.id || index"
+              class="image-item"
+            >
+              <div class="image-preview">
+                <img 
+                  v-if="image.file_path || image.preview" 
+                  :src="image.preview || `http://localhost:3002${image.file_path}`" 
+                  alt="项目图片"
+                  @click="previewImage(image)"
+                />
+                <div v-else class="image-placeholder">上传中...</div>
+              </div>
+              <div class="image-info">
+                <div class="image-name">{{ image.originalName || image.file_name }}</div>
+                <div class="image-size">{{ formatFileSize(image.file_size) }}</div>
+                <div class="image-description">
+                  <input
+                    type="text"
+                    v-model="image.description"
+                    placeholder="请输入图片说明"
+                    :disabled="image.uploading || loading"
+                  />
+                </div>
+              </div>
+              <div class="image-actions">
+                <button
+                  type="button"
+                  class="remove-btn"
+                  @click="removeImage(index)"
+                  :disabled="image.uploading"
+                >
+                  🗑️
+                </button>
+              </div>
+              <div v-if="image.uploading" class="upload-progress">
+                <div class="progress-fill-bar" :style="{ width: image.progress + '%' }"></div>
+              </div>
+            </div>
+          </div>
+          
+          <div v-else class="no-images-hint">
+            <p>暂无图片，请至少上传1张项目相关图片</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 步骤6：附件材料 -->
+    <div v-show="currentStep === 6" class="step-content">
+      <div class="section-card">
         <h3 class="section-title">六、附件材料</h3>
-        <p class="section-subtitle">请上传项目相关的附件材料（图片、文档等）</p>
+        <p class="section-subtitle">请上传项目相关的附件材料（文档、PDF等），每个附件可添加文字说明</p>
 
         <!-- 附件上传区域 -->
         <div class="attachments-section">
@@ -509,13 +590,13 @@
             <div class="upload-icon">📎</div>
             <div class="upload-text">
               <span>点击或拖拽文件到此区域上传</span>
-              <span class="upload-hint">支持 JPG、PNG、PDF、DOC、ZIP 格式，单个文件不超过10MB</span>
+              <span class="upload-hint">支持 PDF、DOC、DOCX、ZIP 格式，单个文件不超过10MB</span>
             </div>
             <input
               type="file"
               ref="fileInput"
               multiple
-              accept="image/*,.pdf,.doc,.docx,.zip"
+              accept=".pdf,.doc,.docx,.zip"
               style="display: none"
               @change="handleFileSelect"
             />
@@ -537,14 +618,6 @@
                 <div class="attachment-actions">
                   <button
                     type="button"
-                    class="preview-btn"
-                    @click="previewAttachment(file)"
-                    :disabled="uploading"
-                  >
-                    👁️
-                  </button>
-                  <button
-                    type="button"
                     class="remove-btn"
                     @click="removeAttachment(index)"
                     :disabled="uploading"
@@ -553,21 +626,19 @@
                   </button>
                 </div>
               </div>
+              <div class="attachment-description">
+                <input
+                  type="text"
+                  v-model="file.description"
+                  placeholder="请输入附件说明"
+                  :disabled="file.uploading || loading"
+                />
+              </div>
               <div v-if="file.uploading" class="upload-progress">
                 <div class="progress-fill-bar" :style="{ width: file.progress + '%' }"></div>
               </div>
             </div>
           </div>
-        </div>
-
-        <div class="form-group">
-          <label>附件说明</label>
-          <textarea
-            v-model="attachmentDescription"
-            placeholder="请说明附件的用途和内容"
-            rows="3"
-            :disabled="uploading"
-          ></textarea>
         </div>
       </div>
     </div>
@@ -692,7 +763,8 @@ const steps = [
   { key: 'detail', label: '项目详情' },
   { key: 'team', label: '研究团队' },
   { key: 'budget', label: '经费预算' },
-  { key: 'attachment', label: '附件材料' },
+  { key: 'images', label: '图片展示' },
+  { key: 'attachments', label: '附件材料' },
 ]
 
 // 多选字段
@@ -700,6 +772,8 @@ const selectedDomains = ref<string[]>([])
 const achievementTransform = ref<string[]>([])
 const pocStageRequirement = ref<string[]>([])
 
+// 图片列表
+const images = ref<any[]>([])
 // 附件列表
 const attachments = ref<any[]>([])
 
@@ -722,7 +796,7 @@ const formData = reactive({
 })
 
 // 团队成员
-const teamMembers = ref([{ name: '', email: '', organization: '', title: '', role: 'other' }])
+const teamMembers = ref([{ name: '', email: '', organization: '', title: '', phone: '', role: 'other', isExistingUser: false, isChecking: false, emailConfirmed: false }])
 
 // 预算项
 const budgetItems = ref([{ category: '', item_name: '', description: '', amount: 0 }])
@@ -782,13 +856,35 @@ const getMissingForStep = (step: number): string[] => {
       break
     }
     case 3: {
-      teamMembers.value.forEach((m, i) => {
-        if (!m.name?.trim()) missing.push(`成员 ${i + 1} 的姓名`)
-      })
+      // 验证团队成员
+      if (teamMembers.value.length === 0) {
+        missing.push('至少添加一个团队成员')
+      } else {
+        const hasPrincipal = teamMembers.value.some(m => m.role === 'principal')
+        if (!hasPrincipal) {
+          missing.push('至少指定一个项目负责人')
+        }
+        teamMembers.value.forEach((m, i) => {
+          if (!m.email?.trim()) missing.push(`成员 ${i + 1} 的邮箱`)
+          else if (!m.emailConfirmed) missing.push(`成员 ${i + 1} 的邮箱需要确认`)
+          if (!m.name?.trim()) missing.push(`成员 ${i + 1} 的姓名`)
+          if (!m.role) missing.push(`成员 ${i + 1} 的项目角色`)
+        })
+      }
       break
     }
     case 4: {
       if (totalBudget.value <= 0) missing.push('经费预算（合计金额需大于 0）')
+      // 验证每条预算记录都有项目名称
+      budgetItems.value.forEach((item, index) => {
+        if (!item.item_name || !item.item_name.trim()) {
+          missing.push(`预算第 ${index + 1} 行的项目名称`)
+        }
+      })
+      break
+    }
+    case 5: {
+      if (images.value.length === 0) missing.push('至少上传1张项目图片')
       break
     }
     default:
@@ -840,7 +936,71 @@ const removeKeyword = (index: number) => {
 }
 
 const addTeamMember = () => {
-  teamMembers.value.push({ name: '', email: '', organization: '', title: '', role: 'other' })
+  teamMembers.value.push({ name: '', email: '', organization: '', title: '', phone: '', role: 'other', isExistingUser: false, isChecking: false, emailConfirmed: false })
+}
+
+// 根据邮箱搜索用户
+const searchUserByEmail = async (index: number) => {
+  const member = teamMembers.value[index]
+  if (!member.email || !member.email.trim()) {
+    ElMessage.warning('请先输入邮箱')
+    return
+  }
+  
+  // 简单的邮箱格式验证
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!emailRegex.test(member.email.trim())) {
+    ElMessage.warning('请输入有效的邮箱地址')
+    return
+  }
+  
+  // 检查邮箱是否已被其他成员使用
+  const duplicateIndex = teamMembers.value.findIndex((m, i) => i !== index && m.email === member.email.trim())
+  if (duplicateIndex !== -1) {
+    ElMessage.warning('该邮箱已被其他成员使用')
+    return
+  }
+  
+  member.isChecking = true
+  try {
+    const response = await api.get(`/users/by-email?email=${encodeURIComponent(member.email.trim())}`) as any
+    console.log('搜索用户响应:', response)
+    if (response.success && response.data) {
+      member.emailConfirmed = true
+      if (response.data.exists && response.data.user) {
+        // 用户存在，自动填充信息
+        const user = response.data.user
+        member.name = user.name || ''
+        member.organization = user.department || ''
+        member.title = user.title || ''
+        member.phone = user.phone || ''
+        member.isExistingUser = true
+        ElMessage.success('已找到用户，信息已自动填充')
+      } else {
+        // 用户不存在，清空之前可能填充的信息
+        member.name = ''
+        member.organization = ''
+        member.title = ''
+        member.phone = ''
+        member.isExistingUser = false
+        ElMessage.info('未找到该邮箱对应的用户，请填写以下信息')
+      }
+    } else {
+      ElMessage.error('搜索用户失败：' + (response.error || '未知错误'))
+    }
+  } catch (error: any) {
+    console.error('查找用户失败:', error)
+    ElMessage.error('搜索用户失败：' + (error.message || '网络错误'))
+    member.isExistingUser = false
+  } finally {
+    member.isChecking = false
+  }
+}
+
+// 处理邮箱输入blur事件，查找用户（可选，如果用户不想点击搜索按钮）
+const handleEmailBlur = async (index: number) => {
+  // blur事件不再自动搜索，避免干扰用户输入
+  // 用户需要主动点击搜索按钮
 }
 
 const removeTeamMember = (index: number) => {
@@ -881,6 +1041,106 @@ const jumpToStep = (step: number) => {
   if (step <= currentStep.value) {
     currentStep.value = step
     window.scrollTo(0, 0)
+  }
+}
+
+// 图片相关方法
+const imageInput = ref<HTMLInputElement | null>(null)
+
+const triggerImageInput = () => {
+  imageInput.value?.click()
+}
+
+const handleImageSelect = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  await uploadImages(files)
+  if (input) input.value = ''
+}
+
+const handleImageDrop = async (event: DragEvent) => {
+  const files = Array.from(event.dataTransfer?.files || [])
+  const imageFiles = files.filter(f => f.type.startsWith('image/'))
+  await uploadImages(imageFiles)
+}
+
+const uploadImages = async (files: File[]) => {
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) {
+      ElMessage.warning(`文件 ${file.name} 不是图片格式`)
+      continue
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      ElMessage.warning(`图片 ${file.name} 超过10MB限制`)
+      continue
+    }
+
+    const tempId = Date.now() + Math.random()
+    // 创建本地预览URL
+    const preview = URL.createObjectURL(file)
+    const tempImage = {
+      id: tempId,
+      originalName: file.name,
+      file_name: file.name,
+      file_size: file.size,
+      mime_type: file.type,
+      uploading: true,
+      progress: 0,
+      description: '',
+      preview: preview,
+    }
+    images.value.push(tempImage)
+    const index = images.value.findIndex((a) => a.id === tempId)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = (await api.post('/projects/upload-attachment', formData, {
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total && images.value[index]) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+            images.value[index].progress = percentCompleted
+          }
+        },
+      })) as { success?: boolean; data?: Record<string, unknown>; error?: string }
+
+      if (response.success && response.data) {
+        // 释放本地预览URL
+        URL.revokeObjectURL(images.value[index].preview)
+        images.value[index] = {
+          ...images.value[index],
+          ...response.data,
+          uploading: false,
+          progress: 100,
+          preview: null,
+        }
+        ElMessage.success(`图片 ${file.name} 上传成功`)
+      } else {
+        URL.revokeObjectURL(images.value[index].preview)
+        images.value.splice(index, 1)
+        ElMessage.error(`图片 ${file.name} 上传失败`)
+      }
+    } catch (error) {
+      URL.revokeObjectURL(images.value[index].preview)
+      images.value.splice(index, 1)
+      console.error('上传失败:', error)
+      ElMessage.error(`图片 ${file.name} 上传失败`)
+    }
+  }
+}
+
+const removeImage = (index: number) => {
+  const image = images.value[index]
+  if (image.preview) {
+    URL.revokeObjectURL(image.preview)
+  }
+  images.value.splice(index, 1)
+}
+
+const previewImage = (image: any) => {
+  if (image.file_path) {
+    window.open(`http://localhost:3002${image.file_path}`, '_blank')
   }
 }
 
@@ -934,7 +1194,7 @@ const uploadFiles = async (files: File[]) => {
       mime_type: file.type,
       uploading: true,
       progress: 0,
-      description: attachmentDescription.value,
+      description: '',
     }
     attachments.value.push(tempAttachment)
     const index = attachments.value.findIndex((a) => a.id === tempId)
@@ -969,12 +1229,6 @@ const uploadFiles = async (files: File[]) => {
       console.error('上传失败:', error)
       ElMessage.error(`文件 ${file.name} 上传失败`)
     }
-  }
-}
-
-const previewAttachment = (file: any) => {
-  if (file.file_path) {
-    window.open(`http://localhost:3002${file.file_path}`, '_blank')
   }
 }
 
@@ -1031,18 +1285,37 @@ const saveDraft = async (options?: { silent?: boolean }): Promise<boolean> => {
       detailed_introduction_part3: formData.detailed_introduction_part3,
       implementation_plan: formData.implementation_plan,
       supplementary_info: formData.supplementary_info,
-      team_members: teamMembers.value,
+      team_members: teamMembers.value.map(m => ({
+        name: m.name,
+        email: m.email,
+        organization: m.organization,
+        title: m.title,
+        phone: m.phone,
+        role: m.role,
+      })),
       budget_items: budgetItems.value,
+      images: images.value.map((img) => ({
+        file_name: img.originalName || img.file_name,
+        file_path: img.file_path,
+        file_size: img.file_size,
+        mime_type: img.mime_type,
+        type: 'image',
+        description: img.description || '',
+      })),
       attachments: attachments.value.map((att) => ({
         file_name: att.originalName || att.file_name,
         file_path: att.file_path,
         file_size: att.file_size,
         mime_type: att.mime_type,
-        type: att.mime_type?.startsWith('image/') ? 'image' : 'attachment',
-        description: att.description || attachmentDescription.value,
+        type: 'attachment',
+        description: att.description || '',
       })),
     }
 
+    console.log('📤 发送的payload:', JSON.stringify(payload, null, 2))
+    console.log('📤 achievement_transform 类型:', typeof payload.achievement_transform, '值:', payload.achievement_transform)
+    console.log('📤 poc_stage_requirement 类型:', typeof payload.poc_stage_requirement, '值:', payload.poc_stage_requirement)
+    
     const response = currentProject.value?.id
       ? await api.put(`/projects/${currentProject.value.id}`, payload)
       : await api.post('/projects', payload)
@@ -1138,29 +1411,20 @@ const loadCurrentUser = async () => {
   dbConnected.value = true
 }
 
+// 固定的研究领域列表
+const FIXED_RESEARCH_DOMAINS = [
+  { id: 'ai-ml', name: '人工智能与机器学习', code: 'AI_ML' },
+  { id: 'bigdata-gov', name: '大数据与数据治理', code: 'BIGDATA_GOV' },
+  { id: 'ic-design', name: '集成电路设计与应用', code: 'IC_DESIGN' },
+  { id: 'digital-twin', name: '数字孪生与元宇宙', code: 'DIGITAL_TWIN' },
+  { id: 'industrial-sw', name: '工业软件与智能制造', code: 'INDUSTRIAL_SW' },
+  { id: 'cyber-security', name: '网络安全与数据安全', code: 'CYBER_SECURITY' },
+  { id: 'other', name: '其他', code: 'OTHER' },
+]
+
 const loadResearchDomains = async () => {
-  try {
-    const response = await axios.get(`${API_BASE_URL}/research-domains`)
-    if (response.data.success) {
-      researchDomains.value = response.data.data
-    } else {
-      researchDomains.value = [
-        { id: '1', name: '人工智能与大数据' },
-        { id: '2', name: '生物医药' },
-        { id: '3', name: '新材料' },
-        { id: '4', name: '新能源' },
-        { id: '5', name: '高端装备制造' },
-      ]
-    }
-  } catch {
-    researchDomains.value = [
-      { id: '1', name: '人工智能与大数据' },
-      { id: '2', name: '生物医药' },
-      { id: '3', name: '新材料' },
-      { id: '4', name: '新能源' },
-      { id: '5', name: '高端装备制造' },
-    ]
-  }
+  // 使用固定的研究领域列表，不再从后端获取
+  researchDomains.value = FIXED_RESEARCH_DOMAINS
 }
 
 const toggleDebugInfo = () => {
@@ -1202,11 +1466,13 @@ const loadProjectForEdit = async (projectId: string) => {
     formData.implementation_plan = d.implementation_plan || ''
     formData.supplementary_info = d.supplementary_info || ''
     const at = d.achievement_transform
+    console.log('📥 加载项目 - achievement_transform:', at, '类型:', typeof at)
     achievementTransform.value = Array.isArray(at)
       ? at
       : String(at || '')
           .split(',')
           .filter(Boolean)
+    console.log('📥 加载项目 - 处理后的 achievementTransform:', achievementTransform.value)
     const pocs = d.poc_stage_requirement
     pocStageRequirement.value = Array.isArray(pocs)
       ? pocs
@@ -1222,7 +1488,11 @@ const loadProjectForEdit = async (projectId: string) => {
         email: (m.email as string) || '',
         organization: (m.organization as string) || '',
         title: (m.title as string) || '',
+        phone: (m.phone as string) || '',
         role: (m.role as string) || 'other',
+        isExistingUser: !!(m.user_id),
+        isChecking: false,
+        emailConfirmed: !!(m.email),
       }))
     }
     if (d.budget_items?.length) {
@@ -1233,18 +1503,28 @@ const loadProjectForEdit = async (projectId: string) => {
         amount: Number(b.amount) || 0,
       }))
     }
+    // 加载图片和附件
+    images.value = []
+    attachments.value = []
     if (d.attachments?.length) {
-      attachments.value = d.attachments.map((a: Record<string, unknown>) => ({
-        id: a.id,
-        file_name: a.file_name,
-        originalName: a.file_name,
-        file_path: a.file_path,
-        file_size: a.file_size,
-        mime_type: a.mime_type,
-        description: a.description,
-        uploading: false,
-        progress: 100,
-      }))
+      d.attachments.forEach((a: Record<string, unknown>) => {
+        const item = {
+          id: a.id,
+          file_name: a.file_name,
+          originalName: a.file_name,
+          file_path: a.file_path,
+          file_size: a.file_size,
+          mime_type: a.mime_type,
+          description: a.description || '',
+          uploading: false,
+          progress: 100,
+        }
+        if (a.type === 'image' || (a.mime_type as string)?.startsWith('image/')) {
+          images.value.push(item)
+        } else {
+          attachments.value.push(item)
+        }
+      })
     }
   } catch (e: unknown) {
     const err = e as { message?: string }
@@ -1827,6 +2107,34 @@ watch(
   cursor: pointer;
 }
 
+.confirm-email-btn {
+  padding: 10px 20px;
+  background: #b31b1b;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s;
+  height: fit-content;
+  margin-bottom: 8px;
+}
+
+.confirm-email-btn:hover:not(:disabled) {
+  background: #8b0000;
+}
+
+.confirm-email-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.member-details {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed #e0e0e0;
+}
+
 /* 预算表格 */
 .budget-table {
   overflow-x: auto;
@@ -1892,9 +2200,132 @@ watch(
   border: 1px solid #ffccc7;
 }
 
+/* 图片展示 */
+.images-section {
+  margin-bottom: 24px;
+}
+
+.images-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.image-item {
+  background: white;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+}
+
+.image-preview {
+  width: 100%;
+  height: 180px;
+  background: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s;
+}
+
+.image-preview img:hover {
+  transform: scale(1.05);
+}
+
+.image-placeholder {
+  color: #999;
+  font-size: 14px;
+}
+
+.image-info {
+  padding: 12px;
+}
+
+.image-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-size {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 8px;
+}
+
+.image-description input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.image-description input:focus {
+  outline: none;
+  border-color: #b31b1b;
+}
+
+.image-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.image-actions .remove-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.no-images-hint {
+  text-align: center;
+  padding: 40px;
+  color: #999;
+  background: #f9f9f9;
+  border-radius: 8px;
+  margin-top: 20px;
+}
+
 /* 附件上传 */
 .attachments-section {
   margin-bottom: 24px;
+}
+
+.attachment-description {
+  padding: 8px 16px;
+  background: #f9f9f9;
+}
+
+.attachment-description input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.attachment-description input:focus {
+  outline: none;
+  border-color: #b31b1b;
 }
 
 .upload-area {

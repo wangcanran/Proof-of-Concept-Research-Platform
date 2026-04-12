@@ -35,87 +35,12 @@
         title="该专家分配任务（ExpertAssignment）已结束，仅可查看。"
       />
 
-      <!-- 与库表 ExpertAssignment 对应的评审任务 -->
-      <el-card v-if="existingReview" class="section-card assignment-meta-card" shadow="never">
-        <template #header>
-          <h3>评审任务（专家分配）</h3>
-        </template>
-        <div class="info-grid assignment-meta-grid">
-          <div class="info-item">
-            <label>分配记录 ID</label>
-            <span class="mono">{{ existingReview.id }}</span>
-          </div>
-          <div class="info-item">
-            <label>任务状态</label>
-            <el-tag :type="assignmentStatusTag(existingReview.status)" size="small">{{
-              assignmentStatusLabel(existingReview.status)
-            }}</el-tag>
-          </div>
-          <div class="info-item">
-            <label>分配时间</label>
-            <span>{{ formatDateTime(existingReview.assigned_at) || '—' }}</span>
-          </div>
-          <div class="info-item">
-            <label>截止时间</label>
-            <span>{{ formatDateTime(existingReview.deadline) || '未设置' }}</span>
-          </div>
-        </div>
-      </el-card>
-
-      <!-- 项目基本信息 -->
-      <el-card class="section-card" shadow="never">
-        <template #header>
-          <h3>项目基本信息</h3>
-        </template>
-
-        <div class="project-basic-info">
-          <div class="info-grid">
-            <div class="info-item">
-              <label>项目名称：</label>
-              <span>{{ projectData.title }}</span>
-            </div>
-
-            <div class="info-item">
-              <label>申请人：</label>
-              <span>{{ projectData.applicant_name }}</span>
-            </div>
-
-            <div class="info-item">
-              <label>所属单位：</label>
-              <span>{{ projectData.applicant_department }}</span>
-            </div>
-
-            <div class="info-item">
-              <label>研究领域：</label>
-              <span>{{ projectData.research_field || '—' }}</span>
-            </div>
-
-            <div class="info-item">
-              <label>总预算：</label>
-              <span>{{ formatCurrency(projectData.budget_total) }}</span>
-            </div>
-
-            <div class="info-item">
-              <label>研究周期：</label>
-              <span>{{
-                projectData.duration_months != null ? `${projectData.duration_months} 个月` : '—'
-              }}</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="project-abstract">
-          <h4>项目摘要</h4>
-          <p>{{ projectData.abstract }}</p>
-        </div>
-      </el-card>
-
       <!-- 评审表单 -->
       <el-card class="section-card review-form" shadow="never">
         <template #header>
           <h3>评审意见</h3>
         </template>
-
+      
         <el-form
           :model="reviewForm"
           :rules="rules"
@@ -123,64 +48,28 @@
           label-width="120px"
           :disabled="reviewLocked"
         >
-          <!-- 文本评价 -->
-          <div class="text-review-section">
-            <el-form-item label="项目优点" prop="strengths">
-              <el-input
-                v-model="reviewForm.strengths"
-                type="textarea"
-                :rows="3"
-                placeholder="请描述项目的优势和创新点"
-                maxlength="1000"
-                show-word-limit
-              />
-            </el-form-item>
-
-            <el-form-item label="不足之处" prop="weaknesses">
-              <el-input
-                v-model="reviewForm.weaknesses"
-                type="textarea"
-                :rows="3"
-                placeholder="请指出项目存在的不足和问题"
-                maxlength="1000"
-                show-word-limit
-              />
-            </el-form-item>
-
-            <el-form-item label="评审结论" prop="recommendation" class="recommendation-form-item">
-              <el-radio-group v-model="reviewForm.recommendation" class="recommendation-group">
-                <el-radio label="approve" class="recommendation-item approve">
-                  <span class="recommendation-label">通过</span>
-                </el-radio>
-                <el-radio label="reject" class="recommendation-item reject">
-                  <span class="recommendation-label">不通过</span>
-                </el-radio>
-              </el-radio-group>
-            </el-form-item>
-
-            <el-form-item label="评审意见" prop="comments">
-              <el-input
-                v-model="reviewForm.comments"
-                type="textarea"
-                :rows="6"
-                placeholder="请详细阐述您的评审意见和建议"
-                maxlength="2000"
-                show-word-limit
-                required
-              />
-            </el-form-item>
-
-            <el-form-item label="修改建议" prop="suggestions">
-              <el-input
-                v-model="reviewForm.suggestions"
-                type="textarea"
-                :rows="4"
-                placeholder="如有需要，请提供具体的修改建议"
-                maxlength="1000"
-                show-word-limit
-              />
-            </el-form-item>
-          </div>
+          <el-form-item label="评审意见" prop="comments">
+            <el-input
+              v-model="reviewForm.comments"
+              type="textarea"
+              :rows="6"
+              placeholder="请详细阐述您的评审意见和建议"
+              maxlength="2000"
+              show-word-limit
+              required
+            />
+          </el-form-item>
+      
+          <el-form-item label="评审结论" prop="recommendation" class="recommendation-form-item">
+            <el-radio-group v-model="reviewForm.recommendation" class="recommendation-group">
+              <el-radio label="approve" class="recommendation-item approve">
+                <span class="recommendation-label">通过</span>
+              </el-radio>
+              <el-radio label="reject" class="recommendation-item reject">
+                <span class="recommendation-label">不通过</span>
+              </el-radio>
+            </el-radio-group>
+          </el-form-item>
         </el-form>
       </el-card>
 
@@ -295,14 +184,12 @@ const loadProjectData = async () => {
 
       if (existingReview.value) {
         const er = existingReview.value
-        let rec = er.recommendation || ''
-        if (rec === 'approve_with_revision' || rec === 'resubmit') rec = ''
         reviewForm.value = {
-          strengths: er.strengths || '',
-          weaknesses: er.weaknesses || '',
-          recommendation: rec,
+          strengths: '',
+          weaknesses: '',
+          recommendation: er.recommendation || '',
           comments: er.comments || '',
-          suggestions: er.suggestions || '',
+          suggestions: '',
         }
       }
     } else {
@@ -323,13 +210,12 @@ const saveDraft = async () => {
   try {
     await request.post('/api/reviewer/save-review-draft', {
       project_id: projectData.value.id,
-      ...reviewForm.value,
-      is_confidential: false,
+      comments: reviewForm.value.comments,
     })
     ElMessage.success('草稿保存成功')
-  } catch (error) {
+  } catch (error: any) {
     console.error('保存草稿失败:', error)
-    ElMessage.error('保存草稿失败')
+    ElMessage.error(error.response?.data?.error || '保存草稿失败')
   } finally {
     saving.value = false
   }
@@ -354,15 +240,16 @@ const submitReview = async () => {
     try {
       await request.post('/api/reviewer/submit-review', {
         project_id: projectData.value.id,
-        ...reviewForm.value,
-        is_confidential: false,
+        recommendation: reviewForm.value.recommendation,
+        comments: reviewForm.value.comments,
       })
 
       ElMessage.success('评审提交成功')
-      router.push('/reviewer/dashboard')
-    } catch (error) {
+      // 返回项目详情页
+      router.push(`/reviewer/project-detail/${projectData.value.id}`)
+    } catch (error: any) {
       console.error('提交评审失败:', error)
-      ElMessage.error('提交评审失败')
+      ElMessage.error(error.response?.data?.error || '提交评审失败')
     } finally {
       submitting.value = false
     }
@@ -370,7 +257,12 @@ const submitReview = async () => {
 }
 
 const goToPendingProjects = () => {
-  router.push('/reviewer/pending-projects')
+  // 返回项目详情页
+  if (projectData.value.id) {
+    router.push(`/reviewer/project-detail/${projectData.value.id}`)
+  } else {
+    router.push('/reviewer/projects/pending')
+  }
 }
 
 // 辅助函数

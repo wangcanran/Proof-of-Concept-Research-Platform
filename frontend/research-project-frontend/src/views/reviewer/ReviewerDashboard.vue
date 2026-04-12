@@ -35,25 +35,13 @@
         </div>
 
         <div class="nav-section">
-          <h4 v-if="!sidebarCollapsed" class="nav-section-title">评审任务</h4>
-          <router-link to="/reviewer/pending-projects" class="nav-link" active-class="active">
-            <span class="nav-icon">📋</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">待评审项目</span>
-            <span v-if="!sidebarCollapsed && stats.pendingCount > 0" class="nav-badge">
-              {{ stats.pendingCount }}
-            </span>
-          </router-link>
-          <router-link to="/reviewer/history" class="nav-link" active-class="active">
-            <span class="nav-icon">📊</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">评审历史</span>
-          </router-link>
-        </div>
-
-        <div class="nav-section">
           <h4 v-if="!sidebarCollapsed" class="nav-section-title">项目管理</h4>
           <router-link to="/reviewer/projects" class="nav-link" active-class="active">
             <span class="nav-icon">📁</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">项目浏览</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">项目管理</span>
+            <span v-if="!sidebarCollapsed && stats.pendingCount > 0" class="nav-badge">
+              {{ stats.pendingCount }}
+            </span>
           </router-link>
         </div>
 
@@ -292,11 +280,11 @@
                 快速操作
               </h3>
               <div class="actions-grid">
-                <button class="action-card" @click="goToPendingProjects">
-                  <div class="action-icon">📋</div>
+                <button class="action-card" @click="goToProjects">
+                  <div class="action-icon">📁</div>
                   <div class="action-content">
-                    <h4>待评审项目</h4>
-                    <p>查看所有待评审项目</p>
+                    <h4>项目管理</h4>
+                    <p>查看待评审项目与评审历史</p>
                   </div>
                 </button>
                 <button class="action-card" @click="goToReviewHistory">
@@ -306,11 +294,11 @@
                     <p>查看历史评审记录</p>
                   </div>
                 </button>
-                <button class="action-card" @click="goToAllProjects">
-                  <div class="action-icon">📁</div>
+                <button class="action-card" @click="goToNotifications">
+                  <div class="action-icon">🔔</div>
                   <div class="action-content">
-                    <h4>项目浏览</h4>
-                    <p>查看所有项目信息</p>
+                    <h4>通知中心</h4>
+                    <p>查看系统通知</p>
                   </div>
                 </button>
                 <button class="action-card" @click="refreshData">
@@ -668,16 +656,12 @@ const viewReviewDetail = (review: any) => {
   router.push(`/reviewer/reviews/${review.id}`)
 }
 
-const goToPendingProjects = () => {
-  router.push('/reviewer/pending-projects')
+const goToProjects = () => {
+  router.push('/reviewer/projects')
 }
 
 const goToReviewHistory = () => {
-  router.push('/reviewer/history')
-}
-
-const goToAllProjects = () => {
-  router.push('/reviewer/projects')
+  router.push('/reviewer/projects/history')
 }
 
 const goToNotifications = () => {

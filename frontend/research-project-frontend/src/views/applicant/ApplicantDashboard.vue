@@ -35,37 +35,25 @@
 
         <div class="nav-section">
           <h4 v-if="!sidebarCollapsed" class="nav-section-title">项目管理</h4>
-          <router-link to="/projects" class="nav-link" active-class="active">
-            <span class="nav-icon">📁</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">我的项目</span>
-          </router-link>
           <router-link to="/projects/create" class="nav-link" active-class="active">
             <span class="nav-icon">📝</span>
             <span v-if="!sidebarCollapsed" class="nav-text">创建项目</span>
           </router-link>
-        </div>
-
-        <div class="nav-section">
-          <h4 v-if="!sidebarCollapsed" class="nav-section-title">经费管理</h4>
-          <router-link to="/funds" class="nav-link" active-class="active">
-            <span class="nav-icon">💰</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">经费管理</span>
-          </router-link>
-          <router-link to="/funds/applications/create" class="nav-link" active-class="active">
-            <span class="nav-icon">📄</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">经费申请</span>
+          <router-link to="/projects" class="nav-link" active-class="active">
+            <span class="nav-icon">📁</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">我的项目</span>
           </router-link>
         </div>
 
         <div class="nav-section">
-          <h4 v-if="!sidebarCollapsed" class="nav-section-title">成果管理</h4>
-          <router-link to="/achievements" class="nav-link" active-class="active">
-            <span class="nav-icon">🏆</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">成果管理</span>
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">孵化服务</h4>
+          <router-link to="/incubation/service-request" class="nav-link" active-class="active">
+            <span class="nav-icon">📝</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">服务申请</span>
           </router-link>
-          <router-link to="/achievements/create" class="nav-link" active-class="active">
-            <span class="nav-icon">✍️</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">提交成果</span>
+          <router-link to="/incubation/result-feedback" class="nav-link" active-class="active">
+            <span class="nav-icon">📊</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">成果反馈</span>
           </router-link>
         </div>
 

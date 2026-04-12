@@ -38,27 +38,31 @@
 
           <div class="nav-section">
             <h4 v-if="!sidebarCollapsed" class="nav-section-title">项目管理</h4>
-            <router-link to="/assistant/applications" class="nav-link" active-class="active">
-              <span class="nav-icon">📝</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">领取项目</span>
+            <router-link to="/assistant/projects" class="nav-link" active-class="active">
+              <span class="nav-icon">📁</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">项目管理</span>
               <span v-if="!sidebarCollapsed && pendingStats.projects > 0" class="nav-badge">
                 {{ pendingStats.projects }}
               </span>
             </router-link>
-            <router-link to="/assistant/reviewer-assignment" class="nav-link" active-class="active">
-              <span class="nav-icon">👨‍🏫</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">专家分配</span>
+          </div>
+
+          <div class="nav-section">
+            <h4 v-if="!sidebarCollapsed" class="nav-section-title">孵化服务</h4>
+            <router-link to="/assistant/incubation-requests" class="nav-link" active-class="active">
+              <span class="nav-icon">🔧</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">服务申请处理</span>
+              <span v-if="!sidebarCollapsed && pendingIncubationCount > 0" class="nav-badge">
+                {{ pendingIncubationCount }}
+              </span>
             </router-link>
           </div>
 
           <div class="nav-section">
-            <h4 v-if="!sidebarCollapsed" class="nav-section-title">成果管理</h4>
-            <router-link to="/audit/achievements" class="nav-link" active-class="active">
-              <span class="nav-icon">🏆</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">成果审核</span>
-              <span v-if="!sidebarCollapsed && pendingStats.achievements > 0" class="nav-badge">
-                {{ pendingStats.achievements }}
-              </span>
+            <h4 v-if="!sidebarCollapsed" class="nav-section-title">结项管理</h4>
+            <router-link to="/assistant/terminate-projects" class="nav-link" active-class="active">
+              <span class="nav-icon">🔚</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">终止项目</span>
             </router-link>
           </div>
 
@@ -496,6 +500,9 @@ const pendingStats = computed(() => ({
   achievements: pendingTasks.value.achievements,
 }))
 
+// 待处理孵化服务申请数量
+const pendingIncubationCount = ref(0)
+
 // 计算属性
 const userInitial = computed(() => {
   return userName.value ? userName.value.charAt(0).toUpperCase() : 'A'
@@ -861,6 +868,11 @@ const loadPendingTasksData = async () => {
     const achievementsRes = await api.get('/achievements', { params: { status: 'submitted' } })
     if (achievementsRes.success && achievementsRes.data) {
       pendingTasks.value.achievements = achievementsRes.data.length
+    }
+    // 获取待处理孵化服务申请数量
+    const incubationRes = await api.get('/incubation/pending-requests', { params: { status: 'pending' } })
+    if (incubationRes.success && incubationRes.data) {
+      pendingIncubationCount.value = incubationRes.data.length
     }
   } catch (error) {
     console.error('加载待处理任务失败:', error)
