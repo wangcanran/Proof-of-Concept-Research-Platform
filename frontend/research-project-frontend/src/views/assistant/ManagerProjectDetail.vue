@@ -274,7 +274,7 @@
           <div v-else class="images-grid">
             <div v-for="image in images" :key="image.id" class="image-card">
               <div class="image-preview">
-                <img :src="`http://localhost:3002${image.file_path}`" :alt="image.file_name" />
+                <img :src="`${getApiOrigin()}${image.file_path}`" :alt="image.file_name" />
               </div>
               <div class="image-info">
                 <div class="image-name">{{ image.file_name }}</div>
@@ -400,6 +400,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -410,7 +411,7 @@ const router = useRouter()
 const route = useRoute()
 
 // API配置
-const API_BASE_URL = 'http://localhost:3002/api'
+const API_BASE_URL = getApiBaseUrl()
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -638,7 +639,7 @@ const downloadAttachment = async (attachment: any) => {
     ElMessage.info('正在下载...')
     const token = localStorage.getItem('token')
     const response = await fetch(
-      `http://localhost:3002/api/projects/attachments/${attachment.id}`,
+      `${getApiBaseUrl()}/projects/attachments/${attachment.id}`,
       { headers: { Authorization: `Bearer ${token}` } }
     )
     

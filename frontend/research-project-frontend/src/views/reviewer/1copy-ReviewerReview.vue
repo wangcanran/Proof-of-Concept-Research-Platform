@@ -521,6 +521,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -688,12 +689,9 @@ const loadReviewData = async () => {
       console.log('📥 加载评审详情，ID:', reviewId.value)
 
       // 使用正确的 API 路径
-      const response = await axios.get(
-        `${import.meta.env.VITE_API_URL || 'http://localhost:3002'}/api/reviewer/review/${reviewId.value}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      )
+      const response = await axios.get(`${getApiBaseUrl()}/reviewer/review/${reviewId.value}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
 
       // 处理响应...
     }
@@ -735,7 +733,7 @@ const loadReviewData = async () => {
 
 const loadProjectInfo = async (projectId: string, token: string) => {
   try {
-    const response = await axios.get(`http://localhost:3002/api/projects/${projectId}`, {
+    const response = await axios.get(`${getApiBaseUrl()}/projects/${projectId}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
 
@@ -847,7 +845,7 @@ const saveAsDraft = async () => {
     if (reviewId.value) {
       // ✅ 使用正确的API路径
       response = await axios.put(
-        `http://localhost:3002/api/reviewer/review/${reviewId.value}`,
+        `${getApiBaseUrl()}/reviewer/review/${reviewId.value}`,
         dataToSave,
         {
           headers: {
@@ -858,7 +856,7 @@ const saveAsDraft = async () => {
       )
     } else {
       // ✅ 使用正确的API路径
-      response = await axios.post('http://localhost:3002/api/reviewer/review', dataToSave, {
+      response = await axios.post(`${getApiBaseUrl()}/reviewer/review`, dataToSave, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -974,7 +972,7 @@ const confirmSubmit = async () => {
     if (reviewId.value) {
       // ✅ 使用正确的API路径
       response = await axios.post(
-        `http://localhost:3002/api/reviewer/review/${reviewId.value}/submit`,
+        `${getApiBaseUrl()}/reviewer/review/${reviewId.value}/submit`,
         dataToSubmit,
         {
           headers: {
@@ -990,7 +988,7 @@ const confirmSubmit = async () => {
         project_id: projectId.value,
       }
 
-      response = await axios.post('http://localhost:3002/api/reviewer/review', createData, {
+      response = await axios.post(`${getApiBaseUrl()}/reviewer/review`, createData, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',

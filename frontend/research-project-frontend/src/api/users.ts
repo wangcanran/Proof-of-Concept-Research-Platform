@@ -1,7 +1,8 @@
 // src/api/users.ts
 import axios from 'axios'
+import { getApiBaseUrl } from '@/utils/request'
 
-const API_BASE_URL = 'http://localhost:3002/api'
+const API_BASE_URL = getApiBaseUrl()
 
 const axiosInstance = axios.create({
   baseURL: API_BASE_URL,

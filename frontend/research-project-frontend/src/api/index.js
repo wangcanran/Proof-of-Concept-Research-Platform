@@ -2,10 +2,11 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
+import { getApiOrigin } from '@/utils/request'
 
 // 创建axios实例
 const api = axios.create({
-  baseURL: 'http://localhost:3002', // 指向我们刚创建的后端API
+  baseURL: getApiOrigin(),
   timeout: 15000,
   headers: {
     'Content-Type': 'application/json',

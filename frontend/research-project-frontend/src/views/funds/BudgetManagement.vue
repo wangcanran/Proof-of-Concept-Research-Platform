@@ -192,6 +192,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl } from '@/utils/request'
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus, Refresh, Download, Setting, Printer } from '@element-plus/icons-vue'
@@ -199,7 +200,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 
 const router = useRouter()
-const API_BASE_URL = 'http://localhost:3002/api'
+const API_BASE_URL = getApiBaseUrl()
 const api = axios.create({ baseURL: API_BASE_URL, timeout: 10000 })
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')

@@ -223,6 +223,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -325,7 +326,7 @@ const passwordValid = computed(() => {
 const handleRoleChange = async (role: string) => {
   try {
     const token = localStorage.getItem('token')
-    const response = await axios.get(`http://localhost:3002/api/admin/roles/${role}/permissions`, {
+    const response = await axios.get(`${getApiBaseUrl()}/admin/roles/${role}/permissions`, {
       headers: { Authorization: `Bearer ${token}` },
     })
 
@@ -341,7 +342,7 @@ const handleRoleChange = async (role: string) => {
 const loadDepartments = async () => {
   try {
     const token = localStorage.getItem('token')
-    const response = await axios.get('http://localhost:3002/api/departments', {
+    const response = await axios.get(`${getApiBaseUrl()}/departments`, {
       headers: { Authorization: `Bearer ${token}` },
     })
 
@@ -366,7 +367,7 @@ const handleSubmit = async () => {
       confirmPassword: undefined, // 移除确认密码字段
     }
 
-    const response = await axios.post('http://localhost:3002/api/admin/users', userData, {
+    const response = await axios.post(`${getApiBaseUrl()}/admin/users`, userData, {
       headers: { Authorization: `Bearer ${token}` },
     })
 

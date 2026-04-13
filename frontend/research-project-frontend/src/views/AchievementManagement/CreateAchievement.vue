@@ -326,6 +326,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl } from '@/utils/request'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -336,7 +337,7 @@ const route = useRoute()
 const router = useRouter()
 
 // API基础URL
-const API_BASE_URL = 'http://localhost:3002/api'
+const API_BASE_URL = getApiBaseUrl()
 
 // 计算属性
 const isEditMode = computed(() => route.name === 'EditAchievement')

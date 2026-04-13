@@ -144,6 +144,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl } from '@/utils/request'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh, Printer } from '@element-plus/icons-vue'
@@ -155,7 +156,7 @@ import BudgetExecutionTable from './components/BudgetExecutionTable.vue'
 import RecentProjectsList from './components/RecentProjectsList.vue'
 
 const router = useRouter()
-const API_BASE_URL = 'http://localhost:3002/api'
+const API_BASE_URL = getApiBaseUrl()
 const api = axios.create({ baseURL: API_BASE_URL, timeout: 10000 })
 
 api.interceptors.request.use((config) => {

@@ -398,6 +398,7 @@
 </template>
 
 <script setup>
+import { getApiBaseUrl } from '@/utils/request'
 import { ref, computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus, Delete, Document } from '@element-plus/icons-vue'
@@ -406,7 +407,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 const router = useRouter()
 
 // API基础URL
-const API_BASE_URL = 'http://localhost:3002/api'
+const API_BASE_URL = getApiBaseUrl()
 
 // 加载状态
 const loading = reactive({

@@ -501,6 +501,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -579,7 +580,7 @@ const loadReviewHistory = async () => {
 
     console.log('📡 加载评审历史，参数:', params)
 
-    const response = await axios.get('http://localhost:3002/api/reviewer/history', {
+    const response = await axios.get(`${getApiBaseUrl()}/reviewer/history`, {
       params,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -699,7 +700,7 @@ const loadMockData = () => {
 const loadStats = async () => {
   try {
     const token = localStorage.getItem('token')
-    const response = await axios.get('http://localhost:3002/api/reviewer/stats', {
+    const response = await axios.get(`${getApiBaseUrl()}/reviewer/stats`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -779,7 +780,7 @@ const viewProject = (projectId) => {
 const viewReviewDetail = async (reviewId) => {
   try {
     const token = localStorage.getItem('token')
-    const response = await axios.get(`http://localhost:3002/api/reviewer/viewreview/${reviewId}`, {
+    const response = await axios.get(`${getApiBaseUrl()}/reviewer/viewreview/${reviewId}`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },

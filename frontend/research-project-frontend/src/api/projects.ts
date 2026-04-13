@@ -8,8 +8,9 @@ import type {
   ExpenditureRecord,
   ProjectAchievement,
 } from '@/types/api'
+import { getApiBaseUrl } from '@/utils/request'
 
-const API_BASE_URL = 'http://localhost:3002/api'
+const API_BASE_URL = getApiBaseUrl()
 
 const axiosInstance = axios.create({
   baseURL: API_BASE_URL,

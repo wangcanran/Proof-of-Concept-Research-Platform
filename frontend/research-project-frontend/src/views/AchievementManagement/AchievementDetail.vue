@@ -441,6 +441,7 @@ import {
   ArrowDown,
 } from '@element-plus/icons-vue'
 import { achievementAPI } from '@/api/achievements'
+import { getApiOrigin } from '@/utils/request'
 
 const route = useRoute()
 const router = useRouter()
@@ -598,8 +599,8 @@ const getFileUrl = (attachment: string | any): string => {
     return url
   }
 
-  // 如果是相对路径，添加API基础URL
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3002'
+  // 如果是相对路径，添加 API 根地址（与 VITE_API_BASE_URL 一致）
+  const baseUrl = getApiOrigin()
 
   // 处理不同的路径格式
   if (url.startsWith('/api/') || url.startsWith('/uploads/') || url.startsWith('/files/')) {

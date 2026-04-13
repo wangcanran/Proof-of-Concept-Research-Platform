@@ -455,6 +455,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl } from '@/utils/request'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -731,7 +732,7 @@ const refreshData = async () => {
 }
 
 // API相关函数 - 使用绝对路径避免导入问题
-const baseURL = 'http://localhost:3002/api'
+const baseURL = getApiBaseUrl()
 
 const apiRequest = async (url: string, options: RequestInit = {}) => {
   const token = localStorage.getItem('token')

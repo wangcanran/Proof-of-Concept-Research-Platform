@@ -205,6 +205,7 @@
 </template>
 
 <script setup>
+import { getApiBaseUrl } from '@/utils/request'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
@@ -215,7 +216,7 @@ const router = useRouter()
 const formRef = ref()
 
 // API配置
-const API_BASE_URL = 'http://localhost:3002/api'
+const API_BASE_URL = getApiBaseUrl()
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,

@@ -619,7 +619,7 @@ const server = http.createServer(async (req, res) => {
         success: true,
         message: '研究项目管理系统API',
         version: '1.0.0',
-        database: 'research_system_new',
+        database: DB_CONFIG.database,
         endpoints: {
           public: [
             { path: '/api/auth/login', method: 'POST', description: '用户登录' },
@@ -1062,8 +1062,9 @@ if (pathname === '/api/auth/register' && req.method === 'POST') {
     // 密码加密（使用bcrypt）
     const bcrypt = require('bcryptjs');
     const hashedPassword = await bcrypt.hash(body.password, 10);
-    
-    // 插入用户
+    const initialStatus = process.env.REGISTER_DEFAULT_ACTIVE === 'false' ? 'inactive' : 'active';
+
+    // 插入用户（默认已激活；仅当 .env 中 REGISTER_DEFAULT_ACTIVE=false 时为待审核）
     await pool.query(
       `INSERT INTO \`User\` 
        (id, username, password, name, email, role, department, title, phone, status, created_at) 
@@ -1078,7 +1079,7 @@ if (pathname === '/api/auth/register' && req.method === 'POST') {
         body.department || null,
         body.title || null,
         body.phone || null,
-        'inactive'  // 新注册用户默认未激活，需要管理员审核
+        initialStatus
       ]
     );
     
@@ -1112,7 +1113,10 @@ if (pathname === '/api/auth/register' && req.method === 'POST') {
     
     sendResponse(res, 201, {
       success: true,
-      message: '注册成功，请等待管理员审核',
+      message:
+        initialStatus === 'active'
+          ? '注册成功，可直接登录'
+          : '注册成功，请等待管理员审核',
       userId: userId
     });
   } catch (error) {
@@ -23096,8 +23100,8 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`✅ 研究项目管理系统API启动成功！`);
   console.log('='.repeat(70));
   console.log(`📍 API地址: http://localhost:${PORT}`);
-  console.log(`📊 数据库: research_system_new`);
-  console.log(`👤 连接用户: root@localhost`);
+  console.log(`📊 数据库: ${DB_CONFIG.database} @ ${DB_CONFIG.host}:${DB_CONFIG.port}`);
+  console.log(`👤 连接用户: ${DB_CONFIG.user}`);
   console.log('');
   console.log('📡 主要API端点:');
   console.log(`   POST /api/auth/login        - 用户登录`);

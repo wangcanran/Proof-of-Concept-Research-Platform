@@ -128,6 +128,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
@@ -159,7 +160,7 @@ const loadUser = async () => {
   loading.value = true
   try {
     const token = localStorage.getItem('token')
-    const response = await axios.get(`http://localhost:3002/api/admin/users/${userId}`, {
+    const response = await axios.get(`${getApiBaseUrl()}/admin/users/${userId}`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -194,7 +195,7 @@ const saveUser = async () => {
       delete formData.password
     }
 
-    await axios.put(`http://localhost:3002/api/admin/users/${userId}`, formData, {
+    await axios.put(`${getApiBaseUrl()}/admin/users/${userId}`, formData, {
       headers: {
         Authorization: `Bearer ${token}`,
       },

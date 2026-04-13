@@ -83,7 +83,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
+import request from '@/utils/request'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -110,15 +110,15 @@ const handleLogin = async () => {
   errorMessage.value = ''
 
   try {
-    const response = await axios.post('http://localhost:3002/api/auth/login', {
+    const data = (await request.post('/api/auth/login', {
       username: loginForm.value.username,
       password: loginForm.value.password,
       role: selectedRole.value,
-    })
+    })) as { success?: boolean; user?: any; token?: string; error?: string }
 
-    if (response.data.success) {
-      const userData = response.data.user
-      const token = response.data.token
+    if (data.success) {
+      const userData = data.user
+      const token = data.token
 
       const storage = rememberMe.value ? localStorage : sessionStorage
       storage.setItem('token', token)
@@ -156,7 +156,7 @@ const handleLogin = async () => {
       }
       router.push(homeByRole[role] || '/dashboard')
     } else {
-      errorMessage.value = response.data.error || '登录失败'
+      errorMessage.value = data.error || '登录失败'
     }
   } catch (error: any) {
     console.error('登录失败:', error)

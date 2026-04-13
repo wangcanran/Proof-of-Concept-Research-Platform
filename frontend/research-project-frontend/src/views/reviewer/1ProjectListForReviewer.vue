@@ -347,6 +347,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -409,7 +410,7 @@ const loadProjects = async () => {
     }
 
     // 使用评审者专用API
-    const response = await axios.get('http://localhost:3002/api/reviewer/projects', {
+    const response = await axios.get(`${getApiBaseUrl()}/reviewer/projects`, {
       headers: { Authorization: `Bearer ${token}` },
       params: {
         page: currentPage.value,
@@ -511,7 +512,7 @@ const checkExistingReview = async (project: any) => {
 
     // 检查是否已有评审记录
     const response = await axios.get(
-      `http://localhost:3002/api/reviewer/reviews?project_id=${project.id}`,
+      `${getApiBaseUrl()}/reviewer/reviews?project_id=${project.id}`,
       {
         headers: { Authorization: `Bearer ${token}` },
       },
@@ -585,7 +586,7 @@ const exportProjects = async () => {
     }
 
     // 使用评审者专用导出API
-    const response = await axios.get('http://localhost:3002/api/reviewer/projects/export', {
+    const response = await axios.get(`${getApiBaseUrl()}/reviewer/projects/export`, {
       headers: { Authorization: `Bearer ${token}` },
       params: {
         ...filter.value,

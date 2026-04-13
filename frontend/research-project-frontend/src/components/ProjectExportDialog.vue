@@ -83,7 +83,7 @@
 import { ref, watch, computed } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import request, { normalizeApiBaseUrl } from '@/utils/request'
+import request, { getApiOrigin } from '@/utils/request'
 
 const props = defineProps<{
   modelValue: boolean
@@ -229,7 +229,7 @@ function onCheckAllChange(val: boolean | string | number) {
 }
 
 async function doExport() {
-  const base = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
+  const base = getApiOrigin()
   const token = localStorage.getItem('token')
   exporting.value = true
   try {

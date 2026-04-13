@@ -1,5 +1,6 @@
 // src/api/statistics.ts
 import api from './index'
+import { getApiOrigin } from '@/utils/request'
 
 // 统计数据类型定义
 export interface AchievementSummary {
@@ -292,7 +293,7 @@ export const statisticsAPI = {
 
 // 通用API配置
 export const API_CONFIG = {
-  baseURL: 'http://localhost:3002',
+  baseURL: getApiOrigin(),
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',

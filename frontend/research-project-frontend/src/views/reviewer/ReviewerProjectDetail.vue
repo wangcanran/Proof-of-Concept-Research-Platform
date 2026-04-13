@@ -239,7 +239,7 @@
           <div v-else class="images-grid">
             <div v-for="image in images" :key="image.id" class="image-card">
               <div class="image-preview">
-                <img :src="`http://localhost:3002${image.file_path}`" :alt="image.file_name" />
+                <img :src="`${getApiOrigin()}${image.file_path}`" :alt="image.file_name" />
               </div>
               <div class="image-info">
                 <div class="image-name">{{ image.file_name }}</div>
@@ -392,7 +392,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
-import request from '@/utils/request'
+import request, { getApiOrigin } from '@/utils/request'
 
 const router = useRouter()
 const route = useRoute()
@@ -818,7 +818,7 @@ const downloadAttachment = async (attachment: any) => {
 
     const token = localStorage.getItem('token')
     const response = await fetch(
-      `http://localhost:3002/api/projects/attachments/${attachment.id}`,
+      `${getApiBaseUrl()}/projects/attachments/${attachment.id}`,
       {
         headers: {
           Authorization: `Bearer ${token}`,

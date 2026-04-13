@@ -147,6 +147,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -284,7 +285,7 @@ const displayTotal = computed(() => {
 })
 
 // 上传配置
-const uploadAction = 'http://localhost:3002/api/files/upload'
+const uploadAction = `${getApiBaseUrl()}/files/upload`
 const uploadHeaders = computed(() => {
   const token = localStorage.getItem('token')
   return {

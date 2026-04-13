@@ -159,7 +159,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
+import request from '@/utils/request'
 
 const router = useRouter()
 
@@ -245,7 +245,8 @@ const nextStep = async () => {
     registerError.value = ''
 
     try {
-      const response = await axios.post('http://localhost:3002/api/auth/register', {
+      // 与登录等接口一致：使用 VITE_API_BASE_URL（生产构建为服务器地址，勿写死 localhost）
+      const data = (await request.post('/api/auth/register', {
         username: formData.value.username,
         password: formData.value.password,
         name: formData.value.name,
@@ -253,20 +254,27 @@ const nextStep = async () => {
         department: formData.value.department,
         invitationCode: formData.value.invitationCode,
         role: formData.value.role,
-      })
+      })) as { success?: boolean; message?: string; error?: string }
 
-      if (response.data.success) {
-        successMessage.value = response.data.message || '注册成功！请等待管理员审核'
+      if (data.success) {
+        successMessage.value = data.message || '注册成功！请等待管理员审核'
         currentStep.value = 3
       } else {
-        registerError.value = response.data.error || '注册失败'
+        registerError.value = data.error || '注册失败'
       }
     } catch (error: any) {
       console.error('注册失败:', error)
-      if (error.response?.data?.error) {
-        registerError.value = error.response.data.error
+      const apiErr =
+        error.response?.data?.error ||
+        error.response?.data?.message ||
+        (typeof error.response?.data === 'string' ? error.response.data : '')
+      if (apiErr) {
+        registerError.value = apiErr
+      } else if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
+        registerError.value =
+          '无法连接接口：请确认已用正确的 VITE_API_BASE_URL 执行 npm run build，且 Nginx 已反代 /api 到后端'
       } else {
-        registerError.value = '注册失败，请稍后重试'
+        registerError.value = error.message || '注册失败，请稍后重试'
       }
     } finally {
       registerLoading.value = false

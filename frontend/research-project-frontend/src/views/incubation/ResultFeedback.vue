@@ -209,6 +209,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl } from '@/utils/request'
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -219,7 +220,7 @@ const router = useRouter()
 const route = useRoute()
 
 // API配置
-const API_BASE_URL = 'http://localhost:3002/api'
+const API_BASE_URL = getApiBaseUrl()
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,

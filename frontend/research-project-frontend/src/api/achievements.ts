@@ -1,7 +1,8 @@
 // src/api/achievements.ts - 更新版
 import axios from 'axios'
+import { getApiBaseUrl } from '@/utils/request'
 
-const API_BASE_URL = 'http://localhost:3002/api'
+const API_BASE_URL = getApiBaseUrl()
 
 // 创建一个简单的 axios 实例
 const axiosInstance = axios.create({

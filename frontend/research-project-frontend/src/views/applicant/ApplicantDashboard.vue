@@ -514,6 +514,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
@@ -811,7 +812,7 @@ const toggleNotifications = () => {
 const openNotification = async (notification: any) => {
   try {
     if (!notification.is_read && notification.id) {
-      await axios.put(`http://localhost:3002/api/notifications/${notification.id}/read`)
+      await axios.put(`${getApiBaseUrl()}/notifications/${notification.id}/read`)
       notification.is_read = true
       unreadCount.value = Math.max(0, unreadCount.value - 1)
     }
@@ -830,7 +831,7 @@ const openNotification = async (notification: any) => {
 
 const markAllAsRead = async () => {
   try {
-    await axios.put('http://localhost:3002/api/notifications/mark-all-read', {
+    await axios.put(`${getApiBaseUrl()}/notifications/mark-all-read`, {
       userId: userId.value,
     })
     notifications.value.forEach((notification: any) => {
@@ -889,7 +890,7 @@ const loadDashboardData = async () => {
 
     // 获取用户的项目列表
     const projectsRes = await axios.get(
-      `http://localhost:3002/api/projects?applicant_id=${userId.value}`,
+      `${getApiBaseUrl()}/projects?applicant_id=${userId.value}`,
       config,
     )
     if (projectsRes.data.success) {
@@ -934,7 +935,7 @@ const loadDashboardData = async () => {
 
     // 获取通知列表
     const notifRes = await axios.get(
-      `http://localhost:3002/api/notifications?user_id=${userId.value}`,
+      `${getApiBaseUrl()}/notifications?user_id=${userId.value}`,
       config,
     )
     if (notifRes.data.success) {
@@ -944,7 +945,7 @@ const loadDashboardData = async () => {
 
     // 经费统计：与后端 /api/expenditures/stats 一致（走登录用户身份）
     try {
-      const fundsRes = await axios.get(`http://localhost:3002/api/expenditures/stats`, config)
+      const fundsRes = await axios.get(`${getApiBaseUrl()}/expenditures/stats`, config)
       if (fundsRes.data.success && fundsRes.data.data) {
         const d = fundsRes.data.data
         let total = Number(d.total_budget) || 0

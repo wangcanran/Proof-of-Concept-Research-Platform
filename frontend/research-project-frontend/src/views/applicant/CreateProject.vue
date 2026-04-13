@@ -532,7 +532,7 @@
               <div class="image-preview">
                 <img 
                   v-if="image.file_path || image.preview" 
-                  :src="image.preview || `http://localhost:3002${image.file_path}`" 
+                  :src="image.preview || `${getApiOrigin()}${image.file_path}`" 
                   alt="项目图片"
                   @click="previewImage(image)"
                 />
@@ -703,6 +703,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -713,7 +714,7 @@ const router = useRouter()
 const route = useRoute()
 
 // API配置
-const API_BASE_URL = 'http://localhost:3002/api'
+const API_BASE_URL = getApiBaseUrl()
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -1140,7 +1141,7 @@ const removeImage = (index: number) => {
 
 const previewImage = (image: any) => {
   if (image.file_path) {
-    window.open(`http://localhost:3002${image.file_path}`, '_blank')
+    window.open(`${getApiOrigin()}${image.file_path}`, '_blank')
   }
 }
 

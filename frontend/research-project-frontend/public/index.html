@@ -13,11 +13,9 @@
 
     <!-- 添加这行代码 -->
     <script>
-      window.process = window.process || {
-        env: {
-          VUE_APP_API_BASE_URL: 'http://localhost:3002/api',
-        },
-      }
+      window.process = window.process || { env: {} }
+      window.process.env.VUE_APP_API_BASE_URL =
+        typeof location !== 'undefined' ? location.origin + '/api' : '/api'
     </script>
   </body>
 </html>

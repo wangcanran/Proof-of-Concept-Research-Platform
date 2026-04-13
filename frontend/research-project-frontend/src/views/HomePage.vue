@@ -238,6 +238,7 @@
 </template>
 
 <script setup lang="ts">
+import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
@@ -330,7 +331,7 @@ const formatNoticeDate = (dateStr: string) => {
 
 const loadStats = async () => {
   try {
-    const res = await axios.get('http://localhost:3002/api/home/stats')
+    const res = await axios.get(`${getApiBaseUrl()}/home/stats`)
     const payload = res.data
     if (payload?.success && payload?.data) {
       const d = payload.data
@@ -349,7 +350,7 @@ const loadStats = async () => {
 
 const loadNotices = async () => {
   try {
-    const res = await axios.get('http://localhost:3002/api/notices?status=published&limit=6')
+    const res = await axios.get(`${getApiBaseUrl()}/notices?status=published&limit=6`)
     if (res.data?.data) {
       notices.value = res.data.data
     }
