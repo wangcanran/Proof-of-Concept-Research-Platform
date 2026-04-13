@@ -30,13 +30,24 @@ function resolveApiOrigin() {
     return normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
   }
   const raw = String(import.meta.env.VITE_API_BASE_URL ?? '').trim()
-  let base = raw ? normalizeApiBaseUrl(raw) : defaultApiOrigin()
-
+  // 生产：用户用真实 IP/域名打开页面时，只要未配置独立 API 域名，或 env 仍指向环回地址，一律与页面同源（配合 Nginx 反代 /api），避免旧构建或错误 env 仍请求 localhost:3002
   if (typeof window !== 'undefined') {
     const host = window.location.hostname
+    const pageIsRealHost = host !== 'localhost' && host !== '127.0.0.1'
+    if (pageIsRealHost) {
+      if (!raw || /localhost|127\.0\.0\.1/.test(raw)) {
+        return window.location.origin
+      }
+      return normalizeApiBaseUrl(raw)
+    }
+  }
+  const base = raw ? normalizeApiBaseUrl(raw) : defaultApiOrigin()
+  if (typeof window !== 'undefined') {
     const bakedPointsToLoopback =
       base.includes('localhost') || base.includes('127.0.0.1')
-    const pageIsRealHost = host !== 'localhost' && host !== '127.0.0.1'
+    const pageIsRealHost =
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1'
     if (bakedPointsToLoopback && pageIsRealHost) {
       return window.location.origin
     }
