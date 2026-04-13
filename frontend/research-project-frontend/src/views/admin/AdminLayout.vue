@@ -34,12 +34,20 @@
             <span class="nav-icon">🏠</span>
             <span v-if="!sidebarCollapsed" class="nav-text">工作台</span>
           </router-link>
+          <router-link to="/admin/projects" class="nav-link" active-class="active">
+            <span class="nav-icon">📊</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">项目管理</span>
+          </router-link>
           <router-link to="/admin/users" class="nav-link" active-class="active">
             <span class="nav-icon">👥</span>
             <span v-if="!sidebarCollapsed" class="nav-text">用户管理</span>
             <span v-if="!sidebarCollapsed && pendingApprovalCount > 0" class="nav-badge">
               {{ pendingApprovalCount }}
             </span>
+          </router-link>
+          <router-link to="/admin/invitations" class="nav-link" active-class="active">
+            <span class="nav-icon">✉️</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">邀请码</span>
           </router-link>
           <router-link to="/admin/roles" class="nav-link" active-class="active">
             <span class="nav-icon">🔑</span>

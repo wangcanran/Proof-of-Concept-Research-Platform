@@ -69,6 +69,7 @@ declare module 'vue' {
     ElTimelineItem: typeof import('element-plus/es')['ElTimelineItem']
     ElUpload: typeof import('element-plus/es')['ElUpload']
     ErrorHandler: typeof import('./src/components/ErrorHandler.vue')['default']
+    ProjectExportDialog: typeof import('./src/components/ProjectExportDialog.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
   }

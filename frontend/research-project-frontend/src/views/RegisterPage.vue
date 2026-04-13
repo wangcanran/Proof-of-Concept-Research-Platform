@@ -111,9 +111,17 @@
               <input type="text" v-model="formData.department" placeholder="请输入所属部门" />
             </div>
 
-            <div class="form-group">
-              <label>邀请码（可选）</label>
-              <input type="text" v-model="formData.invitationCode" placeholder="如有邀请码请输入" />
+            <div v-if="needsInvitationCode" class="form-group">
+              <label>邀请码 <span class="required">*</span></label>
+              <input
+                type="text"
+                v-model="formData.invitationCode"
+                placeholder="请输入管理员发放的邀请码"
+                required
+              />
+              <p class="field-hint">
+                评审专家与项目经理须凭有效邀请码注册（由系统管理员或项目经理在「邀请码管理」中生成），邀请码与所选身份须一致。
+              </p>
             </div>
 
             <div class="form-group">
@@ -174,11 +182,11 @@ const formData = ref({
   agreeTerms: false,
 })
 
+/** 自助注册可选身份（系统管理员仅可由超级管理员在后台创建，不提供自助注册） */
 const registerRoles = [
   { value: 'applicant', name: '项目申请人', icon: '📝' },
   { value: 'reviewer', name: '评审专家', icon: '⭐' },
   { value: 'project_manager', name: '项目经理', icon: '📊' },
-  { value: 'admin', name: '系统管理员', icon: '🔧' },
 ]
 
 const passwordMismatch = computed(() => {
@@ -189,8 +197,13 @@ const passwordMismatch = computed(() => {
   )
 })
 
+const needsInvitationCode = computed(
+  () =>
+    formData.value.role === 'reviewer' || formData.value.role === 'project_manager',
+)
+
 const canRegister = computed(() => {
-  return (
+  const base =
     formData.value.username &&
     formData.value.name &&
     formData.value.email &&
@@ -198,11 +211,18 @@ const canRegister = computed(() => {
     formData.value.confirmPassword &&
     !passwordMismatch.value &&
     formData.value.agreeTerms
-  )
+  if (!base) return false
+  if (needsInvitationCode.value && !String(formData.value.invitationCode || '').trim()) {
+    return false
+  }
+  return true
 })
 
 const selectRole = (role: string) => {
   formData.value.role = role
+  if (role !== 'reviewer' && role !== 'project_manager') {
+    formData.value.invitationCode = ''
+  }
 }
 
 const nextStep = async () => {
@@ -212,6 +232,10 @@ const nextStep = async () => {
   }
 
   if (currentStep.value === 2) {
+    if (needsInvitationCode.value && !String(formData.value.invitationCode || '').trim()) {
+      registerError.value = '注册评审专家或项目经理必须填写邀请码'
+      return
+    }
     if (!canRegister.value) {
       registerError.value = '请填写完整的注册信息'
       return
@@ -480,6 +504,13 @@ const handleLogoError = (e: Event) => {
   color: #ff4d4f;
   font-size: 12px;
   margin-top: 5px;
+}
+
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
 }
 
 .step-actions {

@@ -69,4 +69,5 @@ service.interceptors.response.use(
   },
 )
 
+export { normalizeApiBaseUrl }
 export default service

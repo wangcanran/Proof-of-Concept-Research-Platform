@@ -425,6 +425,16 @@ const routes: Array<RouteRecordRaw> = [
     },
   },
   {
+    path: '/assistant/invitations',
+    name: 'AssistantInvitations',
+    component: () => import('@/views/invitations/InvitationManage.vue'),
+    meta: {
+      title: '邀请码管理',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
     path: '/assistant/activities',
     name: 'AssistantActivities',
     component: () => import('@/views/assistant/Activities.vue'),
@@ -509,11 +519,29 @@ const routes: Array<RouteRecordRaw> = [
         },
       },
       {
+        path: 'projects',
+        name: 'AdminProjectManagement',
+        component: () => import('@/views/admin/AdminProjectManagement.vue'),
+        meta: {
+          title: '项目管理',
+          permissions: ['view_admin_dashboard'],
+        },
+      },
+      {
         path: 'users',
         name: 'UserManagement',
         component: () => import('@/views/admin/UserManagement.vue'),
         meta: {
           title: '用户管理',
+          permissions: ['manage_users'],
+        },
+      },
+      {
+        path: 'invitations',
+        name: 'AdminInvitations',
+        component: () => import('@/views/invitations/InvitationManage.vue'),
+        meta: {
+          title: '邀请码管理',
           permissions: ['manage_users'],
         },
       },

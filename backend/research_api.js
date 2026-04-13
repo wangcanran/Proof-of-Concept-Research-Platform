@@ -6,14 +6,16 @@ const { randomUUID } = require('crypto');
 const { formidable } = require('formidable');
 const multer = require('multer');
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const fs = require('fs');
-// MySQL配置
+const ExcelJS = require('exceljs');
+// MySQL配置（生产环境请在 backend/.env 中设置 DB_*，勿提交 .env）
 const DB_CONFIG = {
-  host: 'localhost',
-  port: 3306,
-  user: 'root',
-  password: 'wn20041008',
-  database: 'research_system',
+  host: process.env.DB_HOST || 'localhost',
+  port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '051005',
+  database: process.env.DB_NAME || 'research_system',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
@@ -22,6 +24,24 @@ const DB_CONFIG = {
 
 // 创建连接池
 const pool = mysql.createPool(DB_CONFIG);
+
+/** 生成唯一邀请码（供写入 `Invitation`.invitation_code） */
+async function generateUniqueInvitationCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  for (let attempt = 0; attempt < 12; attempt++) {
+    let raw = '';
+    for (let i = 0; i < 12; i++) {
+      raw += chars[Math.floor(Math.random() * chars.length)];
+    }
+    const code = `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
+    const [ex] = await pool.query(
+      'SELECT id FROM `Invitation` WHERE invitation_code = ? LIMIT 1',
+      [code]
+    );
+    if (ex.length === 0) return code;
+  }
+  return `INV-${randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase()}`;
+}
 
 /**
  * multipart 文件名：浏览器以 UTF-8 发送，multer 等常按 latin1 解析为 JS 字符串，导致中文乱码。
@@ -296,6 +316,205 @@ async function getBody(req) {
   });
 }
 
+/** 项目导出可选字段（与 SQL 别名一致） */
+const PROJECT_EXPORT_FIELDS = [
+  { key: 'project_code', label: '项目编号' },
+  { key: 'title', label: '项目名称' },
+  { key: 'applicant_name', label: '申请人' },
+  { key: 'manager_name', label: '项目经理' },
+  { key: 'research_field', label: '研究领域' },
+  { key: 'tech_maturity', label: '技术成熟度' },
+  { key: 'keywords', label: '关键词' },
+  { key: 'abstract', label: '项目摘要' },
+  { key: 'project_domain_other_text', label: '领域其他说明' },
+  { key: 'achievement_transform', label: '预期成果转化形式' },
+  { key: 'poc_stage_requirement', label: '概念验证阶段需求' },
+  { key: 'budget_total', label: '预算总额(元)' },
+  { key: 'status', label: '项目状态' },
+  { key: 'submit_date', label: '提交日期' },
+  { key: 'approval_date', label: '批准日期' },
+  { key: 'start_date', label: '开始日期' },
+  { key: 'end_date', label: '结束日期' },
+  { key: 'remarks', label: '备注' },
+  { key: 'created_at', label: '创建时间' },
+  { key: 'updated_at', label: '更新时间' }
+];
+
+const TECH_MATURITY_LABELS = {
+  rd: '研发阶段',
+  pilot: '小试阶段',
+  intermediate_trial: '中试阶段',
+  small_batch_prod: '小批量生产'
+};
+
+const PROJECT_STATUS_LABELS = {
+  draft: '草稿',
+  submitted: '已提交',
+  under_review: '评审中',
+  approved: '已批准',
+  incubating: '孵化中',
+  rejected: '未通过',
+  completed: '已完成'
+};
+
+function formatTechMaturity(v) {
+  if (v == null || v === '') return '';
+  return TECH_MATURITY_LABELS[v] || String(v);
+}
+
+function formatProjectStatus(v) {
+  if (v == null || v === '') return '';
+  return PROJECT_STATUS_LABELS[v] || String(v);
+}
+
+/** Excel 导出：统一按北京时间（Asia/Shanghai）展示，避免与数据库/服务器时区混用造成偏差 */
+const EXPORT_DISPLAY_TZ = 'Asia/Shanghai';
+
+function datePartsInBeijing(d) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: EXPORT_DISPLAY_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const map = {};
+  for (const p of parts) {
+    if (p.type !== 'literal') map[p.type] = p.value;
+  }
+  return map;
+}
+
+function parseValueToDate(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) {
+    return isNaN(v.getTime()) ? null : v;
+  }
+  const s = String(v).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(`${s}T00:00:00`);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const iso = s.includes('T') ? s : s.replace(' ', 'T');
+  let d = new Date(iso);
+  if (!isNaN(d.getTime())) return d;
+  if (s.length >= 19) {
+    d = new Date(s.slice(0, 19).replace(' ', 'T'));
+    if (!isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
+/** 导出：日期列 → YYYY-MM-DD（北京时间日历日） */
+function formatExportDateValue(v) {
+  if (v == null || v === '') return '';
+  const s0 = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s0)) {
+    return s0;
+  }
+  const d = v instanceof Date ? v : parseValueToDate(v);
+  if (!d || isNaN(d.getTime())) {
+    return s0.length >= 10 ? s0.slice(0, 10) : s0;
+  }
+  const p = datePartsInBeijing(d);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+/** 导出：日期时间列 → YYYY-MM-DD HH:mm:ss（北京时间） */
+function formatExportDateTimeValue(v) {
+  if (v == null || v === '') return '';
+  const d = v instanceof Date ? v : parseValueToDate(v);
+  if (!d || isNaN(d.getTime())) {
+    const s = String(v).trim();
+    return s.length >= 19 ? s.slice(0, 19).replace('T', ' ') : s;
+  }
+  const p = datePartsInBeijing(d);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+}
+
+function getProjectExportScopeWhere(role, userId) {
+  const r = normalizeRole(role);
+  const uid = userId;
+  if (r === 'admin') {
+    return { sql: '1=1', params: [] };
+  }
+  if (r === 'applicant') {
+    return { sql: 'p.applicant_id = ?', params: [uid] };
+  }
+  if (r === 'reviewer') {
+    return {
+      sql: 'p.id IN (SELECT project_id FROM `ExpertAssignment` WHERE expert_id = ?)',
+      params: [uid]
+    };
+  }
+  if (r === 'project_manager') {
+    return { sql: 'p.manager_id = ?', params: [uid] };
+  }
+  return null;
+}
+
+/** 与库表 Project.id（VARCHAR(36)）一致：字母数字、连字符、下划线 */
+const EXPORT_PROJECT_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+const EXPORT_PROJECT_IDS_MAX = 500;
+
+/** 解析并去重导出请求中的项目 id，必须在后续 SQL 中与 scope 组合使用 */
+function parseExportProjectIds(body) {
+  const raw = body && Array.isArray(body.projectIds) ? body.projectIds : [];
+  const seen = new Set();
+  const ids = [];
+  for (const x of raw) {
+    const id = String(x == null ? '' : x).trim();
+    if (!id || !EXPORT_PROJECT_ID_RE.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+    if (ids.length > EXPORT_PROJECT_IDS_MAX) {
+      return { ok: false, ids: null, error: `一次最多导出 ${EXPORT_PROJECT_IDS_MAX} 个项目` };
+    }
+  }
+  if (ids.length === 0) {
+    return { ok: false, ids: null, error: '请选择要导出的项目' };
+  }
+  return { ok: true, ids, error: null };
+}
+
+function buildExportWhereWithProjectIds(scopeWhere, projectIds) {
+  const placeholders = projectIds.map(() => '?').join(', ');
+  return {
+    sql: `(${scopeWhere.sql}) AND p.id IN (${placeholders})`,
+    params: [...scopeWhere.params, ...projectIds]
+  };
+}
+
+function formatExportCell(row, key) {
+  const v = row[key];
+  switch (key) {
+    case 'tech_maturity':
+      return formatTechMaturity(v);
+    case 'status':
+      return formatProjectStatus(v);
+    case 'submit_date':
+    case 'approval_date':
+    case 'start_date':
+    case 'end_date':
+      return formatExportDateValue(v);
+    case 'created_at':
+    case 'updated_at':
+      return formatExportDateTimeValue(v);
+    case 'budget_total':
+      return v != null && v !== '' ? Number(v) : '';
+    default:
+      if (v == null) return '';
+      if (typeof v === 'object' && v instanceof Date) {
+        return formatExportDateTimeValue(v);
+      }
+      return String(v);
+  }
+}
+
 // 生成UUID
 function generateUUID() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -303,6 +522,13 @@ function generateUUID() {
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
+}
+
+/** 自助注册允许的角色（不含 admin） */
+function normalizeRegisterRole(r) {
+  const s = String(r || '').toLowerCase().trim();
+  if (['applicant', 'reviewer', 'project_manager', 'admin'].includes(s)) return s;
+  return 'applicant';
 }
 
 // 计算工作量评分（如果还没有这个函数）
@@ -355,11 +581,14 @@ const server = http.createServer(async (req, res) => {
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:3000',
-    'http://localhost:8080'
+    'http://localhost:8080',
+    ...(process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
+      : [])
   ];
   const origin = req.headers.origin;
   
-  if (allowedOrigins.includes(origin)) {
+  if (origin && allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
   
@@ -773,29 +1002,58 @@ if (pathname === '/api/auth/register' && req.method === 'POST') {
       return;
     }
     
-    // 验证邀请码（如果有）
-    let targetRole = 'applicant'; // 默认角色为申请人
+    const requestedRole = normalizeRegisterRole(body.role);
+
+    if (requestedRole === 'admin') {
+      sendResponse(res, 403, {
+        success: false,
+        error: '系统管理员无法通过自助注册开通，请由超级管理员在后台创建账号'
+      });
+      return;
+    }
+
+    let targetRole = requestedRole;
     let invitationInfo = null;
-    
-    if (body.invitationCode) {
+
+    if (requestedRole === 'reviewer' || requestedRole === 'project_manager') {
+      const code = body.invitationCode ? String(body.invitationCode).trim() : '';
+      if (!code) {
+        sendResponse(res, 400, {
+          success: false,
+          error: '注册评审专家或项目经理必须填写有效邀请码'
+        });
+        return;
+      }
       const [invitations] = await pool.query(
-        `SELECT * FROM Invitation 
+        `SELECT * FROM \`Invitation\` 
          WHERE invitation_code = ? 
          AND status = 'pending' 
          AND expires_at > NOW()`,
-        [body.invitationCode]
+        [code]
       );
-      
-      if (invitations.length > 0) {
-        invitationInfo = invitations[0];
-        targetRole = invitationInfo.target_role;
-      } else {
+      if (invitations.length === 0) {
         sendResponse(res, 400, {
           success: false,
           error: '邀请码无效或已过期'
         });
         return;
       }
+      invitationInfo = invitations[0];
+      if (invitationInfo.target_role === 'admin') {
+        sendResponse(res, 403, {
+          success: false,
+          error: '系统管理员无法通过自助注册开通'
+        });
+        return;
+      }
+      if (invitationInfo.target_role !== requestedRole) {
+        sendResponse(res, 400, {
+          success: false,
+          error: '邀请码与所选注册身份不一致'
+        });
+        return;
+      }
+      targetRole = invitationInfo.target_role;
     }
     
     // 生成用户ID
@@ -836,7 +1094,7 @@ if (pathname === '/api/auth/register' && req.method === 'POST') {
     // 如果使用了邀请码，更新邀请记录状态
     if (invitationInfo) {
       await pool.query(
-        `UPDATE Invitation 
+        `UPDATE \`Invitation\` 
          SET status = 'accepted', 
              registered_user_id = ?, 
              accepted_at = NOW() 
@@ -934,6 +1192,164 @@ if (pathname === '/api/auth/me' && req.method === 'GET') {
       success: false,
       error: '获取用户信息失败'
     });
+  }
+  return;
+}
+
+// ==================== 邀请码（Invitation 表）：管理员与项目经理可生成 ====================
+if (pathname === '/api/invitations' && req.method === 'GET') {
+  const user = await verifyToken(req.headers.authorization);
+  if (!user) {
+    sendResponse(res, 401, { success: false, error: '认证失败' });
+    return;
+  }
+  const role = normalizeRole(user.role);
+  if (role !== 'admin' && role !== 'project_manager') {
+    sendResponse(res, 403, { success: false, error: '仅管理员或项目经理可查看邀请码' });
+    return;
+  }
+  try {
+    const uid = user.userId || user.id;
+    let rows;
+    if (role === 'admin') {
+      [rows] = await pool.query(
+        `SELECT i.id, i.inviter_id, i.target_role, i.invitation_code, i.status, i.expires_at, i.created_at, i.accepted_at,
+                u.name AS inviter_name, u.username AS inviter_username
+         FROM \`Invitation\` i
+         LEFT JOIN \`User\` u ON i.inviter_id = u.id
+         ORDER BY i.created_at DESC
+         LIMIT 300`
+      );
+    } else {
+      [rows] = await pool.query(
+        `SELECT i.id, i.inviter_id, i.target_role, i.invitation_code, i.status, i.expires_at, i.created_at, i.accepted_at
+         FROM \`Invitation\` i
+         WHERE i.inviter_id = ?
+         ORDER BY i.created_at DESC
+         LIMIT 200`,
+        [uid]
+      );
+    }
+    sendResponse(res, 200, { success: true, data: rows });
+  } catch (err) {
+    console.error('列出邀请失败:', err && err.sqlMessage, err);
+    const detail = err && (err.sqlMessage || err.message);
+    sendResponse(res, 500, {
+      success: false,
+      error: '获取邀请列表失败',
+      detail: detail || undefined,
+      code: err && err.code,
+    });
+  }
+  return;
+}
+
+if (pathname === '/api/invitations' && req.method === 'POST') {
+  const user = await verifyToken(req.headers.authorization);
+  if (!user) {
+    sendResponse(res, 401, { success: false, error: '认证失败' });
+    return;
+  }
+  const role = normalizeRole(user.role);
+  if (role !== 'admin' && role !== 'project_manager') {
+    sendResponse(res, 403, { success: false, error: '仅管理员或项目经理可生成邀请码' });
+    return;
+  }
+  let body = {};
+  try {
+    body = await parseRequestBody(req);
+  } catch (e) {
+    body = {};
+  }
+  const targetRole = String(body.target_role || '').trim();
+  if (targetRole !== 'reviewer' && targetRole !== 'project_manager') {
+    sendResponse(res, 400, {
+      success: false,
+      error: '邀请角色仅支持：评审专家(reviewer)、项目经理(project_manager)'
+    });
+    return;
+  }
+  let days = parseInt(body.expiresInDays, 10);
+  if (Number.isNaN(days) || days < 1) days = 30;
+  if (role === 'project_manager' && days > 90) days = 90;
+  if (role === 'admin' && days > 365) days = 365;
+
+  try {
+    const invitationCode = await generateUniqueInvitationCode();
+    const invitationId = randomUUID();
+    const inviterId = user.userId || user.id;
+    // 新建邀请：写入 Invitation 主键、邀请人、目标角色、邀请码、状态、过期时间（accepted_at / registered_user_id 待注册成功后更新）
+    await pool.query(
+      `INSERT INTO \`Invitation\` (
+        id, inviter_id, target_role, invitation_code, status, expires_at, created_at
+      ) VALUES (?, ?, ?, ?, 'pending', DATE_ADD(NOW(), INTERVAL ? DAY), NOW())`,
+      [invitationId, inviterId, targetRole, invitationCode, days]
+    );
+    const [rows] = await pool.query(
+      `SELECT id, inviter_id, target_role, invitation_code, status, expires_at, created_at FROM \`Invitation\` WHERE id = ?`,
+      [invitationId]
+    );
+    sendResponse(res, 201, {
+      success: true,
+      message: '邀请码已生成',
+      data: rows[0]
+    });
+  } catch (err) {
+    console.error('创建邀请失败:', err);
+    sendResponse(res, 500, { success: false, error: '生成邀请码失败', message: err.message });
+  }
+  return;
+}
+
+if (pathname === '/api/invitations/revoke' && req.method === 'POST') {
+  const user = await verifyToken(req.headers.authorization);
+  if (!user) {
+    sendResponse(res, 401, { success: false, error: '认证失败' });
+    return;
+  }
+  const role = normalizeRole(user.role);
+  if (role !== 'admin' && role !== 'project_manager') {
+    sendResponse(res, 403, { success: false, error: '无权限' });
+    return;
+  }
+  let body = {};
+  try {
+    body = await parseRequestBody(req);
+  } catch (e) {
+    body = {};
+  }
+  const inviteId = String(body.id || '').trim();
+  if (!inviteId) {
+    sendResponse(res, 400, { success: false, error: '请提供邀请记录 id' });
+    return;
+  }
+  try {
+    const [found] = await pool.query(
+      'SELECT id, inviter_id, status FROM `Invitation` WHERE id = ?',
+      [inviteId]
+    );
+    if (found.length === 0) {
+      sendResponse(res, 404, { success: false, error: '记录不存在' });
+      return;
+    }
+    const row = found[0];
+    if (row.status !== 'pending') {
+      sendResponse(res, 400, { success: false, error: '仅待使用状态的邀请可作废' });
+      return;
+    }
+    const uid = user.userId || user.id;
+    if (role !== 'admin' && row.inviter_id !== uid) {
+      sendResponse(res, 403, { success: false, error: '只能作废本人发出的邀请' });
+      return;
+    }
+    await pool.query(
+      'UPDATE `Invitation` SET status = ? WHERE id = ?',
+      ['cancelled', inviteId]
+    );
+    sendResponse(res, 200, { success: true, message: '已作废' });
+  } catch (err) {
+    console.error('作废邀请失败:', err);
+    sendResponse(res, 500, { success: false, error: '作废失败' });
   }
   return;
 }
@@ -11425,138 +11841,7 @@ function getRoleText(role) {
       }
       return;
     }
-    // ==================== 用户注册API ====================
-    
-    if (pathname === '/api/auth/register' && req.method === 'POST') {
-      const body = await parseRequestBody(req);
-      
-      console.log('注册请求收到:', body);
-      
-      // 验证必填字段
-      if (!body.username || !body.password || !body.email) {
-        sendResponse(res, 400, {
-          success: false,
-          error: '用户名、密码和邮箱不能为空'
-        });
-        return;
-      }
-      
-      // 验证密码长度
-      if (body.password.length < 6) {
-        sendResponse(res, 400, {
-          success: false,
-          error: '密码至少需要6个字符'
-        });
-        return;
-      }
-      
-      try {
-        // 检查用户名是否已存在
-        const [existingUsers] = await pool.query(
-          'SELECT id FROM `User` WHERE username = ? OR email = ?',
-          [body.username, body.email]
-        );
-        
-        if (existingUsers.length > 0) {
-          sendResponse(res, 409, {
-            success: false,
-            error: '用户名或邮箱已存在'
-          });
-          return;
-        }
-        
-        // 生成UUID作为id
-        const userId = randomUUID();
-        
-        // 转换和验证角色
-        const roleMap = {
-          'APPLICANT': 'applicant',
-          'REVIEWER': 'reviewer',
-          'ASSISTANT': 'project_manager',
-          'ADMIN': 'admin'
-        };
-        
-        let userRole = (body.role || 'APPLICANT').toUpperCase();
-        if (!roleMap[userRole]) {
-          userRole = 'APPLICANT';
-        }
-        const dbRole = roleMap[userRole];
-        
-        // 获取前端传递的其他字段
-        const name = body.name || body.username || '';
-        const department = body.college || body.department || '';
-        const title = body.title || '';
-        
-        // 插入数据到正确的表结构
-        const sql = `
-          INSERT INTO \`User\` (
-            id, username, password, name, email, role,
-            department, title, status, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-        `;
-        
-        const params = [
-          userId,
-          body.username,
-          body.password, // 注意：这里应该存储哈希值，但为简化直接存储
-          name,
-          body.email,
-          dbRole,
-          department,
-          title,
-          'active'
-        ];
-        
-        console.log('执行SQL:', sql);
-        console.log('参数:', params);
-        
-        const [result] = await pool.query(sql, params);
-        
-        console.log('用户插入成功，结果:', result);
-        
-        // 获取新用户信息（不包含密码）
-        const [newUsers] = await pool.query(
-          `SELECT 
-            id, username, email, role, name,
-            department, title, status, 
-            last_login, created_at
-           FROM \`User\` WHERE id = ?`,
-          [userId]
-        );
-        
-        console.log('查询到新用户:', newUsers[0]);
-        
-        // 生成token
-        const token = Buffer.from(`${userId}:${body.username}:${Date.now()}`).toString('base64');
-        
-        sendResponse(res, 201, {
-          success: true,
-          message: '注册成功',
-          token: token,
-          user: newUsers[0]
-        });
-        
-      } catch (error) {
-        console.error('========== 注册错误详情 ==========');
-        console.error('错误信息:', error.message);
-        console.error('SQL错误:', error.sqlMessage);
-        console.error('错误代码:', error.code);
-        console.error('SQL状态:', error.sqlState);
-        console.error('SQL语句:', error.sql);
-        console.error('堆栈:', error.stack);
-        console.error('==================================');
-        
-        sendResponse(res, 500, {
-          success: false,
-          error: '注册失败',
-          message: error.message,
-          sqlMessage: error.sqlMessage || '无SQL错误信息',
-          code: error.code
-        });
-      }
-      return;
-    }
-    
+
     if (pathname === '/api/auth/profile' && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -13539,8 +13824,14 @@ if (pathname.startsWith('/api/projects/attachments/') && req.method === 'DELETE'
   return;
 }
 // 获取单个项目详情
-// 注意：需要排除 /reviews 等子路由，它们有单独的处理逻辑
-if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) && req.method === 'GET' && !pathname.endsWith('/reviews') && !pathname.includes('/reviews/')) {
+// 注意：需要排除 /reviews 等子路由，以及 /api/projects/export-*（否则会误把 export-meta 当成项目 id）
+if (
+  (pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) &&
+  req.method === 'GET' &&
+  !pathname.endsWith('/reviews') &&
+  !pathname.includes('/reviews/') &&
+  !pathname.startsWith('/api/projects/export-')
+) {
   console.log('📁 项目详情路由匹配:', pathname);
   const authHeader = req.headers.authorization;
   let token = authHeader;
@@ -13758,7 +14049,12 @@ if ((pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/
 }
 
 // 4. 最后才是项目详情接口（使用正则匹配，排除已经匹配的路径）
-if ((pathname.match(/^\/api\/project\/[^\/]+$/) || pathname.match(/^\/api\/projects\/[^\/]+$/)) && req.method === 'GET') {
+// 须排除 /api/projects/export-*，否则 export-meta 会被当成「单段 id」并触发 UUID 校验 → 400
+if (
+  (pathname.match(/^\/api\/project\/[^\/]+$/) || pathname.match(/^\/api\/projects\/[^\/]+$/)) &&
+  req.method === 'GET' &&
+  !pathname.startsWith('/api/projects/export-')
+) {
   // 提取项目ID
   let projectId;
   if (pathname.startsWith('/api/project/')) {
@@ -14412,6 +14708,171 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
   });
   return;
 }
+
+    // ==================== 项目 Excel 导出（按角色数据范围） ====================
+    if (pathname === '/api/projects/export-meta' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+      const scopeWhere = getProjectExportScopeWhere(user.role, user.userId || user.id);
+      if (!scopeWhere) {
+        sendResponse(res, 403, { success: false, error: '当前角色不可导出项目' });
+        return;
+      }
+      const r = normalizeRole(user.role);
+      const scopeDescriptions = {
+        admin: '全部项目',
+        applicant: '您申请的项目（我的项目）',
+        reviewer: '分配给您评审的项目',
+        project_manager: '您已领取并负责的项目'
+      };
+      sendResponse(res, 200, {
+        success: true,
+        data: {
+          role: r,
+          scopeDescription: scopeDescriptions[r] || '项目',
+          fields: PROJECT_EXPORT_FIELDS
+        }
+      });
+      return;
+    }
+
+    if (pathname === '/api/projects/export-candidates' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+      const scopeWhere = getProjectExportScopeWhere(user.role, user.userId || user.id);
+      if (!scopeWhere) {
+        sendResponse(res, 403, { success: false, error: '当前角色不可导出项目' });
+        return;
+      }
+      try {
+        const sql = `
+          SELECT p.id, p.project_code, p.title
+          FROM \`Project\` p
+          WHERE ${scopeWhere.sql}
+          ORDER BY p.created_at DESC
+          LIMIT 2000
+        `;
+        const [rows] = await pool.query(sql, scopeWhere.params);
+        sendResponse(res, 200, {
+          success: true,
+          data: { projects: rows }
+        });
+      } catch (err) {
+        console.error('export-candidates 失败:', err);
+        sendResponse(res, 500, { success: false, error: '加载可选项目失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/projects/export-excel' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+      const scopeWhere = getProjectExportScopeWhere(user.role, user.userId || user.id);
+      if (!scopeWhere) {
+        sendResponse(res, 403, { success: false, error: '当前角色不可导出项目' });
+        return;
+      }
+      let body = {};
+      try {
+        body = await parseRequestBody(req);
+      } catch (e) {
+        body = {};
+      }
+      const parsedIds = parseExportProjectIds(body);
+      if (!parsedIds.ok) {
+        sendResponse(res, 400, { success: false, error: parsedIds.error || '请选择要导出的项目' });
+        return;
+      }
+      const exportWhere = buildExportWhereWithProjectIds(scopeWhere, parsedIds.ids);
+
+      let fieldKeys = Array.isArray(body.fields) ? body.fields.map((k) => String(k).trim()).filter(Boolean) : [];
+      const allowed = new Set(PROJECT_EXPORT_FIELDS.map((f) => f.key));
+      fieldKeys = fieldKeys.filter((k) => allowed.has(k));
+      if (fieldKeys.length === 0) {
+        fieldKeys = PROJECT_EXPORT_FIELDS.map((f) => f.key);
+      }
+      const labelByKey = Object.fromEntries(PROJECT_EXPORT_FIELDS.map((f) => [f.key, f.label]));
+      const sql = `
+        SELECT
+          p.project_code,
+          p.title,
+          u_app.name AS applicant_name,
+          u_mgr.name AS manager_name,
+          (
+            SELECT GROUP_CONCAT(DISTINCT rd.name ORDER BY rd.sort_order SEPARATOR '、')
+            FROM \`ProjectResearchDomain\` prd
+            JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+            WHERE prd.project_id = p.id
+          ) AS research_field,
+          p.tech_maturity,
+          p.keywords,
+          p.abstract,
+          p.project_domain_other_text,
+          p.achievement_transform,
+          p.poc_stage_requirement,
+          (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total,
+          p.status,
+          p.submit_date,
+          p.approval_date,
+          p.start_date,
+          p.end_date,
+          p.remarks,
+          p.created_at,
+          p.updated_at
+        FROM \`Project\` p
+        LEFT JOIN \`User\` u_app ON p.applicant_id = u_app.id
+        LEFT JOIN \`User\` u_mgr ON p.manager_id = u_mgr.id
+        WHERE ${exportWhere.sql}
+        ORDER BY p.created_at DESC
+      `;
+      try {
+        const [rows] = await pool.query(sql, exportWhere.params);
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet('项目', {
+          views: [{ state: 'frozen', ySplit: 1 }]
+        });
+        const headers = fieldKeys.map((k) => labelByKey[k] || k);
+        sheet.addRow(headers);
+        const headerRow = sheet.getRow(1);
+        headerRow.font = { bold: true };
+        for (const r of rows) {
+          sheet.addRow(fieldKeys.map((k) => formatExportCell(r, k)));
+        }
+        sheet.columns.forEach((col) => {
+          let max = 10;
+          col.eachCell({ includeEmpty: false }, (cell) => {
+            const len = cell.value != null ? String(cell.value).length : 0;
+            if (len > max) max = Math.min(len, 48);
+          });
+          col.width = max + 2;
+        });
+        const buffer = await workbook.xlsx.writeBuffer();
+        const filename = `项目导出_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        res.writeHead(200, {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+          'Content-Length': Buffer.byteLength(buffer)
+        });
+        res.end(Buffer.from(buffer));
+      } catch (err) {
+        console.error('导出 Excel 失败:', err);
+        sendResponse(res, 500, { success: false, error: '导出失败', message: err.message });
+      }
+      return;
+    }
+
     // ==================== 获取申请人项目列表API ====================
 
     // 获取申请人的项目列表
@@ -22630,7 +23091,7 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
 
 // 启动服务器
 const PORT = process.env.PORT || 3002;
-server.listen(PORT,'127.0.0.1', () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log('='.repeat(70));
   console.log(`✅ 研究项目管理系统API启动成功！`);
   console.log('='.repeat(70));

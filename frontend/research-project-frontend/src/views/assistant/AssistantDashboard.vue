@@ -72,6 +72,10 @@
               <span class="nav-icon">👥</span>
               <span v-if="!sidebarCollapsed" class="nav-text">用户管理</span>
             </router-link>
+            <router-link to="/assistant/invitations" class="nav-link" active-class="active">
+              <span class="nav-icon">✉️</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">邀请码</span>
+            </router-link>
             <router-link to="/assistant/activities" class="nav-link" active-class="active">
               <span class="nav-icon">📜</span>
               <span v-if="!sidebarCollapsed" class="nav-text">活动日志</span>

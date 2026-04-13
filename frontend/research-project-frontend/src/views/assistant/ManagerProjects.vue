@@ -51,11 +51,15 @@
         <button class="search-btn" @click="handleSearch">🔍</button>
       </div>
       <div class="filter-actions">
+        <button type="button" class="select-export-btn" @click="selectAllForExport">全选当前列表</button>
+        <button type="button" class="export-btn" @click="openProjectExport">📥 导出 Excel</button>
         <button class="refresh-btn" @click="refreshData" :disabled="loading">
           🔄 {{ loading ? '刷新中...' : '刷新' }}
         </button>
       </div>
     </div>
+
+    <ProjectExportDialog v-model="showProjectExport" :project-ids="exportSelectedIds" />
 
     <!-- 加载状态 -->
     <div v-if="loading" class="loading-container">
@@ -78,6 +82,13 @@
           @click="viewProjectDetail(project.id)"
         >
           <div class="card-header">
+            <label class="card-export-check" @click.stop>
+              <input
+                type="checkbox"
+                :checked="exportSelectedIds.includes(project.id)"
+                @change="toggleExportSelect(project.id)"
+              />
+            </label>
             <div class="project-title">{{ project.title }}</div>
             <div class="project-status unassigned">待领取</div>
           </div>
@@ -150,6 +161,13 @@
           @click="viewProjectDetail(project.id)"
         >
           <div class="card-header">
+            <label class="card-export-check" @click.stop>
+              <input
+                type="checkbox"
+                :checked="exportSelectedIds.includes(project.id)"
+                @change="toggleExportSelect(project.id)"
+              />
+            </label>
             <div class="project-title">{{ project.title }}</div>
             <div class="project-status" :class="getStatusClass(project.status)">
               {{ getStatusText(project.status) }}
@@ -240,6 +258,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
+import ProjectExportDialog from '@/components/ProjectExportDialog.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -248,6 +267,9 @@ const route = useRoute()
 const props = defineProps<{
   defaultTab?: string
 }>()
+
+const showProjectExport = ref(false)
+const exportSelectedIds = ref<string[]>([])
 
 // API配置
 const API_BASE_URL = 'http://localhost:3002/api'
@@ -316,9 +338,33 @@ const filteredMyProjects = computed(() => {
 })
 
 // 方法
+function toggleExportSelect(projectId: string) {
+  const i = exportSelectedIds.value.indexOf(projectId)
+  if (i >= 0) {
+    exportSelectedIds.value = exportSelectedIds.value.filter((id) => id !== projectId)
+  } else {
+    exportSelectedIds.value = [...exportSelectedIds.value, projectId]
+  }
+}
+
+function selectAllForExport() {
+  const list =
+    activeTab.value === 'unassigned' ? filteredUnassignedProjects.value : filteredMyProjects.value
+  exportSelectedIds.value = list.map((p: { id: string }) => p.id)
+}
+
+function openProjectExport() {
+  if (exportSelectedIds.value.length === 0) {
+    ElMessage.warning('请先勾选要导出的项目，或使用「全选当前列表」')
+    return
+  }
+  showProjectExport.value = true
+}
+
 const switchTab = (tab: 'unassigned' | 'my') => {
   activeTab.value = tab
   searchKeyword.value = ''
+  exportSelectedIds.value = []
   // 更新URL但不刷新页面
   if (tab === 'unassigned') {
     router.replace('/assistant/projects/unassigned')
@@ -829,6 +875,46 @@ onMounted(async () => {
   cursor: pointer;
 }
 
+.filter-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.export-btn {
+  padding: 10px 20px;
+  background: linear-gradient(180deg, #fff5f5 0%, #ffecec 100%);
+  border: 1px solid rgba(179, 27, 27, 0.35);
+  border-radius: 8px;
+  color: #b31b1b;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.export-btn:hover {
+  background: #fff0f0;
+  border-color: #b31b1b;
+}
+
+.select-export-btn {
+  padding: 10px 16px;
+  background: #fff;
+  border: 1px solid #dcdfe6;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #606266;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.select-export-btn:hover {
+  border-color: #b31b1b;
+  color: #b31b1b;
+}
+
 .refresh-btn {
   display: flex;
   align-items: center;
@@ -946,6 +1032,20 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 16px;
+  gap: 8px;
+}
+
+.card-export-check {
+  flex-shrink: 0;
+  padding-top: 2px;
+  cursor: pointer;
+}
+
+.card-export-check input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #b31b1b;
 }
 
 .project-title {
@@ -955,6 +1055,7 @@ onMounted(async () => {
   line-height: 1.4;
   flex: 1;
   margin-right: 12px;
+  min-width: 0;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
