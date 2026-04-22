@@ -76,7 +76,27 @@
     <!-- 步骤1：基本信息 -->
     <div v-show="currentStep === 1" class="step-content">
       <div class="section-card">
-        <h3 class="section-title">一、项目基本信息</h3>
+        <div class="section-title-row">
+          <h3 class="section-title">一、项目基本信息</h3>
+          <div class="word-import-actions">
+            <input
+              ref="wordFileInput"
+              type="file"
+              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              class="word-file-input"
+              @change="onWordFileChange"
+            />
+            <button
+              type="button"
+              class="secondary-btn word-import-btn"
+              :disabled="loading || wordImporting"
+              @click="triggerWordImport"
+            >
+              {{ wordImporting ? '正在解析…' : '📄 从 Word 导入' }}
+            </button>
+            <button type="button" class="link-btn" @click="showWordImportHint">导入说明</button>
+          </div>
+        </div>
 
         <div class="form-row">
           <div class="form-group">
@@ -704,6 +724,11 @@
 
 <script setup lang="ts">
 import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
+import {
+  getWordImportTemplateHint,
+  parseProjectWordDocx,
+  type WordImportPatches,
+} from '@/utils/wordProjectImport'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -755,6 +780,8 @@ const currentProject = ref<any>(null)
 const isEditing = ref(false)
 const showConfirmDialog = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+const wordFileInput = ref<HTMLInputElement | null>(null)
+const wordImporting = ref(false)
 const attachmentDescription = ref('')
 
 // 步骤
@@ -934,6 +961,95 @@ const removeKeyword = (index: number) => {
   const arr = keywordsArray.value
   arr.splice(index, 1)
   formData.keywords = arr.join(',')
+}
+
+const MAX_LEN: Partial<Record<keyof WordImportPatches, number>> = {
+  title: 200,
+  project_domain_other_text: 500,
+  keywords: 500,
+  abstract: 500,
+}
+
+function applyWordPatches(p: WordImportPatches) {
+  const entries = Object.entries(p).filter(
+    (e): e is [keyof WordImportPatches, string] =>
+      typeof e[1] === 'string' && (e[1] as string).trim() !== '',
+  )
+  for (const [k, v] of entries) {
+    const max = MAX_LEN[k]
+    const val = max != null ? v.slice(0, max) : v
+    if (k in formData) (formData as Record<string, string>)[k as string] = val
+  }
+}
+
+const triggerWordImport = () => {
+  wordFileInput.value?.click()
+}
+
+const showWordImportHint = () => {
+  ElMessageBox.alert(getWordImportTemplateHint(), 'Word 导入格式说明', {
+    confirmButtonText: '知道了',
+    customClass: 'word-import-hint-box',
+  })
+}
+
+const onWordFileChange = async (e: Event) => {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (!file.name.toLowerCase().endsWith('.docx')) {
+    ElMessage.warning('请上传 .docx 格式（Word 2007 及以上另存为）')
+    return
+  }
+  wordImporting.value = true
+  try {
+    const buf = await file.arrayBuffer()
+    const r = await parseProjectWordDocx(buf, researchDomains.value)
+    applyWordPatches(r.patches)
+
+    if (r.selectedDomainIds.length) {
+      selectedDomains.value = [...r.selectedDomainIds]
+    }
+    if (r.achievementTransform.length) {
+      achievementTransform.value = [...r.achievementTransform]
+    }
+    if (r.pocStageRequirement.length) {
+      pocStageRequirement.value = [...r.pocStageRequirement]
+    }
+
+    if (r.extractedImages?.length) {
+      const files = r.extractedImages.map((img, i) => {
+        const base = img.fileName?.trim() || `image${i + 1}`
+        const name = base.toLowerCase().startsWith('word-import-') ? base : `word-import-${base}`
+        return new File([img.data], name, { type: img.mimeType })
+      })
+      await uploadImages(files)
+    }
+
+    const fieldCount = r.filledKeys.filter((k) => k !== 'images').length
+    const imgCount = r.extractedImages?.length ?? 0
+    if (fieldCount === 0 && imgCount === 0 && r.warnings.length) {
+      ElMessage.warning(r.warnings[0] || '未能从文档中识别字段')
+    } else {
+      const segs: string[] = []
+      if (fieldCount > 0) segs.push(`已从 Word 填入 ${fieldCount} 类字段`)
+      if (imgCount > 0) segs.push(`已上传 ${imgCount} 张文档内图片`)
+      if (segs.length) {
+        ElMessage.success(`${segs.join('，')}，请核对后保存或提交`)
+      } else {
+        ElMessage.success('未识别到新内容，请确认使用标准征集表模板且章节标题完整')
+      }
+    }
+    if (r.warnings.length) {
+      ElMessageBox.alert(r.warnings.slice(0, 12).join('\n'), '导入提示', { confirmButtonText: '知道了' })
+    }
+  } catch (err: unknown) {
+    console.error(err)
+    ElMessage.error(err instanceof Error ? err.message : '解析 Word 失败')
+  } finally {
+    wordImporting.value = false
+  }
 }
 
 const addTeamMember = () => {
@@ -1852,6 +1968,54 @@ watch(
 
 .section-card:last-child {
   margin-bottom: 0;
+}
+
+.section-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #b31b1b;
+}
+
+.section-title-row .section-title {
+  margin: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+  flex: 1;
+  min-width: 200px;
+}
+
+.word-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.word-file-input {
+  display: none;
+}
+
+.word-import-btn {
+  white-space: nowrap;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #b31b1b;
+  cursor: pointer;
+  font-size: 14px;
+  text-decoration: underline;
+  padding: 4px 0;
+}
+
+.link-btn:hover {
+  color: #8a1515;
 }
 
 .section-title {

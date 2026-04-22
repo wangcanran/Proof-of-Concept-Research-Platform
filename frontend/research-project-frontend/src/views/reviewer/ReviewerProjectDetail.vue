@@ -12,7 +12,7 @@
         <div class="header-subtitle" v-if="project">
           <span class="project-no">{{ project.project_code || '暂未编号' }}</span>
           <div class="status-badge" :class="getStatusClass(project.status)">
-            {{ getStatusText(project.status) }}
+              {{ getStatusText(project.status) }}
           </div>
         </div>
         <div v-if="loading" class="loading-indicator">加载中...</div>
@@ -72,16 +72,16 @@
             <div class="domain-tags">
               <span v-for="(domain, idx) in formatDomainsWithOther(project.research_domains, project.project_domain_other_text)" :key="idx" class="domain-tag">
                 {{ domain }}
-              </span>
+            </span>
               <span v-if="!formatDomainsWithOther(project.research_domains, project.project_domain_other_text).length">未指定</span>
-            </div>
           </div>
         </div>
+      </div>
 
         <div class="section">
           <h3>技术成熟度</h3>
           <div class="content-box">{{ getTechMaturityText(project.tech_maturity) }}</div>
-        </div>
+            </div>
 
         <div class="section">
           <h3>预期成果转化形式</h3>
@@ -92,8 +92,8 @@
               </span>
               <span v-if="!formatAchievementTransformWithOther(project.achievement_transform, project.achievement_transform_other_text).length">未指定</span>
             </div>
-          </div>
-        </div>
+            </div>
+            </div>
 
         <div class="section">
           <h3>概念验证阶段需求</h3>
@@ -104,8 +104,8 @@
               </span>
               <span v-if="!formatPocStageWithNote(project.poc_stage_requirement, project.poc_multi_stage_note).length">未指定</span>
             </div>
-          </div>
-        </div>
+            </div>
+            </div>
 
         <div class="section">
           <h3>关键词</h3>
@@ -116,8 +116,8 @@
               </span>
               <span v-if="!keywordsArray.length">未设置</span>
             </div>
+            </div>
           </div>
-        </div>
       </div>
 
       <!-- 项目详情 -->
@@ -125,33 +125,33 @@
         <div class="section">
           <h3>项目摘要</h3>
           <div class="content-box">{{ project.abstract || '暂无摘要' }}</div>
-        </div>
+            </div>
 
         <div class="section">
           <h3>成果简介（背景、痛点、技术方案、竞争优势、创新点等）</h3>
           <div class="content-box">{{ project.detailed_introduction_part1 || '暂无内容' }}</div>
-        </div>
+          </div>
 
         <div class="section">
           <h3>知识产权情况</h3>
           <div class="content-box">{{ project.detailed_introduction_part2 || '暂无内容' }}</div>
-        </div>
+            </div>
 
         <div class="section">
           <h3>已有应用/试点情况</h3>
           <div class="content-box">{{ project.detailed_introduction_part3 || '暂无内容' }}</div>
-        </div>
+            </div>
 
         <div class="section">
           <h3>实施计划</h3>
           <div class="content-box">{{ project.implementation_plan || '暂无内容' }}</div>
-        </div>
+            </div>
 
         <div class="section" v-if="project.supplementary_info">
           <h3>其他补充说明</h3>
           <div class="content-box">{{ project.supplementary_info }}</div>
-        </div>
-      </div>
+            </div>
+          </div>
 
       <!-- 研究团队 -->
       <div v-if="activeTab === 'team'" class="tab-panel">
@@ -197,7 +197,7 @@
           <h3>经费预算明细</h3>
           <div v-if="budgetItems.length === 0" class="empty-state">
             <p>暂无预算明细</p>
-          </div>
+            </div>
           <div v-else class="budget-table">
             <table>
               <thead>
@@ -235,12 +235,12 @@
           <h3>项目图片</h3>
           <div v-if="images.length === 0" class="empty-state">
             <p>暂无项目图片</p>
-          </div>
+                </div>
           <div v-else class="images-grid">
             <div v-for="image in images" :key="image.id" class="image-card">
               <div class="image-preview">
                 <img :src="`${getApiOrigin()}${image.file_path}`" :alt="image.file_name" />
-              </div>
+                </div>
               <div class="image-info">
                 <div class="image-name">{{ image.file_name }}</div>
                 <div class="image-desc" v-if="image.description">{{ image.description }}</div>
@@ -248,13 +248,13 @@
                   <span>{{ formatFileSize(image.file_size) }}</span>
                   <span>{{ formatDateTime(image.created_at) }}</span>
                 </div>
-              </div>
+                </div>
               <div class="image-actions">
                 <button class="download-btn" @click="downloadAttachment(image)">下载</button>
               </div>
             </div>
           </div>
-        </div>
+            </div>
       </div>
 
       <!-- 附件材料 -->
@@ -263,7 +263,7 @@
           <h3>附件清单</h3>
           <div v-if="documents.length === 0" class="empty-state">
             <p>暂无附件材料</p>
-          </div>
+              </div>
           <div v-else class="attachments-list">
             <div v-for="attachment in documents" :key="attachment.id" class="attachment-item">
               <div class="attachment-icon">{{ getFileIcon(attachment.mime_type) }}</div>
@@ -273,14 +273,14 @@
                   <span class="file-size">{{ formatFileSize(attachment.file_size) }}</span>
                   <span class="file-type">{{ attachment.mime_type?.split('/')[1] || '文件' }}</span>
                   <span class="upload-time">{{ formatDateTime(attachment.created_at) }}</span>
-                </div>
+              </div>
                 <div class="attachment-desc" v-if="attachment.description">
                   {{ attachment.description }}
-                </div>
-              </div>
+            </div>
+          </div>
               <div class="attachment-actions">
                 <button class="download-btn" @click="downloadAttachment(attachment)">下载</button>
-              </div>
+            </div>
             </div>
           </div>
         </div>
@@ -295,7 +295,7 @@
             <p class="hint" v-if="project && ['submitted', 'under_review'].includes(project.status)">
               项目正在评审中，评审意见将在专家提交后显示
             </p>
-          </div>
+            </div>
           <div v-else class="reviews-list">
             <div v-for="(review, index) in reviewFeedback" :key="index" class="review-card-modern">
               <!-- 顶部：评审结论（突出显示） -->
@@ -316,29 +316,29 @@
                   <div class="info-item">
                     <span class="info-label">所属部门</span>
                     <span class="info-value">{{ review.reviewer_department || '未填写' }}</span>
-                  </div>
+                </div>
                 </div>
                 <div class="info-row" v-if="review.reviewer_research_field">
                   <div class="info-item full-width">
                     <span class="info-label">研究领域</span>
                     <span class="info-value field">{{ review.reviewer_research_field }}</span>
+              </div>
                   </div>
                 </div>
-              </div>
-              
+
               <!-- 底部：评审意见 -->
               <div class="review-content-section">
                 <div class="content-header">
                   <span class="content-label">评审意见</span>
-                </div>
+                  </div>
                 <div class="content-body">
                   <p>{{ review.comments || '暂无详细评审意见' }}</p>
                 </div>
+                </div>
               </div>
-            </div>
           </div>
-        </div>
-      </div>
+                </div>
+              </div>
 
       <!-- 项目进展 -->
       <div v-if="activeTab === 'progress'" class="tab-panel">
@@ -351,7 +351,7 @@
                 :style="{ width: getProgressWidth(project.status) + '%' }"
                 :class="getProgressClass(project.status)"
               ></div>
-            </div>
+              </div>
             <div class="progress-text-large">
               {{ getProgressText(project.status) }}
             </div>
