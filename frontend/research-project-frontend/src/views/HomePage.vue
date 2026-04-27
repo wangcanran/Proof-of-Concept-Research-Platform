@@ -521,8 +521,16 @@ button {
   background-color: #722f37;
 }
 
-/* 单页一体化容器 */
+/* 单页一体化容器 — 仅首页在全局基础上再大一号（子元素继承以下变量） */
 .home-landing {
+  --el-font-size-extra-large: 24px;
+  --el-font-size-large: 22px;
+  --el-font-size-medium: 20px;
+  --el-font-size-base: 18px;
+  --el-font-size-small: 15px;
+  --el-font-size-extra-small: 14px;
+  --el-font-line-height-primary: 29px;
+
   position: relative;
   z-index: 1;
   max-width: 1320px;
@@ -581,7 +589,7 @@ button {
 }
 
 .brand-title {
-  font-size: clamp(17px, 2vw, 20px);
+  font-size: clamp(21px, 2.5vw, 28px);
   font-weight: 700;
   color: #1a1a1a;
   margin: 0 0 2px;
@@ -591,7 +599,7 @@ button {
 
 .brand-sub {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--el-font-size-small);
   color: #b31b1b;
   font-weight: 600;
   line-height: 1.3;
@@ -599,7 +607,7 @@ button {
 
 .brand-en {
   margin: 2px 0 0;
-  font-size: 10px;
+  font-size: 13px;
   color: #888;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -615,7 +623,7 @@ button {
 }
 
 .welcome-pill {
-  font-size: 13px;
+  font-size: var(--el-font-size-small);
   color: #5c3d3d;
   padding: 6px 12px;
   background: #fff5f4;
@@ -631,7 +639,7 @@ button {
 .btn-ghost {
   font-family: inherit;
   padding: 10px 20px;
-  font-size: 14px;
+  font-size: var(--el-font-size-base);
   font-weight: 600;
   border-radius: 999px;
   cursor: pointer;
@@ -770,7 +778,7 @@ button {
 
 .side-card-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--el-font-size-medium);
   font-weight: 700;
   color: #1f1f1f;
   line-height: 1.3;
@@ -779,7 +787,7 @@ button {
 
 .side-card-desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--el-font-size-extra-small);
   color: #737373;
   line-height: 1.4;
 }
@@ -831,7 +839,7 @@ button {
 }
 
 .stat-pill-num {
-  font-size: 19px;
+  font-size: var(--el-font-size-large);
   font-weight: 700;
   color: #b31b1b;
   line-height: 1.1;
@@ -839,7 +847,7 @@ button {
 }
 
 .stat-pill-label {
-  font-size: 11px;
+  font-size: var(--el-font-size-extra-small);
   color: #737373;
   margin-top: 2px;
 }
@@ -882,7 +890,7 @@ button {
 }
 
 .notice-compact-tag {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   padding: 2px 8px;
   border-radius: 999px;
@@ -911,7 +919,7 @@ button {
 }
 
 .notice-compact-title {
-  font-size: 13px;
+  font-size: var(--el-font-size-small);
   font-weight: 600;
   color: #2c3e50;
   line-height: 1.35;
@@ -919,7 +927,7 @@ button {
 
 .notice-compact-abs {
   margin: 4px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   color: #888;
   line-height: 1.4;
   display: -webkit-box;
@@ -929,7 +937,7 @@ button {
 }
 
 .notice-compact-date {
-  font-size: 10px;
+  font-size: 11px;
   color: #bbb;
   white-space: nowrap;
   padding-top: 2px;
@@ -944,7 +952,7 @@ button {
   text-align: center;
   padding: 24px 12px;
   color: #bbb;
-  font-size: 13px;
+  font-size: var(--el-font-size-small);
   min-height: 0;
 }
 
@@ -1005,13 +1013,13 @@ button {
 
 .carousel-caption h3 {
   margin: 0 0 8px 0;
-  font-size: 24px;
+  font-size: var(--el-font-size-extra-large);
   font-weight: bold;
 }
 
 .carousel-caption p {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--el-font-size-base);
   opacity: 0.9;
 }
 
@@ -1054,7 +1062,7 @@ button {
   height: 36px;
   border-radius: 50%;
   cursor: pointer;
-  font-size: 18px;
+  font-size: var(--el-font-size-medium);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1116,7 +1124,7 @@ button {
 
 .partners-title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--el-font-size-medium);
   font-weight: 700;
   color: #1f1f1f;
   line-height: 1.3;
@@ -1125,7 +1133,7 @@ button {
 
 .partners-desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--el-font-size-extra-small);
   color: #737373;
   line-height: 1.4;
 }
@@ -1202,7 +1210,7 @@ button {
 }
 
 .partner-name {
-  font-size: 12px;
+  font-size: var(--el-font-size-extra-small);
   color: #737373;
   line-height: 1.35;
 }
@@ -1213,7 +1221,7 @@ button {
   margin-top: auto;
   padding: 12px 16px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--el-font-size-extra-small);
   background: #2c2c2c;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -1271,11 +1279,11 @@ button {
   }
 
   .brand-title {
-    font-size: 17px;
+    font-size: 21px;
   }
 
   .brand-sub {
-    font-size: 13px;
+    font-size: var(--el-font-size-small);
   }
 
   .header-actions {
@@ -1286,7 +1294,7 @@ button {
   .btn-primary,
   .btn-ghost {
     padding: 8px 16px;
-    font-size: 13px;
+    font-size: var(--el-font-size-small);
   }
 
   .carousel-caption {
@@ -1294,17 +1302,17 @@ button {
   }
 
   .carousel-caption h3 {
-    font-size: 17px;
+    font-size: var(--el-font-size-medium);
   }
 
   .carousel-caption p {
-    font-size: 12px;
+    font-size: var(--el-font-size-extra-small);
   }
 
   .carousel-btn {
     width: 30px;
     height: 30px;
-    font-size: 15px;
+    font-size: var(--el-font-size-small);
   }
 
   .side-card {
@@ -1317,7 +1325,7 @@ button {
   }
 
   .stat-pill-num {
-    font-size: 18px;
+    font-size: var(--el-font-size-medium);
   }
 }
 
@@ -1351,11 +1359,11 @@ button {
   }
 
   .carousel-caption h3 {
-    font-size: 15px;
+    font-size: var(--el-font-size-base);
   }
 
   .carousel-caption p {
-    font-size: 11px;
+    font-size: var(--el-font-size-extra-small);
   }
 
   .partners-card {

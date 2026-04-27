@@ -271,11 +271,11 @@
                     <p>记录科研成果和产出</p>
                   </div>
                 </button>
-                <button class="action-card" @click="navigateTo('funding-application')">
-                  <div class="action-icon">💰</div>
+                <button class="action-card" @click="navigateTo('service-request')">
+                  <div class="action-icon">🛎️</div>
                   <div class="action-content">
-                    <h4>经费申请</h4>
-                    <p>申请项目研究经费</p>
+                    <h4>服务申请</h4>
+                    <p>为已批准项目发起孵化服务申请</p>
                   </div>
                 </button>
               </div>
@@ -781,7 +781,7 @@ const navigateTo = (action: string) => {
     'my-projects': '/projects',
     'all-projects': '/projects',
     'submit-achievement': '/achievements/create',
-    'funding-application': '/funds/applications/create',
+    'service-request': '/incubation/service-request',
     notifications: '/notifications',
   }
   if (routes[action]) {
