@@ -1071,7 +1071,9 @@ button {
 .sidebar-logo {
   width: 40px;
   height: 40px;
-  object-fit: contain;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 6px;
 }
 
 .sidebar-title {

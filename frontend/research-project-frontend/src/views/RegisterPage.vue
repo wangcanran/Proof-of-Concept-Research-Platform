@@ -1,15 +1,5 @@
 <template>
   <div class="register-container">
-    <!-- 左上角校徽 -->
-    <div class="top-logo">
-      <img
-        src="./picture/university-logo.png"
-        alt="人大校徽"
-        class="logo"
-        @error="handleLogoError"
-      />
-    </div>
-
     <!-- 注册表单 - 居中 -->
     <div class="register-wrapper">
       <div class="register-card">
@@ -297,12 +287,6 @@ const prevStep = () => {
 const goToLogin = () => {
   router.push('/login')
 }
-
-const handleLogoError = (e: Event) => {
-  const img = e.target as HTMLImageElement
-  img.src =
-    'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%23B31B1B"/%3E%3Ctext x="50" y="50" text-anchor="middle" dy=".3em" fill="white" font-size="40"%3E人大%3C/text%3E%3C/svg%3E'
-}
 </script>
 
 <style scoped>
@@ -310,19 +294,6 @@ const handleLogoError = (e: Event) => {
   min-height: 100vh;
   background: #b31b1b;
   position: relative;
-}
-
-.top-logo {
-  position: absolute;
-  top: 30px;
-  left: 40px;
-  z-index: 10;
-}
-
-.logo {
-  width: 200px;
-  height: 200px;
-  object-fit: contain;
 }
 
 .register-wrapper {
@@ -578,18 +549,8 @@ const handleLogoError = (e: Event) => {
 }
 
 @media (max-width: 768px) {
-  .top-logo {
-    top: 15px;
-    left: 20px;
-  }
-
-  .logo {
-    width: 100px;
-    height: 100px;
-  }
-
   .register-wrapper {
-    padding: 80px 20px 40px;
+    padding: 40px 20px;
   }
 
   .register-card {

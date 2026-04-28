@@ -585,7 +585,9 @@ onUnmounted(() => {
 .sidebar-logo {
   width: 36px;
   height: 36px;
-  object-fit: contain;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 6px;
   flex-shrink: 0;
 }
 

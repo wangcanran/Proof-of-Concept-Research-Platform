@@ -1,15 +1,5 @@
 <template>
   <div class="login-container">
-    <!-- 左上角校徽 -->
-    <div class="top-logo">
-      <img
-        src="./picture/university-logo.png"
-        alt="人大校徽"
-        class="logo"
-        @error="handleLogoError"
-      />
-    </div>
-
     <!-- 登录表单 - 居中显示 -->
     <div class="login-wrapper">
       <div class="login-card">
@@ -177,12 +167,6 @@ const handleLogin = async () => {
 const showForgotPassword = () => {
   alert('请联系管理员重置密码：support@proofofconcept.cn')
 }
-
-const handleLogoError = (e: Event) => {
-  const img = e.target as HTMLImageElement
-  img.src =
-    'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%23B31B1B"/%3E%3Ctext x="50" y="50" text-anchor="middle" dy=".3em" fill="white" font-size="40"%3E人大%3C/text%3E%3C/svg%3E'
-}
 </script>
 
 <style scoped>
@@ -190,19 +174,6 @@ const handleLogoError = (e: Event) => {
   min-height: 100vh;
   background: #b31b1b;
   position: relative;
-}
-
-.top-logo {
-  position: absolute;
-  top: 30px;
-  left: 40px;
-  z-index: 10;
-}
-
-.logo {
-  width: 200px;
-  height: 200px;
-  object-fit: contain;
 }
 
 .login-wrapper {
@@ -370,19 +341,8 @@ const handleLogoError = (e: Event) => {
 }
 
 @media (max-width: 768px) {
-  .top-logo {
-    top: 15px;
-    left: 20px;
-  }
-
-  .logo {
-    width: 100px;
-    height: 100px;
-  }
-
   .login-card {
     padding: 30px;
-    margin-top: 60px;
   }
 }
 </style>

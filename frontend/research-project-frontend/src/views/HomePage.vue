@@ -15,7 +15,7 @@
           <div class="brand-text">
             <h1 class="brand-title">中国人民大学</h1>
             <p class="brand-sub">图灵数智 · 概念验证平台</p>
-            <p class="brand-en">Proof of Concept Research Platform</p>
+            <p class="brand-en">Proof of Concept Research Platform · RUC</p>
           </div>
         </div>
 
@@ -173,7 +173,7 @@
         </div>
       </section>
 
-      <!-- 合作方展示（预留位：在 partners 中填写 name / logo / url） -->
+      <!-- 合作方展示：partners 配置 name / logo / url，有 url 时整块可点跳转 -->
       <section class="partners-section" aria-labelledby="partners-heading">
         <div class="partners-card">
           <header class="partners-head">
@@ -182,7 +182,7 @@
             </span>
             <div>
               <h2 id="partners-heading" class="partners-title">合作单位</h2>
-              <p class="partners-desc">支持机构与战略合作伙伴 · Logo 可置于 public/partners/ 并在配置中引用</p>
+              <p class="partners-desc">支持机构与战略合作伙伴（点击 Logo 访问官网）</p>
             </div>
           </header>
           <ul class="partners-grid">
@@ -190,40 +190,48 @@
               <a
                 v-if="p.url"
                 :href="p.url"
-                class="partner-cell is-link"
+                class="partner-column partner-column--link"
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                <div class="partner-inner">
-                  <img
-                    v-if="p.logo && !partnerImgFailed[p.id]"
-                    :src="resolvePartnerAsset(p.logo)"
-                    :alt="p.name"
-                    class="partner-logo"
-                    loading="lazy"
-                    @error="partnerImgFailed[p.id] = true"
-                  />
-                  <div v-else class="partner-placeholder">
-                    <el-icon class="partner-ph-icon" :size="28"><Picture /></el-icon>
-                    <span class="partner-name">{{ p.name }}</span>
+                <div class="partner-cell">
+                  <div class="partner-inner">
+                    <div class="partner-logo-slot">
+                      <img
+                        v-if="p.logo && !partnerImgFailed[p.id]"
+                        :src="resolvePartnerAsset(p.logo)"
+                        :alt="''"
+                        class="partner-logo"
+                        loading="lazy"
+                        @error="partnerImgFailed[p.id] = true"
+                      />
+                      <div v-else class="partner-placeholder">
+                        <el-icon class="partner-ph-icon" :size="28"><Picture /></el-icon>
+                      </div>
+                    </div>
                   </div>
                 </div>
+                <span class="partner-caption">{{ p.name }}</span>
               </a>
-              <div v-else class="partner-cell">
-                <div class="partner-inner">
-                  <img
-                    v-if="p.logo && !partnerImgFailed[p.id]"
-                    :src="resolvePartnerAsset(p.logo)"
-                    :alt="p.name"
-                    class="partner-logo"
-                    loading="lazy"
-                    @error="partnerImgFailed[p.id] = true"
-                  />
-                  <div v-else class="partner-placeholder">
-                    <el-icon class="partner-ph-icon" :size="28"><Picture /></el-icon>
-                    <span class="partner-name">{{ p.name }}</span>
+              <div v-else class="partner-column">
+                <div class="partner-cell">
+                  <div class="partner-inner">
+                    <div class="partner-logo-slot">
+                      <img
+                        v-if="p.logo && !partnerImgFailed[p.id]"
+                        :src="resolvePartnerAsset(p.logo)"
+                        :alt="''"
+                        class="partner-logo"
+                        loading="lazy"
+                        @error="partnerImgFailed[p.id] = true"
+                      />
+                      <div v-else class="partner-placeholder">
+                        <el-icon class="partner-ph-icon" :size="28"><Picture /></el-icon>
+                      </div>
+                    </div>
                   </div>
                 </div>
+                <span class="partner-caption">{{ p.name }}</span>
               </div>
             </li>
           </ul>
@@ -290,14 +298,30 @@ interface HomePartner {
 }
 
 const partners = ref<HomePartner[]>([
-  { id: 'p1', name: '合作单位 1', logo: '', url: '' },
-  { id: 'p2', name: '合作单位 2', logo: '', url: '' },
-  { id: 'p3', name: '合作单位 3', logo: '', url: '' },
-  { id: 'p4', name: '合作单位 4', logo: '', url: '' },
-  { id: 'p5', name: '合作单位 5', logo: '', url: '' },
-  { id: 'p6', name: '合作单位 6', logo: '', url: '' },
-  { id: 'p7', name: '合作单位 7', logo: '', url: '' },
-  { id: 'p8', name: '合作单位 8', logo: '', url: '' },
+  {
+    id: 'csig',
+    name: '中国图形图像学学会',
+    logo: new URL('./picture/CSIG-logo.png', import.meta.url).href,
+    url: 'https://www.csig.org.cn/',
+  },
+  {
+    id: 'cspruc',
+    name: '中国人民大学文化科技园',
+    logo: new URL('./picture/cspruc-logo.png', import.meta.url).href,
+    url: 'http://www.cspruc.com/',
+  },
+  {
+    id: 'golaxy',
+    name: '中科天玑数据科技股份有限公司',
+    logo: new URL('./picture/GoLaxy-logo.png', import.meta.url).href,
+    url: 'https://www.golaxy.cn/',
+  },
+  {
+    id: 'kingbase',
+    name: '中电科金仓(北京)科技股份有限公司',
+    logo: new URL('./picture/kingbase-logo.png', import.meta.url).href,
+    url: 'https://www.kingbase.com.cn/',
+  },
 ])
 
 /** 某合作方 Logo 加载失败时回退到占位 */
@@ -572,16 +596,18 @@ button {
   border-radius: 50%;
   background: #fafafa;
   border: 1px solid rgba(0, 0, 0, 0.05);
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
+  padding: 0;
 }
 
 .brand-logo {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
+  object-position: center;
 }
 
 .brand-text {
@@ -1143,18 +1169,42 @@ button {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  /* 四家合作单位：整行四等分均匀分布 */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
+  align-items: stretch;
 }
 
 .partner-item {
   margin: 0;
+  min-width: 0;
+}
+
+/* 整列：上为 Logo 框，下为名单独一行（不在虚线框内） */
+.partner-column {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  height: 100%;
+  min-width: 0;
+}
+
+.partner-column--link {
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+}
+
+.partner-column--link:hover .partner-cell {
+  border-color: rgba(179, 27, 27, 0.35);
+  border-style: solid;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
 
 .partner-cell {
   display: block;
-  height: 100%;
-  min-height: 96px;
   border-radius: 10px;
   border: 1px dashed rgba(0, 0, 0, 0.1);
   background: #fafafa;
@@ -1164,31 +1214,29 @@ button {
     box-shadow 0.2s;
 }
 
-.partner-cell.is-link {
-  cursor: pointer;
-  text-decoration: none;
-  color: inherit;
-}
-
-.partner-cell.is-link:hover {
-  border-color: rgba(179, 27, 27, 0.35);
-  border-style: solid;
-  background: #fff;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-}
-
+/* Logo 区域：宽度随栅格列变化，高度按比例跟著变，图片在剩余矩形内尽量放大且不变形 */
 .partner-inner {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 96px;
-  padding: 12px 10px;
+  width: 100%;
+  aspect-ratio: 5 / 3;
+  padding: clamp(8px, 1.8vw, 12px);
   box-sizing: border-box;
+}
+
+.partner-logo-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .partner-logo {
   max-width: 100%;
-  max-height: 52px;
+  max-height: 100%;
   width: auto;
   height: auto;
   object-fit: contain;
@@ -1197,22 +1245,29 @@ button {
 
 .partner-placeholder {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  text-align: center;
-  padding: 8px 4px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 4px;
 }
 
 .partner-ph-icon {
   color: rgba(179, 27, 27, 0.22);
 }
 
-.partner-name {
+.partner-caption {
+  display: block;
+  width: 100%;
+  text-align: center;
   font-size: var(--el-font-size-extra-small);
-  color: #737373;
+  color: #454545;
   line-height: 1.35;
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 页脚：深色底 + 顶侧人大红线，克制不抢眼 */
@@ -1327,6 +1382,11 @@ button {
   .stat-pill-num {
     font-size: var(--el-font-size-medium);
   }
+
+  .partners-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -1380,13 +1440,13 @@ button {
     gap: 10px;
   }
 
-  .partner-cell {
-    min-height: 88px;
+  .partner-inner {
+    padding: 10px 8px;
+    aspect-ratio: 5 / 3;
   }
 
-  .partner-inner {
-    min-height: 88px;
-    padding: 10px 8px;
+  .partner-column {
+    gap: 8px;
   }
 }
 </style>
