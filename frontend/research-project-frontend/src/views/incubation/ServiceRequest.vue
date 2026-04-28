@@ -83,7 +83,17 @@
               rows="6"
               required
             ></textarea>
-            <div class="form-hint">请详细说明您需要的服务内容、预期目标等</div>
+            <div class="form-hint form-hint--services">
+              <p class="form-hint-lead">请说明您的具体需求，我们为您精准匹配平台资源。</p>
+              <p class="form-hint-sub">可申请但不限于以下服务：</p>
+              <ul class="form-hint-list">
+                <li>・技术支持：中试放大、工艺优化、技术攻关、场景验证</li>
+                <li>・商业赋能：市场调研、商业模式设计、商业计划书、路演辅导</li>
+                <li>・知识产权：专利布局、风险排查、技术交易、合同审查</li>
+                <li>・资源对接：投融资、政府项目申报、产业链对接、中试基地</li>
+                <li>・创业孵化：公司注册、园区入驻、创业导师、财务法务咨询</li>
+              </ul>
+            </div>
           </div>
 
           <div class="form-group">
@@ -640,6 +650,33 @@ onMounted(() => {
   margin-top: 8px;
   font-size: 12px;
   color: #999;
+}
+
+.form-hint--services {
+  line-height: 1.55;
+}
+
+.form-hint--services .form-hint-lead,
+.form-hint--services .form-hint-sub {
+  margin: 0 0 6px;
+  color: #666;
+}
+
+.form-hint--services .form-hint-sub {
+  margin-top: 10px;
+  font-weight: 500;
+}
+
+.form-hint-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: #888;
+}
+
+.form-hint-list li {
+  margin-bottom: 4px;
 }
 
 .upload-area {

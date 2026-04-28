@@ -422,7 +422,9 @@
     <div v-show="currentStep === 4" class="step-content">
       <div class="section-card">
         <h3 class="section-title">四、经费预算</h3>
-        <p class="section-subtitle">请根据项目实际需求填写经费预算（单位：元）</p>
+        <p class="section-subtitle">
+          经费预算为<strong>选填</strong>：可不添加任何行直接下一步。需要时请点「添加科目」。<strong>金额请按万元填写</strong>，保存时自动 ×10000 换算为「元」写入数据库。<strong>「总计」与分项科目二选一</strong>：仅填总金额时选「总计」一行；填分项时请逐行选择科目，勿与「总计」混填。
+        </p>
 
         <div class="budget-table">
           <table>
@@ -431,33 +433,39 @@
                 <th>预算科目</th>
                 <th>项目名称</th>
                 <th>详细说明</th>
-                <th>金额（元）</th>
+                <th>金额（万元）</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody>
+              <tr v-if="budgetItems.length === 0">
+                <td colspan="5" class="budget-empty-hint">
+                  当前未添加预算明细；无需填写时请直接「下一步」。需要时请点下方「添加科目」。
+                </td>
+              </tr>
               <tr v-for="(item, index) in budgetItems" :key="index">
                 <td>
-                  <select v-model="item.category" class="budget-select" :disabled="loading">
-                    <option value="">请选择科目</option>
-                    <option value="设备费">设备费</option>
-                    <option value="材料费">材料费</option>
-                    <option value="测试费">测试费</option>
-                    <option value="差旅费">差旅费</option>
-                    <option value="会议费">会议费</option>
-                    <option value="劳务费">劳务费</option>
-                    <option value="专家咨询费">专家咨询费</option>
-                    <option value="出版费">出版费</option>
-                    <option value="管理费">管理费</option>
-                    <option value="其他">其他</option>
+                  <select
+                    :value="item.category"
+                    class="budget-select"
+                    :disabled="loading"
+                    @change="onBudgetCategorySelect(index, $event)"
+                  >
+                    <option
+                      v-for="opt in budgetCategoryOptions"
+                      :key="opt.value === '' ? '_placeholder' : opt.value"
+                      :value="opt.value"
+                      :disabled="budgetOptionDisabled(index, opt.value)"
+                    >
+                      {{ opt.label }}
+                    </option>
                   </select>
                 </td>
                 <td>
                   <input
                     type="text"
                     v-model="item.item_name"
-                    placeholder="填写预算项目名称（必填）"
-                    required
+                    placeholder="填写预算项目名称（填写本行时必填）"
                     :disabled="loading"
                   />
                 </td>
@@ -475,7 +483,7 @@
                     v-model="item.amount"
                     min="0"
                     step="0.01"
-                    placeholder="0.00"
+                    placeholder="万元，如 50"
                     @input="calculateTotal"
                     :disabled="loading"
                   />
@@ -494,8 +502,8 @@
             </tbody>
             <tfoot>
               <tr>
-                <td colspan="3" class="total-label">预算合计</td>
-                <td class="total-amount">¥ {{ totalBudget.toFixed(2) }}</td>
+                <td colspan="3" class="total-label">预算合计（万元）</td>
+                <td class="total-amount">{{ totalBudget.toFixed(2) }} <span class="wan-unit">万元</span></td>
                 <td>
                   <button
                     type="button"
@@ -826,8 +834,131 @@ const formData = reactive({
 // 团队成员
 const teamMembers = ref([{ name: '', email: '', organization: '', title: '', phone: '', role: 'other', isExistingUser: false, isChecking: false, emailConfirmed: false }])
 
-// 预算项
-const budgetItems = ref([{ category: '', item_name: '', description: '', amount: 0 }])
+/** 预算金额：表单内为「万元」，入库前 ×10000 转为「元」 */
+const WAN_YUAN_RATIO = 10000
+
+/** 数据库中的元 → 表单展示的万元 */
+function yuanToWanDisplay(yuan: number): number {
+  const y = Number(yuan) || 0
+  if (y === 0) return 0
+  return parseFloat((y / WAN_YUAN_RATIO).toFixed(6))
+}
+
+/** 表单万元 → 存库元（两位小数） */
+function wanToYuanStore(wan: number): number {
+  const w = Number(wan) || 0
+  return parseFloat((w * WAN_YUAN_RATIO).toFixed(2))
+}
+
+// 预算项（科目「总计」与分项互斥，见 onBudgetCategorySelect）；amount 为万元
+const budgetCategoryOptions = [
+  { value: '', label: '请选择科目' },
+  { value: '设备费', label: '设备费' },
+  { value: '材料费', label: '材料费' },
+  { value: '测试费', label: '测试费' },
+  { value: '差旅费', label: '差旅费' },
+  { value: '会议费', label: '会议费' },
+  { value: '劳务费', label: '劳务费' },
+  { value: '专家咨询费', label: '专家咨询费' },
+  { value: '出版费', label: '出版费' },
+  { value: '管理费', label: '管理费' },
+  { value: '其他', label: '其他' },
+  { value: '总计', label: '总计（仅总金额，与分项互斥）' },
+]
+const budgetItems = ref<Array<{ category: string; item_name: string; description: string; amount: number }>>([])
+
+/** 用户是否已开始填写该行（与「整段预算可不填」区分） */
+function isBudgetRowStarted(item: {
+  category?: string
+  item_name?: string
+  description?: string
+  amount?: number
+}): boolean {
+  const amt = Number(item.amount) || 0
+  return !!(
+    item.category ||
+    String(item.item_name || '').trim() ||
+    String(item.description || '').trim() ||
+    amt > 0
+  )
+}
+
+/** 提交/保存时带上的预算行（有科目且有项目名称）；金额转为元 */
+function normalizedBudgetItemsForPayload() {
+  return budgetItems.value
+    .filter((r) => r.category && String(r.item_name || '').trim())
+    .map((r) => ({
+      category: r.category,
+      item_name: r.item_name,
+      description: r.description,
+      amount: wanToYuanStore(Number(r.amount) || 0),
+    }))
+}
+
+function budgetOptionDisabled(rowIndex: number, optValue: string): boolean {
+  if (!optValue) return false
+  const rows = budgetItems.value
+  if (optValue === '总计') {
+    return rows.some((r, i) => i !== rowIndex && !!r.category && r.category !== '总计')
+  }
+  return rows.some((r, i) => i !== rowIndex && r.category === '总计')
+}
+
+function getBudgetMutualExclusiveError(): string | null {
+  const filled = budgetItems.value.filter(
+    (it) => it.category && String(it.item_name || '').trim(),
+  )
+  const totalRows = filled.filter((it) => it.category === '总计')
+  const detailRows = filled.filter((it) => it.category !== '总计')
+  if (totalRows.length > 0 && detailRows.length > 0) {
+    return '预算科目「总计」与分项不能同时填写'
+  }
+  if (totalRows.length > 1) {
+    return '预算科目「总计」仅能填写一行'
+  }
+  return null
+}
+
+function onBudgetCategorySelect(index: number, e: Event) {
+  const el = e.target as HTMLSelectElement
+  const newVal = el.value
+  const row = budgetItems.value[index]
+  const oldVal = row.category
+
+  if (newVal === '总计') {
+    const othersHaveDetail = budgetItems.value.some(
+      (r, i) => i !== index && !!r.category && r.category !== '总计',
+    )
+    const collapseToTotal = () => {
+      budgetItems.value = [
+        {
+          category: '总计',
+          item_name: row.item_name || '',
+          description: row.description || '',
+          amount: Number(row.amount) || 0,
+        },
+      ]
+    }
+    if (othersHaveDetail) {
+      ElMessageBox.confirm(
+        '选择「总计」后仅保留一行预算，其它分项行将被删除，是否继续？',
+        '与分项预算互斥',
+        { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' },
+      )
+        .then(collapseToTotal)
+        .catch(() => {
+          el.value = oldVal
+        })
+    } else {
+      collapseToTotal()
+    }
+    return
+  }
+
+  row.category = newVal
+  budgetItems.value = budgetItems.value.filter((r) => r.category !== '总计')
+  el.value = row.category
+}
 
 // 选项
 const transformOptions = [
@@ -902,9 +1033,14 @@ const getMissingForStep = (step: number): string[] => {
       break
     }
     case 4: {
-      if (totalBudget.value <= 0) missing.push('经费预算（合计金额需大于 0）')
-      // 验证每条预算记录都有项目名称
+      const started = budgetItems.value.filter(isBudgetRowStarted)
+      if (started.length === 0) break
+      const mx = getBudgetMutualExclusiveError()
+      if (mx) missing.push(mx)
+      if (totalBudget.value <= 0) missing.push('已填写预算时，合计金额需大于 0')
       budgetItems.value.forEach((item, index) => {
+        if (!isBudgetRowStarted(item)) return
+        if (!item.category) missing.push(`预算第 ${index + 1} 行的预算科目`)
         if (!item.item_name || !item.item_name.trim()) {
           missing.push(`预算第 ${index + 1} 行的项目名称`)
         }
@@ -1027,6 +1163,14 @@ const onWordFileChange = async (e: Event) => {
       await uploadImages(files)
     }
 
+    let wordOriginalAttached = 0
+    if (file.size <= 10 * 1024 * 1024) {
+      wordOriginalAttached = await uploadFiles([file], {
+        defaultDescription: 'Word 导入原文件',
+        quiet: true,
+      })
+    }
+
     const fieldCount = r.filledKeys.filter((k) => k !== 'images').length
     const imgCount = r.extractedImages?.length ?? 0
     if (fieldCount === 0 && imgCount === 0 && r.warnings.length) {
@@ -1035,6 +1179,7 @@ const onWordFileChange = async (e: Event) => {
       const segs: string[] = []
       if (fieldCount > 0) segs.push(`已从 Word 填入 ${fieldCount} 类字段`)
       if (imgCount > 0) segs.push(`已上传 ${imgCount} 张文档内图片`)
+      if (wordOriginalAttached > 0) segs.push('原 Word 文件已加入附件')
       if (segs.length) {
         ElMessage.success(`${segs.join('，')}，请核对后保存或提交`)
       } else {
@@ -1125,11 +1270,15 @@ const removeTeamMember = (index: number) => {
 }
 
 const addBudgetItem = () => {
+  if (budgetItems.value.some((r) => r.category === '总计')) {
+    ElMessage.warning('已选择「总计」时不能再添加分项行，请先删除或改为分项科目')
+    return
+  }
   budgetItems.value.push({ category: '', item_name: '', description: '', amount: 0 })
 }
 
 const removeBudgetItem = (index: number) => {
-  if (budgetItems.value.length > 1) budgetItems.value.splice(index, 1)
+  if (budgetItems.value.length > 0) budgetItems.value.splice(index, 1)
 }
 
 const calculateTotal = () => {}
@@ -1295,7 +1444,19 @@ const handleDrop = async (event: DragEvent) => {
   await uploadFiles(files)
 }
 
-const uploadFiles = async (files: File[]) => {
+/** 附件上传选项：Word 自动上传时用 defaultDescription + quiet */
+type UploadAttachmentFilesOptions = {
+  defaultDescription?: string
+  /** 为 true 时不弹出单文件上传成功提示（失败仍会提示） */
+  quiet?: boolean
+}
+
+/** @returns 成功上传的文件个数 */
+const uploadFiles = async (
+  files: File[],
+  options?: UploadAttachmentFilesOptions,
+): Promise<number> => {
+  let successCount = 0
   for (const file of files) {
     if (file.size > 10 * 1024 * 1024) {
       ElMessage.warning(`文件 ${file.name} 超过10MB限制`)
@@ -1311,7 +1472,7 @@ const uploadFiles = async (files: File[]) => {
       mime_type: file.type,
       uploading: true,
       progress: 0,
-      description: '',
+      description: options?.defaultDescription ?? '',
     }
     attachments.value.push(tempAttachment)
     const index = attachments.value.findIndex((a) => a.id === tempId)
@@ -1330,13 +1491,20 @@ const uploadFiles = async (files: File[]) => {
       })) as { success?: boolean; data?: Record<string, unknown>; error?: string }
 
       if (response.success && response.data) {
+        successCount++
+        const dataDesc = String((response.data as Record<string, unknown>).description ?? '')
         attachments.value[index] = {
           ...attachments.value[index],
           ...response.data,
           uploading: false,
           progress: 100,
+          description:
+            (options?.defaultDescription ?? dataDesc) ||
+            String(attachments.value[index].description ?? ''),
         }
-        ElMessage.success(`文件 ${file.name} 上传成功`)
+        if (!options?.quiet) {
+          ElMessage.success(`文件 ${file.name} 上传成功`)
+        }
       } else {
         attachments.value.splice(index, 1)
         ElMessage.error(`文件 ${file.name} 上传失败`)
@@ -1347,6 +1515,7 @@ const uploadFiles = async (files: File[]) => {
       ElMessage.error(`文件 ${file.name} 上传失败`)
     }
   }
+  return successCount
 }
 
 const removeAttachment = (index: number) => {
@@ -1410,7 +1579,7 @@ const saveDraft = async (options?: { silent?: boolean }): Promise<boolean> => {
         phone: m.phone,
         role: m.role,
       })),
-      budget_items: budgetItems.value,
+      budget_items: normalizedBudgetItemsForPayload(),
       images: images.value.map((img) => ({
         file_name: img.originalName || img.file_name,
         file_path: img.file_path,
@@ -1617,8 +1786,10 @@ const loadProjectForEdit = async (projectId: string) => {
         category: (b.category as string) || '',
         item_name: (b.item_name as string) || '',
         description: (b.description as string) || '',
-        amount: Number(b.amount) || 0,
+        amount: yuanToWanDisplay(Number(b.amount) || 0),
       }))
+    } else {
+      budgetItems.value = []
     }
     // 加载图片和附件
     images.value = []
@@ -2336,6 +2507,13 @@ watch(
   border-radius: 4px;
 }
 
+.budget-empty-hint {
+  color: #909399;
+  font-size: 14px;
+  text-align: center;
+  background: #fafafa;
+}
+
 .total-label {
   font-weight: bold;
   text-align: right;
@@ -2345,6 +2523,12 @@ watch(
   font-weight: bold;
   color: #b31b1b;
   font-size: 18px;
+}
+
+.total-amount .wan-unit {
+  font-weight: normal;
+  font-size: 14px;
+  color: #606266;
 }
 
 .table-btn {

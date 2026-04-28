@@ -219,6 +219,41 @@ function sqlProjectBudgetTotal(alias = 'p') {
   return `(SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = ${alias}.id)`;
 }
 
+/**
+ * 「总计」与分项预算科目互斥：不可同时存在；「总计」至多一行。
+ * @param {Array<{ category?: string, item_name?: string }>} budgetItems
+ * @returns {string|null} 错误文案，合法则 null
+ */
+function validateBudgetItemsMutualExclusive(budgetItems) {
+  if (!Array.isArray(budgetItems)) return null;
+  const filled = budgetItems.filter(
+    (it) => it && String(it.category || '').trim() && String(it.item_name || '').trim(),
+  );
+  if (filled.length === 0) return null;
+  const totalRows = filled.filter((it) => it.category === '总计');
+  const detailRows = filled.filter((it) => it.category !== '总计');
+  if (totalRows.length > 0 && detailRows.length > 0) {
+    return '预算科目「总计」与其他分项科目不能同时填写，请只保留一类。';
+  }
+  if (totalRows.length > 1) {
+    return '预算科目「总计」仅能填写一行。';
+  }
+  return null;
+}
+
+/** 单条新增/导入前：与数据库已有预算行合并校验互斥 */
+async function validateBudgetMergeWithProject(pool, projectId, extraRows) {
+  const [existing] = await pool.query(
+    'SELECT category, item_name FROM `ProjectBudget` WHERE project_id = ?',
+    [projectId],
+  );
+  const merged = [
+    ...existing.map((r) => ({ category: r.category, item_name: r.item_name })),
+    ...(extraRows || []),
+  ];
+  return validateBudgetItemsMutualExclusive(merged);
+}
+
 /** 库表 Project.status ENUM 无 revision/batch_review/terminated，映射为可写入值 */
 function normalizeProjectStatusForDb(status) {
   const s = String(status || '').trim();
@@ -12396,6 +12431,14 @@ if (pathname === '/api/users/by-email' && req.method === 'GET') {
         
         // 更新预算（如果提供了budget_items）
         if (body.budget_items && Array.isArray(body.budget_items)) {
+          const budgetErr = validateBudgetItemsMutualExclusive(body.budget_items);
+          if (budgetErr) {
+            sendResponse(res, 400, {
+              success: false,
+              error: budgetErr,
+            });
+            return;
+          }
           console.log('💰 更新预算:', body.budget_items.length);
           console.log('💰 预算详细数据:', JSON.stringify(body.budget_items, null, 2));
           await pool.query('DELETE FROM `ProjectBudget` WHERE project_id = ?', [projectId]);
@@ -14385,6 +14428,17 @@ if (pathname === '/api/projects' && req.method === 'POST') {
     });
     return;
   }
+
+  if (body.budget_items && Array.isArray(body.budget_items) && body.budget_items.length > 0) {
+    const budgetErr = validateBudgetItemsMutualExclusive(body.budget_items);
+    if (budgetErr) {
+      sendResponse(res, 400, {
+        success: false,
+        error: budgetErr,
+      });
+      return;
+    }
+  }
   
   try {
     const projectId = randomUUID();
@@ -15061,6 +15115,17 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
           sendResponse(res, 403, {
             success: false,
             error: '没有权限添加预算'
+          });
+          return;
+        }
+
+        const mergeErr = await validateBudgetMergeWithProject(pool, projectId, [
+          { category: body.category, item_name: body.item_name },
+        ]);
+        if (mergeErr) {
+          sendResponse(res, 400, {
+            success: false,
+            error: mergeErr,
           });
           return;
         }
@@ -17320,6 +17385,17 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         });
         return;
       }
+
+      const mergeErrCreate = await validateBudgetMergeWithProject(pool, body.project_id, [
+        { category: body.category, item_name: body.item_name },
+      ]);
+      if (mergeErrCreate) {
+        sendResponse(res, 400, {
+          success: false,
+          error: mergeErrCreate,
+        });
+        return;
+      }
       
       // 生成预算ID
       const budgetId = randomUUID();
@@ -17454,6 +17530,24 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
         sendResponse(res, 400, {
           success: false,
           error: '没有提供更新数据'
+        });
+        return;
+      }
+
+      const nextCategory = body.category !== undefined ? body.category : budget.category;
+      const nextItemName = body.item_name !== undefined ? body.item_name : budget.item_name;
+      const [otherBudgetRows] = await pool.query(
+        'SELECT category, item_name FROM `ProjectBudget` WHERE project_id = ? AND id != ?',
+        [budget.project_id, budgetId],
+      );
+      const patchMergeErr = validateBudgetItemsMutualExclusive([
+        ...otherBudgetRows.map((r) => ({ category: r.category, item_name: r.item_name })),
+        { category: nextCategory, item_name: nextItemName },
+      ]);
+      if (patchMergeErr) {
+        sendResponse(res, 400, {
+          success: false,
+          error: patchMergeErr,
         });
         return;
       }

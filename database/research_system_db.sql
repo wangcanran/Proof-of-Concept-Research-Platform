@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS `ProjectMember` (
 CREATE TABLE IF NOT EXISTS `ProjectBudget` (
     `id` VARCHAR(36) PRIMARY KEY,
     `project_id` VARCHAR(36) NOT NULL,
-    `category` ENUM('设备费', '材料费', '测试费', '差旅费', '会议费', '劳务费', '专家咨询费', '出版费', '管理费', '其他') NOT NULL COMMENT '预算类别',
+    `category` ENUM('设备费', '材料费', '测试费', '差旅费', '会议费', '劳务费', '专家咨询费', '出版费', '管理费', '其他','总计') NOT NULL COMMENT '预算类别',
     `item_name` VARCHAR(200) NOT NULL COMMENT '预算项目名称',
     `description` TEXT COMMENT '详细说明',
     `amount` DECIMAL(12,2) NOT NULL COMMENT '总金额',

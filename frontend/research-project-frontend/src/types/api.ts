@@ -65,6 +65,7 @@ export interface ProjectBudget {
     | '出版费'
     | '管理费'
     | '其他'
+    | '总计'
   item_name: string
   description?: string
   amount: number
