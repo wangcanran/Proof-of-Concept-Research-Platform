@@ -1,5 +1,5 @@
 /**
- * 从 .docx 导入项目申报草稿：仅支持「概念验证平台项目征集表」版式（章节一、二、三…）+ word/media 内嵌图片。
+ * 从 .docx 导入项目申报草稿：仅支持「概念验证平台项目征集表」版式（按章节标题识别，序号可变）+ word/media 内嵌图片。
  */
 import mammoth from 'mammoth'
 import JSZip from 'jszip'
@@ -75,15 +75,26 @@ function mammothInput(arrayBuffer: ArrayBuffer) {
   }
 }
 
-/** 去掉行首编号：第X章、（一）、一、1. 等 */
+/** 去掉行首编号：第X章、（一）、一、1. 等（阿拉伯序号仅 1–2 位，避免误删年份等） */
 function stripLeadingEnumeration(line: string): string {
   let s = line.trim()
   s = s.replace(/^第[一二三四五六七八九十百千\d]+[章节部分篇项]\s*/, '')
   s = s.replace(/^[（(][一二三四五六七八九十百千万\d]+[）)]\s*/, '')
-  s = s.replace(/^[（(]\d+[)）]\s*/, '')
-  s = s.replace(/^\d+[\.、．]\s*/, '')
+  s = s.replace(/^[（(]\d{1,2}[)）]\s*/, '')
+  s = s.replace(/^\d{1,2}[\.、．]\s*/, '')
   s = s.replace(/^[一二三四五六七八九十百千〇零]{1,4}[、．.]\s*/, '')
   return s.trim()
+}
+
+/** 表单正文块：逐行去掉模板式序号，不把大纲编号写入导入字段 */
+function stripEnumerationFromImportedBlock(block: string): string {
+  if (!block.trim()) return block.trim()
+  return block
+    .split(/\r?\n/)
+    .map((line) => stripLeadingEnumeration(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 function parseResearchDomainsText(
@@ -164,14 +175,138 @@ function collectCheckedChunksInText(block: string): string[] {
   return acc
 }
 
-function sliceBetween(text: string, startRe: RegExp, endRe: RegExp): string {
-  const m1 = text.match(startRe)
-  if (!m1 || m1.index === undefined) return ''
-  const start = m1.index + m1[0].length
-  const tail = text.slice(start)
-  const m2 = tail.match(endRe)
-  const end = m2 && m2.index !== undefined ? m2.index : tail.length
-  return tail.slice(0, end).trim()
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * 章节标题前可选序号（中文「一、」或「1.」「1、」等），不绑定固定「二、三…」数字。
+ * 顿号与章节名之间可有半角/全角空格（如表格内「六、 其他补充说明」「六、　其他补充说明」）。
+ */
+const SEC_NUM_PREFIX = '(?:[一二三四五六七八九十百千]{1,3}[、,，.．\\s]*|\\d{1,2}[\\.、．]\\s*)?'
+
+/**
+ * 小节题左侧：行首/换行，或表格导出时接在右括号/句读后无换行（如「…专利号）已有应用情况说明…」）
+ */
+const SUBSEC_LEFT = '(?:^|[\\r\\n]|[)）]\\s*|[。！？;；]\\s*)'
+
+/** 实施计划章节：征集表常见「四、概念验证实施计划」或简写「五、实施计划」（整行标题匹配，正文内「1、」列表不受影响） */
+const IMPLEMENTATION_PLAN_SECTION_TITLES = ['概念验证实施计划', '实施计划']
+
+/** 实施计划章节结束边界：取「项目预算」与「其他补充说明」中在文档中最先出现的整行标题（无「项目预算」时避免把补充说明并入实施计划正文） */
+const AFTER_IMPLEMENTATION_PLAN_END_TITLES = ['项目预算', '其他补充说明']
+
+/**
+ * 匹配「（可选序号）+ 章节名」整行；消费换行，正文从下一行起，不把标题写入正文。
+ * 使用整行锚定，避免「详见项目基本信息」等句中误命中。
+ * 示例：`六、 其他补充说明`、`五、实施计划`（序号与标题间可有空格，常见于 Word 表格单元格）。
+ */
+function sectionHeadingLineRegex(sectionTitle: string): RegExp {
+  const t = escapeRegExp(sectionTitle)
+  return new RegExp(`^\\s*${SEC_NUM_PREFIX}${t}(?:\\s*[：:])?\\s*$`)
+}
+
+/** 章节标题行起始下标（指向该行第一个字符）；找不到返回 -1 */
+function indexOfHeadingLineStart(text: string, sectionTitle: string): number {
+  const lineRe = sectionHeadingLineRegex(sectionTitle)
+  let start = 0
+  while (start <= text.length) {
+    const nl = text.indexOf('\n', start)
+    const lineEnd = nl === -1 ? text.length : nl
+    const line = text.slice(start, lineEnd).replace(/\r$/, '')
+    if (lineRe.test(line)) return start
+    if (nl === -1) break
+    start = nl + 1
+  }
+  return -1
+}
+
+/** 章节标题行结束之后的内容起始下标 */
+function indexAfterHeadingLine(text: string, sectionTitle: string): number {
+  const lineRe = sectionHeadingLineRegex(sectionTitle)
+  let start = 0
+  while (start <= text.length) {
+    const nl = text.indexOf('\n', start)
+    const lineEnd = nl === -1 ? text.length : nl
+    const line = text.slice(start, lineEnd).replace(/\r$/, '')
+    if (lineRe.test(line)) {
+      if (nl === -1) return text.length
+      return nl + 1
+    }
+    if (nl === -1) break
+    start = nl + 1
+  }
+  return -1
+}
+
+function sliceBetweenSections(text: string, startTitle: string, endTitle: string): string {
+  const afterStart = indexAfterHeadingLine(text, startTitle)
+  if (afterStart < 0) return ''
+  const tail = text.slice(afterStart)
+  const endHeadAt = indexOfHeadingLineStart(tail, endTitle)
+  if (endHeadAt < 0) return tail.trim()
+  return tail.slice(0, endHeadAt).trim()
+}
+
+/** 结束边界为多个候选标题之一（取文档中最先出现的整行标题） */
+function sliceBetweenSectionsFirstEnd(
+  text: string,
+  startTitle: string,
+  endTitleCandidates: string[],
+): string {
+  const afterStart = indexAfterHeadingLine(text, startTitle)
+  if (afterStart < 0) return ''
+  const tail = text.slice(afterStart)
+  let endHeadAt = -1
+  for (const et of endTitleCandidates) {
+    const idx = indexOfHeadingLineStart(tail, et)
+    if (idx >= 0 && (endHeadAt < 0 || idx < endHeadAt)) endHeadAt = idx
+  }
+  if (endHeadAt < 0) return tail.trim()
+  return tail.slice(0, endHeadAt).trim()
+}
+
+/**
+ * 从最先出现的「起始标题」之后截取，到「结束标题候选」中**最先出现**的整行标题之前。
+ * 结束边界含「其他补充说明」：避免文档无「项目预算」时把整段补充说明误并入实施计划。
+ */
+function sliceAfterFirstHeadingToNext(
+  text: string,
+  startTitleCandidates: string[],
+  endTitleCandidates: string[],
+): string {
+  let after = -1
+  for (const st of startTitleCandidates) {
+    const idx = indexAfterHeadingLine(text, st)
+    if (idx >= 0 && (after < 0 || idx < after)) after = idx
+  }
+  if (after < 0) return ''
+  const tail = text.slice(after)
+  let endHeadAt = -1
+  for (const et of endTitleCandidates) {
+    const idx = indexOfHeadingLineStart(tail, et)
+    if (idx >= 0 && (endHeadAt < 0 || idx < endHeadAt)) endHeadAt = idx
+  }
+  if (endHeadAt < 0) return tail.trim()
+  return tail.slice(0, endHeadAt).trim()
+}
+
+/** 从某章节标题之后一直到文末 */
+function sliceFromSectionToEnd(text: string, sectionTitle: string): string {
+  const after = indexAfterHeadingLine(text, sectionTitle)
+  if (after < 0) return ''
+  return text.slice(after).trim()
+}
+
+/** 去掉块首常见「（序号）+ 成果简介/精炼说明」单独一行 */
+function stripLeadingIntroHeadingLines(block: string): string {
+  let s = block.trim()
+  s = s.replace(
+    new RegExp(`^\\s*${SEC_NUM_PREFIX}(?:成果简介精炼说明|成果简介)[^\\n]*\\n+`, 'i'),
+    '',
+  )
+  s = s.replace(/^成果简介精炼说明[^\n]*\n+/i, '')
+  return s.trim()
 }
 
 /** 征集表「所属领域」：仅 ☑ 后的领域名称 */
@@ -226,8 +361,53 @@ function guessTitleFromFirstLine(text: string, patches: WordImportPatches): void
 }
 
 /**
- * 「概念验证平台项目征集表」：二、项目基本信息 / 三、项目详细介绍 / 四、实施计划 / 七、补充说明。
+ * 从「知识产权情况」小节标题之后切出：知识产权(part2) 与 已有应用/试点(part3)。
+ * 对应表单「已有应用/试点情况」：模板标题含「已有应用/试点情况」「已有应用情况」「试点情况」等均可；
+ * 若均不匹配，再按标题行内同时含（应用或试点）与「情况」识别（见 splitAppPilotAfterIntellectualProperty 内宽松规则）。
+ * 征集表整体结构依章节标题：项目基本信息 / 项目详细介绍 / 实施计划（或「概念验证实施计划」）/ 其他补充说明（序号可改）。
  */
+function splitAppPilotAfterIntellectualProperty(restAfterIp: string): { part2: string; part3: string } {
+  const trimPart3Tail = (s: string) => {
+    let t = s.split(/\n\s*市场状况及效益分析/i)[0] ?? s
+    const picRe = new RegExp(`[\\r\\n]\\s*${SEC_NUM_PREFIX}图片`, 'i')
+    t = t.split(picRe)[0] ?? t
+    return t.trim()
+  }
+
+  /** 优先：明确的小节标题（只匹配第一处，勿加 /g）；勿用 [^\\n]* 吃到同行正文（表格导出常为「已有应用情况说明xxx」一行连续）。 */
+  const specificHeader = new RegExp(
+    `${SUBSEC_LEFT}\\s*${SEC_NUM_PREFIX}(?:已有应用\\s*[\\/／、，,]\\s*试点\\s*情况|已有应用[、，,]\\s*试点情况|已有应用情况|已有试点情况|应用与试点情况|试点情况|应用试点情况|已有应用\\/试点情况)(?:\\s*[：:])?\\s*`,
+    'i',
+  )
+
+  let m = restAfterIp.split(specificHeader)
+  if (m.length >= 2) {
+    const part2 = (m[0] ?? '').trim()
+    const part3 = trimPart3Tail(m.slice(1).join(''))
+    return { part2, part3 }
+  }
+
+  /** 宽松：行首「应用」或「试点」与「情况」同现作小节题 */
+  const looseHeader = new RegExp(
+    `${SUBSEC_LEFT}\\s*${SEC_NUM_PREFIX}[^\\n]{0,40}(?:应用|试点)[^\\n]{0,24}情况(?:\\s*[：:])?\\s*`,
+    'i',
+  )
+  m = restAfterIp.split(looseHeader)
+  if (m.length >= 2) {
+    const part2 = (m[0] ?? '').trim()
+    const part3 = trimPart3Tail(m.slice(1).join(''))
+    return { part2, part3 }
+  }
+
+  /** 回退：仅「已有应用情况」；同行正文勿整行吃掉 */
+  const ia = restAfterIp.split(
+    new RegExp(`${SUBSEC_LEFT}\\s*${SEC_NUM_PREFIX}已有应用情况(?:\\s*[：:])?\\s*`, 'i'),
+  )
+  const part2 = (ia[0] ?? '').trim()
+  const part3 = trimPart3Tail(ia.slice(1).join(''))
+  return { part2, part3 }
+}
+
 function parsePlatformCollectionForm(
   text: string,
   domains: ResearchDomainLite[],
@@ -250,23 +430,14 @@ function parsePlatformCollectionForm(
     return { patches, filledKeys, selectedDomainIds, achievementTransform, pocStageRequirement, warnings }
   }
 
-  const sec2 = sliceBetween(
+  const sec2 = sliceBetweenSections(text, '项目基本信息', '项目详细介绍')
+  const sec3 = sliceBetweenSectionsFirstEnd(text, '项目详细介绍', IMPLEMENTATION_PLAN_SECTION_TITLES)
+  const sec4 = sliceAfterFirstHeadingToNext(
     text,
-    /二[、,，.\s]*项目基本信息\s*\n/i,
-    /三[、,，.\s]*项目详细介绍\s*\n/i,
+    IMPLEMENTATION_PLAN_SECTION_TITLES,
+    AFTER_IMPLEMENTATION_PLAN_END_TITLES,
   )
-  const sec3 = sliceBetween(
-    text,
-    /三[、,，.\s]*项目详细介绍\s*\n/i,
-    /四[、,，.\s]*概念验证实施计划\s*\n/i,
-  )
-  const sec4 = sliceBetween(
-    text,
-    /四[、,，.\s]*概念验证实施计划\s*\n/i,
-    /六[、,，.\s]*项目预算\s*\n/i,
-  )
-  const sec7m = text.match(/七[、,，.\s]*其他补充说明\s*\n+([\s\S]*)$/im)
-  const sec7 = sec7m?.[1]?.trim() ?? ''
+  const sec7 = sliceFromSectionToEnd(text, '其他补充说明')
 
   if (sec2) {
     // 表格导出：可能是「名称」后换行，或「名称」与正文同一行；也支持直到「所属领域」整块
@@ -365,43 +536,50 @@ function parsePlatformCollectionForm(
   }
 
   if (sec3) {
-    const body = sec3.replace(/^成果简介精炼说明[^\n]*\n+/i, '').trim()
-    const ip = body.split(/2[\.．]\s*知识产权情况/)
+    let body = sec3
+      .replace(new RegExp(`^\\s*${SEC_NUM_PREFIX}项目详细介绍[^\\n]*\\n+`, 'i'), '')
+      .trim()
+    body = stripLeadingIntroHeadingLines(body)
+    /** 同行可出现「知识产权情况①…」「知识产权情况：」无换行，勿强制 $ / 换行后才算标题结束 */
+    const ipHeading = new RegExp(
+      `(?:^|\\r?\\n)\\s*${SEC_NUM_PREFIX}知识产权情况(?:\\s*[：:])?\\s*`,
+      'i',
+    )
+    const ip = body.split(ipHeading)
     const part1 = (ip[0] ?? '').trim()
-    const rest2 = ip.slice(1).join('2. 知识产权情况').trim()
-    const ia = rest2.split(/已有应用情况[^\n]*/)
-    const part2 = (ia[0] ?? '').trim()
-    let part3 = ia.slice(1).join('').trim()
-    part3 = part3.split(/\n\s*市场状况及效益分析/i)[0]?.split(/6[\.．]\s*图片/i)[0]?.trim() ?? ''
+    const rest2 = ip.slice(1).join('').trim()
+    const { part2, part3 } = splitAppPilotAfterIntellectualProperty(rest2)
 
     if (part1) {
-      patches.detailed_introduction_part1 = part1
+      const part1Clean = stripEnumerationFromImportedBlock(part1)
+      patches.detailed_introduction_part1 = part1Clean
       filledKeys.push('detailed_introduction_part1')
-      const abs = part1.replace(/\s+/g, ' ').trim().slice(0, 500)
+      const abs = part1Clean.replace(/\s+/g, ' ').trim().slice(0, 500)
       if (abs) {
         patches.abstract = abs
         filledKeys.push('abstract')
       }
     }
     if (part2) {
-      patches.detailed_introduction_part2 = part2
+      patches.detailed_introduction_part2 = stripEnumerationFromImportedBlock(part2)
       filledKeys.push('detailed_introduction_part2')
     }
     if (part3) {
-      patches.detailed_introduction_part3 = part3
+      patches.detailed_introduction_part3 = stripEnumerationFromImportedBlock(part3)
       filledKeys.push('detailed_introduction_part3')
     }
   }
 
   if (sec4) {
-    patches.implementation_plan = sec4.trim()
+    patches.implementation_plan = stripEnumerationFromImportedBlock(sec4.trim())
     filledKeys.push('implementation_plan')
   }
 
   if (sec7) {
+    const sec7Clean = stripEnumerationFromImportedBlock(sec7)
     patches.supplementary_info = patches.supplementary_info
-      ? `${patches.supplementary_info}\n\n${sec7}`
-      : sec7
+      ? `${patches.supplementary_info}\n\n${sec7Clean}`
+      : sec7Clean
     filledKeys.push('supplementary_info')
   }
 
@@ -455,7 +633,9 @@ export async function extractDocxImages(arrayBuffer: ArrayBuffer): Promise<Extra
 export function getWordImportTemplateHint(): string {
   return [
     '请使用平台提供的「概念验证平台项目征集表」模板，另存为 .docx 后上传。',
-    '系统按章节识别：二、项目基本信息；三、项目详细介绍；四、概念验证实施计划；六、项目预算；七、其他补充说明。',
+    '系统按章节标题识别（不要求固定「二、三…」序号）：项目基本信息 → 项目详细介绍 → 实施计划 → 项目预算（若有）或「其他补充说明」→ 其他补充说明正文；无「项目预算」时实施计划到「其他补充说明」标题前结束，避免补充段落入实施计划字段。',
+    '「其他补充说明」等大章标题可为「六、 其他补充说明」这类整行（顿号与标题之间可留空格，与 Word 表格单元格一致）。',
+    '「项目详细介绍」内：成果简介、知识产权情况、已有应用/试点等小节标题可自带任意序号；正文导入时会尽量去掉单独占行的概况标题行。',
     '「所属领域」「技术成熟度」「预期成果转化形式」「概念验证阶段需求」等请按表中 ☑ 勾选行填写（导出为文本后仍可识别）。',
     '文档内嵌入的图片（嵌入在 Word 正文中）会从压缩包内提取并上传到「图片展示」步骤。',
     '项目名称若留空，将尝试从正文中的产品名推断；研究领域名称需与系统选项一致。',
@@ -485,11 +665,7 @@ export async function parseProjectWordDocx(
   let pocStageRequirement = [...platform.pocStageRequirement]
 
   if (!achievementTransform.length) {
-    const sec2only = sliceBetween(
-      text,
-      /二[、,，.\s]*项目基本信息\s*\n/i,
-      /三[、,，.\s]*项目详细介绍\s*\n/i,
-    )
+    const sec2only = sliceBetweenSections(text, '项目基本信息', '项目详细介绍')
     achievementTransform = matchDefValuesFromChunks(
       collectCheckedChunksInText(sec2only || text),
       TRANSFORM_LABELS,
@@ -499,11 +675,7 @@ export async function parseProjectWordDocx(
     }
   }
   if (!pocStageRequirement.length) {
-    const sec2only = sliceBetween(
-      text,
-      /二[、,，.\s]*项目基本信息\s*\n/i,
-      /三[、,，.\s]*项目详细介绍\s*\n/i,
-    )
+    const sec2only = sliceBetweenSections(text, '项目基本信息', '项目详细介绍')
     pocStageRequirement = matchDefValuesFromChunks(
       collectCheckedChunksInText(sec2only || text),
       POC_LABELS,
@@ -527,7 +699,7 @@ export async function parseProjectWordDocx(
 
   if (!hasTextFields && extractedImages.length === 0) {
     allWarnings.push(
-      '未能识别征集表结构（需包含「二、项目基本信息」「三、项目详细介绍」等章节标题）。请使用标准征集表模板。',
+      '未能识别征集表结构（需包含「项目基本信息」「项目详细介绍」等章节标题；序号可为任意中文或数字）。请使用标准征集表模板。',
     )
   } else if (!hasTextFields && extractedImages.length > 0) {
     allWarnings.push('仅识别到文档内图片，未匹配到征集表文字字段，请检查章节标题是否与模板一致。')
