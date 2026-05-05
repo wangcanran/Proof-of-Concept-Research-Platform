@@ -67,6 +67,14 @@
           </div>
 
           <div class="nav-section">
+            <h4 v-if="!sidebarCollapsed" class="nav-section-title">新闻公告</h4>
+            <router-link to="/assistant/news" class="nav-link" active-class="active">
+              <span class="nav-icon">📰</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">新闻公告管理</span>
+            </router-link>
+          </div>
+
+          <div class="nav-section">
             <h4 v-if="!sidebarCollapsed" class="nav-section-title">用户管理</h4>
             <router-link to="/assistant/users" class="nav-link" active-class="active">
               <span class="nav-icon">👥</span>

@@ -77,19 +77,24 @@
                 <el-icon :size="20"><Bell /></el-icon>
               </span>
               <div>
-                <h2 class="side-card-title">最新公告</h2>
+                <h2 class="side-card-title">新闻公告</h2>
                 <p class="side-card-desc">政策与通知摘要</p>
               </div>
+              <el-button link size="small" class="notice-more-btn" @click="goNewsList">
+                查看更多 <el-icon><ArrowRight /></el-icon>
+              </el-button>
             </div>
 
             <ul v-if="displayNotices.length > 0" class="notice-compact-list">
-              <li v-for="notice in displayNotices" :key="notice.id" class="notice-compact-item">
-                <span class="notice-compact-tag" :class="notice.category">{{
-                  categoryLabel(notice.category)
-                }}</span>
+              <li
+                v-for="notice in displayNotices"
+                :key="notice.id"
+                class="notice-compact-item"
+                @click="goNewsDetail(notice.id)"
+              >
                 <div class="notice-compact-main">
                   <div class="notice-compact-title">{{ notice.title }}</div>
-                  <p v-if="notice.abstract" class="notice-compact-abs">{{ notice.abstract }}</p>
+                  <p v-if="notice.summary || notice.abstract" class="notice-compact-abs">{{ notice.summary || notice.abstract }}</p>
                 </div>
                 <time class="notice-compact-date">{{ formatNoticeDate(notice.published_at) }}</time>
               </li>
@@ -374,9 +379,9 @@ const loadStats = async () => {
 
 const loadNotices = async () => {
   try {
-    const res = await axios.get(`${getApiBaseUrl()}/notices?status=published&limit=6`)
+    const res = await axios.get(`${getApiBaseUrl()}/home/notices`)
     if (res.data?.data) {
-      notices.value = res.data.data
+      notices.value = Array.isArray(res.data.data) ? res.data.data : res.data.data.list || []
     }
   } catch (e) {
     // 静默失败
@@ -452,6 +457,26 @@ const carouselImages = ref([
   },
 ])
 
+/** 从后端加载轮播数据，如有则覆盖默认静态图片 */
+const loadCarousel = async () => {
+  try {
+    const res = await axios.get(`${getApiBaseUrl()}/home/carousel`)
+    if (res.data?.success && Array.isArray(res.data.data) && res.data.data.length > 0) {
+      const origin = getApiOrigin()
+      carouselImages.value = res.data.data.map((item: any) => ({
+        src: item.image_url?.startsWith('http') ? item.image_url : origin + item.image_url,
+        alt: item.title || '',
+        caption: {
+          title: item.title || '',
+          description: item.summary || '',
+        },
+      }))
+    }
+  } catch {
+    // 静默失败，使用默认静态图片
+  }
+}
+
 let carouselInterval: ReturnType<typeof setInterval> | null = null
 
 // 修复：确保轮播图切换时完整显示
@@ -488,6 +513,14 @@ const goToRegister = () => {
   router.push('/register')
 }
 
+const goNewsList = () => {
+  router.push('/news-list')
+}
+
+const goNewsDetail = (id: string) => {
+  router.push(`/news/${id}`)
+}
+
 const handleImageError = (e: Event) => {
   const img = e.target as HTMLImageElement
   img.src =
@@ -502,6 +535,7 @@ const handleLogoError = (e: Event) => {
 
 onMounted(() => {
   checkLoginStatus()
+  loadCarousel()
   startCarousel()
   loadStats()
   loadNotices()
@@ -788,6 +822,12 @@ button {
   background: transparent;
 }
 
+.notice-more-btn {
+  margin-left: auto;
+  align-self: center;
+  color: #b31b1b;
+}
+
 .side-card-icon {
   flex-shrink: 0;
   display: flex;
@@ -903,6 +943,7 @@ button {
     background 0.2s,
     border-color 0.2s,
     box-shadow 0.2s;
+  cursor: pointer;
 }
 
 .notice-compact-item:hover {

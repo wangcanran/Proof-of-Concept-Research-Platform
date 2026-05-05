@@ -14,7 +14,7 @@ const DB_CONFIG = {
   host: process.env.DB_HOST || 'localhost',
   port: Number(process.env.DB_PORT || 3306),
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '051005',
+  password: process.env.DB_PASSWORD || 'wn20041008',
   database: process.env.DB_NAME || 'research_system',
   waitForConnections: true,
   connectionLimit: 10,
@@ -813,20 +813,20 @@ if (pathname === '/api/home/stats' && req.method === 'GET') {
   return;
 }
 
-// 获取公开的公告列表（首页展示）
+// 获取公开的新闻公告列表（首页展示）
 if (pathname === '/api/home/notices' && req.method === 'GET') {
   try {
-    const [notices] = await pool.query(`
-      SELECT id, title, abstract, category, view_count, published_at 
-      FROM Notice 
-      WHERE status = 'published' AND show_on_homepage = 'yes'
-      ORDER BY is_top DESC, published_at DESC 
+    const [news] = await pool.query(`
+      SELECT id, title, summary, view_count, published_at 
+      FROM News 
+      WHERE status = 'published'
+      ORDER BY is_top ASC, published_at DESC 
       LIMIT 5
     `);
     
     sendResponse(res, 200, {
       success: true,
-      data: notices
+      data: news
     });
   } catch (error) {
     console.error('获取公告失败:', error);
@@ -834,6 +834,457 @@ if (pathname === '/api/home/notices' && req.method === 'GET') {
       success: false,
       error: '获取公告失败'
     });
+  }
+  return;
+}
+
+// 获取公开的新闻列表（首页 / 门户网站）
+if (pathname === '/api/home/news' && req.method === 'GET') {
+  try {
+    const limit = parseInt(query.limit) || 10;
+    const offset = parseInt(query.offset) || 0;
+    const [rows] = await pool.query(
+      `SELECT id, title, summary, view_count, is_top, published_at FROM News WHERE status = 'published' ORDER BY is_top ASC, published_at DESC LIMIT ? OFFSET ?`,
+      [limit, offset]
+    );
+    const [cnt] = await pool.query(`SELECT COUNT(*) AS total FROM News WHERE status = 'published'`);
+    sendResponse(res, 200, { success: true, data: { list: rows, total: cnt[0].total } });
+  } catch (error) {
+    console.error('获取新闻列表失败:', error);
+    sendResponse(res, 500, { success: false, error: '获取新闻列表失败' });
+  }
+  return;
+}
+
+// 获取公开的新闻列表（分页）
+if (pathname === '/api/home/news-list' && req.method === 'GET') {
+  try {
+    const page = parseInt(query.page) || 1;
+    const pageSize = parseInt(query.pageSize) || 10;
+    const offset = (page - 1) * pageSize;
+    const [rows] = await pool.query(
+      `SELECT id, title, summary, view_count, is_top, published_at FROM News WHERE status = 'published' ORDER BY is_top ASC, published_at DESC LIMIT ? OFFSET ?`,
+      [pageSize, offset]
+    );
+    const [cnt] = await pool.query(`SELECT COUNT(*) AS total FROM News WHERE status = 'published'`);
+    sendResponse(res, 200, { success: true, data: { list: rows, total: cnt[0].total } });
+  } catch (error) {
+    console.error('获取新闻列表失败:', error);
+    sendResponse(res, 500, { success: false, error: '获取新闻列表失败' });
+  }
+  return;
+}
+
+// 获取首页轮播数据
+if (pathname === '/api/home/carousel' && req.method === 'GET') {
+  try {
+    const [items] = await pool.query(`
+      SELECT cc.id, cc.news_id, cc.image_url, cc.display_order, n.title, n.summary
+      FROM CarouselConfig cc
+      JOIN News n ON n.id = cc.news_id
+      WHERE n.status = 'published'
+      ORDER BY n.is_top ASC, n.published_at DESC
+    `);
+    sendResponse(res, 200, { success: true, data: items });
+  } catch (error) {
+    console.error('获取轮播数据失败:', error);
+    sendResponse(res, 500, { success: false, error: '获取轮播数据失败' });
+  }
+  return;
+}
+
+// 获取单条新闻详情（公开）
+if (pathname.startsWith('/api/home/news/') && req.method === 'GET') {
+  const newsId = pathname.replace('/api/home/news/', '');
+  try {
+    const [rows] = await pool.query(`SELECT * FROM News WHERE id = ? AND status = 'published'`, [newsId]);
+    if (rows.length === 0) { sendResponse(res, 404, { success: false, error: '新闻不存在' }); return; }
+    // 增加浏览量
+    await pool.query(`UPDATE News SET view_count = view_count + 1 WHERE id = ?`, [newsId]);
+    const [media] = await pool.query(`SELECT * FROM NewsMedia WHERE news_id = ? ORDER BY sort_order`, [newsId]);
+    sendResponse(res, 200, { success: true, data: { ...rows[0], media } });
+  } catch (error) {
+    console.error('获取新闻详情失败:', error);
+    sendResponse(res, 500, { success: false, error: '获取新闻详情失败' });
+  }
+  return;
+}
+
+// ==================== 新闻公告管理 API（项目经理） ====================
+
+// 新闻公告列表（管理端）
+if (pathname === '/api/news' && req.method === 'GET') {
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { success: false, error: '无权访问' }); return;
+    }
+    const status = query.status || '';
+    const keyword = query.keyword || '';
+    const page = parseInt(query.page) || 1;
+    const pageSize = parseInt(query.pageSize) || 10;
+    const offset = (page - 1) * pageSize;
+
+    let where = 'WHERE 1=1';
+    const params = [];
+    if (status) { where += ' AND n.status = ?'; params.push(status); }
+    if (keyword) { where += ' AND (n.title LIKE ? OR n.summary LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+
+    const [rows] = await pool.query(
+      `SELECT n.*, u.name AS author_name FROM News n LEFT JOIN \`User\` u ON n.author_id = u.id ${where} ORDER BY n.is_top ASC, n.published_at DESC LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+    const [cnt] = await pool.query(`SELECT COUNT(*) AS total FROM News n ${where}`, params);
+    sendResponse(res, 200, { success: true, data: { list: rows, total: cnt[0].total, page, pageSize } });
+  } catch (error) {
+    console.error('获取新闻列表失败:', error);
+    sendResponse(res, 500, { success: false, error: '获取新闻列表失败' });
+  }
+  return;
+}
+
+// 创建新闻公告
+if (pathname === '/api/news' && req.method === 'POST') {
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { success: false, error: '无权操作' }); return;
+    }
+    const body = await parseRequestBody(req);
+    const id = randomUUID();
+    const { title, summary, content, status: newsStatus } = body;
+    if (!title || !content) {
+      sendResponse(res, 400, { success: false, error: '标题和内容不能为空' }); return;
+    }
+    const finalStatus = ['draft', 'published', 'offline'].includes(newsStatus) ? newsStatus : 'draft';
+    const publishedAt = finalStatus === 'published' ? new Date() : null;
+    await pool.query(
+      `INSERT INTO News (id, title, summary, content, author_id, status, is_carousel, published_at) VALUES (?, ?, ?, ?, ?, ?, 'no', ?)`,
+      [id, title, summary || '', content, user.id, finalStatus, publishedAt]
+    );
+    const [created] = await pool.query(`SELECT n.*, u.name AS author_name FROM News n LEFT JOIN \`User\` u ON n.author_id = u.id WHERE n.id = ?`, [id]);
+    sendResponse(res, 201, { success: true, data: created[0], message: '创建成功' });
+  } catch (error) {
+    console.error('创建新闻失败:', error);
+    sendResponse(res, 500, { success: false, error: '创建新闻失败' });
+  }
+  return;
+}
+
+// 上传新闻媒体文件
+if (pathname === '/api/news/upload' && req.method === 'POST') {
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { errno: 1, success: false, error: '无权操作' }); return;
+    }
+
+    const newsUploadDir = path.join(__dirname, 'uploads', 'news');
+    if (!fs.existsSync(newsUploadDir)) { fs.mkdirSync(newsUploadDir, { recursive: true }); }
+
+    const newsStorage = multer.diskStorage({
+      destination: (req2, file, cb) => cb(null, newsUploadDir),
+      filename: (req2, file, cb) => {
+        const safe = fixMultipartFilename(file.originalname || '');
+        const ext = path.extname(safe) || path.extname(file.originalname || '');
+        cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+      }
+    });
+    const newsUpload = multer({
+      storage: newsStorage,
+      limits: { fileSize: 50 * 1024 * 1024 }
+    });
+
+    newsUpload.single('file')(req, res, async (err) => {
+      if (err) {
+        sendResponse(res, 500, { errno: 1, success: false, error: '上传失败: ' + err.message });
+        return;
+      }
+      if (!req.file) {
+        sendResponse(res, 400, { errno: 1, success: false, error: '请选择文件' });
+        return;
+      }
+
+      const file = req.file;
+      const newsId = req.body.news_id || '';
+      const mediaId = randomUUID();
+      let fileType = 'image';
+      if (file.mimetype.startsWith('video/')) fileType = 'video';
+      else if (file.mimetype.startsWith('audio/')) fileType = 'audio';
+
+      const fileUrl = `/uploads/news/${file.filename}`;
+
+      // 如果关联了 news_id，写入 NewsMedia 表
+      if (newsId) {
+        await pool.query(
+          `INSERT INTO NewsMedia (id, news_id, file_type, file_url, file_name, file_size, mime_type) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [mediaId, newsId, fileType, fileUrl, fixMultipartFilename(file.originalname || ''), file.size, file.mimetype]
+        );
+      }
+
+      // WangEditor v5 要求 errno: 0 表示成功，data.url 为文件访问地址
+      sendResponse(res, 200, {
+        errno: 0,
+        success: true,
+        data: {
+          id: newsId ? mediaId : '',
+          url: fileUrl,
+          type: fileType,
+          name: fixMultipartFilename(file.originalname || '')
+        }
+      });
+    });
+  } catch (error) {
+    console.error('上传失败:', error);
+    sendResponse(res, 500, { errno: 1, success: false, error: '上传失败' });
+  }
+  return;
+}
+
+// 获取单条新闻（管理端）
+if (pathname.match(/^\/api\/news\/[\w-]+$/) && req.method === 'GET' && !pathname.includes('/upload')) {
+  const newsId = pathname.replace('/api/news/', '');
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { success: false, error: '无权访问' }); return;
+    }
+    const [rows] = await pool.query(`SELECT n.*, u.name AS author_name FROM News n LEFT JOIN \`User\` u ON n.author_id = u.id WHERE n.id = ?`, [newsId]);
+    if (rows.length === 0) { sendResponse(res, 404, { success: false, error: '新闻不存在' }); return; }
+    const [media] = await pool.query(`SELECT * FROM NewsMedia WHERE news_id = ? ORDER BY sort_order`, [newsId]);
+    const [carousel] = await pool.query(`SELECT * FROM CarouselConfig WHERE news_id = ?`, [newsId]);
+    // 从正文 content 中解析所有图片 URL，确保轮播设置能加载到编辑器中插入的图片
+    const content = rows[0].content || '';
+    const contentImages = [];
+    const imgRegex = /<img[^>]+src=["']([^"']+)["']/gi;
+    let imgMatch;
+    const seenUrls = new Set();
+    while ((imgMatch = imgRegex.exec(content)) !== null) {
+      const url = imgMatch[1];
+      if (!seenUrls.has(url)) {
+        seenUrls.add(url);
+        contentImages.push({
+          id: `content-img-${contentImages.length}`,
+          file_url: url,
+          file_type: 'image',
+          file_name: url.split('/').pop() || url,
+        });
+      }
+    }
+    sendResponse(res, 200, { success: true, data: { ...rows[0], media, contentImages, carousel: carousel[0] || null } });
+  } catch (error) {
+    console.error('获取新闻详情失败:', error);
+    sendResponse(res, 500, { success: false, error: '获取新闻详情失败' });
+  }
+  return;
+}
+
+// 更新新闻公告
+if (pathname.match(/^\/api\/news\/[\w-]+$/) && req.method === 'PUT') {
+  const newsId = pathname.replace('/api/news/', '');
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { success: false, error: '无权操作' }); return;
+    }
+    const body = await parseRequestBody(req);
+    // 先查询当前状态，用于判断是否需要更新发布时间
+    const [check] = await pool.query(`SELECT status FROM News WHERE id = ?`, [newsId]);
+    if (check.length === 0) { sendResponse(res, 404, { success: false, error: '新闻不存在' }); return; }
+    const currentStatus = check[0].status;
+
+    const fields = [];
+    const values = [];
+    if (body.title !== undefined) { fields.push('title = ?'); values.push(body.title); }
+    if (body.summary !== undefined) { fields.push('summary = ?'); values.push(body.summary); }
+    if (body.content !== undefined) { fields.push('content = ?'); values.push(body.content); }
+    if (body.is_top !== undefined) { fields.push('is_top = ?'); values.push(body.is_top); }
+    if (body.is_carousel !== undefined && ['yes', 'no'].includes(body.is_carousel)) { fields.push('is_carousel = ?'); values.push(body.is_carousel); }
+    if (body.status !== undefined && ['draft', 'published', 'offline'].includes(body.status)) {
+      fields.push('status = ?'); values.push(body.status);
+      // 只有从非 published 状态变为 published 时才更新发布时间
+      if (body.status === 'published' && currentStatus !== 'published') {
+        fields.push('published_at = ?'); values.push(new Date());
+      }
+    }
+    if (fields.length === 0) { sendResponse(res, 400, { success: false, error: '没有要更新的字段' }); return; }
+    values.push(newsId);
+    await pool.query(`UPDATE News SET ${fields.join(', ')} WHERE id = ?`, values);
+    const [updated] = await pool.query(`SELECT n.*, u.name AS author_name FROM News n LEFT JOIN \`User\` u ON n.author_id = u.id WHERE n.id = ?`, [newsId]);
+    sendResponse(res, 200, { success: true, data: updated[0], message: '更新成功' });
+  } catch (error) {
+    console.error('更新新闻失败:', error);
+    sendResponse(res, 500, { success: false, error: '更新新闻失败' });
+  }
+  return;
+}
+
+// 发布新闻
+if (pathname.match(/^\/api\/news\/[\w-]+\/publish$/) && req.method === 'PUT') {
+  const newsId = pathname.replace('/api/news/', '').replace('/publish', '');
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { success: false, error: '无权操作' }); return;
+    }
+    await pool.query(`UPDATE News SET status = 'published', published_at = ? WHERE id = ?`, [new Date(), newsId]);
+    sendResponse(res, 200, { success: true, message: '发布成功' });
+  } catch (error) {
+    console.error('发布新闻失败:', error);
+    sendResponse(res, 500, { success: false, error: '发布新闻失败' });
+  }
+  return;
+}
+
+// 下架新闻
+if (pathname.match(/^\/api\/news\/[\w-]+\/offline$/) && req.method === 'PUT') {
+  const newsId = pathname.replace('/api/news/', '').replace('/offline', '');
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { success: false, error: '无权操作' }); return;
+    }
+    await pool.query(`UPDATE News SET status = 'offline', is_carousel = 'no' WHERE id = ?`, [newsId]);
+    // 同时删除该新闻的轮播配置
+    await pool.query(`DELETE FROM CarouselConfig WHERE news_id = ?`, [newsId]);
+    sendResponse(res, 200, { success: true, message: '下架成功' });
+  } catch (error) {
+    console.error('下架新闻失败:', error);
+    sendResponse(res, 500, { success: false, error: '下架新闻失败' });
+  }
+  return;
+}
+
+// 删除新闻公告
+if (pathname.match(/^\/api\/news\/[\w-]+$/) && req.method === 'DELETE') {
+  const newsId = pathname.replace('/api/news/', '');
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { success: false, error: '无权操作' }); return;
+    }
+    // 删除关联的媒体文件
+    const [media] = await pool.query(`SELECT file_url FROM NewsMedia WHERE news_id = ?`, [newsId]);
+    for (const m of media) {
+      const filePath = path.join(__dirname, m.file_url.replace(/^\//, ''));
+      if (fs.existsSync(filePath)) { try { fs.unlinkSync(filePath); } catch (e) { /* ignore */ } }
+    }
+    await pool.query(`DELETE FROM News WHERE id = ?`, [newsId]);
+    sendResponse(res, 200, { success: true, message: '删除成功' });
+  } catch (error) {
+    console.error('删除新闻失败:', error);
+    sendResponse(res, 500, { success: false, error: '删除新闻失败' });
+  }
+  return;
+}
+
+// ==================== 轮播配置 API（项目经理） ====================
+
+// 获取轮播配置列表（管理端）
+if (pathname === '/api/carousel' && req.method === 'GET') {
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { success: false, error: '无权访问' }); return;
+    }
+    const [items] = await pool.query(`
+      SELECT cc.*, n.title AS news_title, n.status AS news_status
+      FROM CarouselConfig cc
+      LEFT JOIN News n ON n.id = cc.news_id
+      ORDER BY cc.display_order ASC
+    `);
+    sendResponse(res, 200, { success: true, data: items });
+  } catch (error) {
+    console.error('获取轮播配置失败:', error);
+    sendResponse(res, 500, { success: false, error: '获取轮播配置失败' });
+  }
+  return;
+}
+
+// 添加轮播项
+if (pathname === '/api/carousel' && req.method === 'POST') {
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { success: false, error: '无权操作' }); return;
+    }
+    const body = await parseRequestBody(req);
+    const { news_id, image_url, display_order } = body;
+    if (!news_id || !image_url) {
+      sendResponse(res, 400, { success: false, error: '新闻ID和图片URL不能为空' }); return;
+    }
+    // 先删除该新闻已有的轮播配置（保证一对一）
+    await pool.query(`DELETE FROM CarouselConfig WHERE news_id = ?`, [news_id]);
+    const id = randomUUID();
+    await pool.query(
+      `INSERT INTO CarouselConfig (id, news_id, image_url, display_order) VALUES (?, ?, ?, ?)`,
+      [id, news_id, image_url, display_order || 0]
+    );
+    // 同步设置 News.is_carousel = 'yes'
+    await pool.query(`UPDATE News SET is_carousel = 'yes' WHERE id = ?`, [news_id]);
+    const [created] = await pool.query(`SELECT cc.*, n.title AS news_title FROM CarouselConfig cc LEFT JOIN News n ON n.id = cc.news_id WHERE cc.id = ?`, [id]);
+    sendResponse(res, 201, { success: true, data: created[0], message: '添加轮播项成功' });
+  } catch (error) {
+    console.error('添加轮播项失败:', error);
+    sendResponse(res, 500, { success: false, error: '添加轮播项失败' });
+  }
+  return;
+}
+
+// 更新轮播项
+if (pathname.match(/^\/api\/carousel\/[\w-]+$/) && req.method === 'PUT') {
+  const itemId = pathname.replace('/api/carousel/', '');
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { success: false, error: '无权操作' }); return;
+    }
+    const body = await parseRequestBody(req);
+    const fields = [];
+    const values = [];
+    if (body.image_url !== undefined) { fields.push('image_url = ?'); values.push(body.image_url); }
+    if (body.display_order !== undefined) { fields.push('display_order = ?'); values.push(body.display_order); }
+    if (fields.length === 0) { sendResponse(res, 400, { success: false, error: '没有要更新的字段' }); return; }
+    values.push(itemId);
+    await pool.query(`UPDATE CarouselConfig SET ${fields.join(', ')} WHERE id = ?`, values);
+    sendResponse(res, 200, { success: true, message: '更新轮播项成功' });
+  } catch (error) {
+    console.error('更新轮播项失败:', error);
+    sendResponse(res, 500, { success: false, error: '更新轮播项失败' });
+  }
+  return;
+}
+
+// 删除轮播项
+if (pathname.match(/^\/api\/carousel\/[\w-]+$/) && req.method === 'DELETE') {
+  const itemId = pathname.replace('/api/carousel/', '');
+  try {
+    const authHeader = req.headers.authorization;
+    const user = await verifyToken(authHeader);
+    if (!user || !['project_manager', 'admin'].includes(user.role)) {
+      sendResponse(res, 403, { success: false, error: '无权操作' }); return;
+    }
+    // 先查出关联的新闻ID，同步更新 News.is_carousel
+    const [items] = await pool.query(`SELECT news_id FROM CarouselConfig WHERE id = ?`, [itemId]);
+    await pool.query(`DELETE FROM CarouselConfig WHERE id = ?`, [itemId]);
+    if (items.length > 0) {
+      await pool.query(`UPDATE News SET is_carousel = 'no' WHERE id = ?`, [items[0].news_id]);
+    }
+    sendResponse(res, 200, { success: true, message: '删除轮播项成功' });
+  } catch (error) {
+    console.error('删除轮播项失败:', error);
+    sendResponse(res, 500, { success: false, error: '删除轮播项失败' });
   }
   return;
 }
@@ -14759,9 +15210,30 @@ if (pathname.startsWith('/uploads/') && req.method === 'GET') {
       '.jpeg': 'image/jpeg',
       '.png': 'image/png',
       '.gif': 'image/gif',
-      '.pdf': 'application/pdf'
+      '.webp': 'image/webp',
+      '.svg': 'image/svg+xml',
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.mp4': 'video/mp4',
+      '.webm': 'video/webm',
+      '.ogg': 'video/ogg',
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.ogg-audio': 'audio/ogg',
+      '.m4a': 'audio/mp4',
+      '.flac': 'audio/flac'
     };
-    res.writeHead(200, { 'Content-Type': contentType[ext] || 'application/octet-stream' });
+    // 动态判断：对于不在表中的扩展名，根据名称推测
+    let ct = contentType[ext] || 'application/octet-stream';
+    if (pathname.includes('/audio') || pathname.includes('/music')) {
+      if (ext === '.ogg') ct = 'audio/ogg';
+    }
+    res.writeHead(200, {
+      'Content-Type': ct,
+      'Content-Length': data.length,
+      'Cache-Control': 'public, max-age=86400'
+    });
     res.end(data);
   });
   return;

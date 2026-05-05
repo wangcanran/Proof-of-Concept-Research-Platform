@@ -309,56 +309,56 @@ CREATE TABLE IF NOT EXISTS `ProjectAchievementFile` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='项目成果附件表';
 
 -- =============================================
--- 六、公告通知
+-- 六、新闻公告
 -- =============================================
 
--- 16. 公告主表
-CREATE TABLE IF NOT EXISTS `Notice` (
-    `id` VARCHAR(36) PRIMARY KEY COMMENT '公告ID',
-    `title` VARCHAR(200) NOT NULL COMMENT '公告标题',
-    `abstract` TEXT NOT NULL COMMENT '公告摘要',
-    `category` ENUM('notice', 'news', 'demand', 'service', 'other') NOT NULL COMMENT '公告类别',
-    `created_by` VARCHAR(36) COMMENT '发布人',
-    `is_top` ENUM('yes', 'no') NOT NULL DEFAULT 'no' COMMENT '是否置顶：yes-是 no-否',
-    `show_on_homepage` ENUM('yes', 'no') NOT NULL DEFAULT 'no' COMMENT '是否首页展示：yes-是 no-否',
-    `status` ENUM('draft', 'published', 'offline') NOT NULL DEFAULT 'published' COMMENT '状态：draft-草稿 published-发布 offline-下架',
-    `view_count` INT UNSIGNED DEFAULT 0 COMMENT '浏览量',
-    `published_at` DATETIME COMMENT '发布时间',
+-- 16. 新闻公告主表（富文本整体存储）
+CREATE TABLE IF NOT EXISTS `News` (
+    `id` VARCHAR(36) PRIMARY KEY COMMENT '新闻ID',
+    `title` VARCHAR(200) NOT NULL COMMENT '标题',
+    `summary` VARCHAR(500) NOT NULL COMMENT '摘要（列表页显示）',
+    `content` LONGTEXT NOT NULL COMMENT '富文本HTML内容，包含图片/音视频标签',
+    `author_id` VARCHAR(36) NOT NULL COMMENT '作者ID（项目经理），关联User.id',
+    `status` ENUM('draft', 'published', 'offline') NOT NULL DEFAULT 'draft' COMMENT '状态：草稿、已发布、下架',
+    `is_top` ENUM('yes', 'no') NOT NULL DEFAULT 'no' COMMENT '是否置顶',
+    `is_carousel` ENUM('yes', 'no') NOT NULL DEFAULT 'no' COMMENT '是否首页轮播',
+    `view_count` INT UNSIGNED DEFAULT 0 COMMENT '浏览次数',
+    `published_at` DATETIME COMMENT '发布时间（status=published时必填）',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    FOREIGN KEY (`created_by`) REFERENCES `User`(`id`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='公告主表';
+    FOREIGN KEY (`author_id`) REFERENCES `User`(`id`) ON DELETE RESTRICT,
+    INDEX idx_status (`status`),
+    INDEX idx_published (`published_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='新闻公告主表';
 
--- 17. 公告内容区块表（文字、图片、视频、音频）
-CREATE TABLE IF NOT EXISTS `NoticeBlock` (
-    `id` VARCHAR(36) PRIMARY KEY COMMENT '区块ID',
-    `notice_id` VARCHAR(36) NOT NULL COMMENT '关联公告ID',
-    `block_type` ENUM('text', 'image', 'video', 'audio') NOT NULL COMMENT '区块类型：文字、图片、视频、音频',
-    `content` TEXT COMMENT '文字内容（当 block_type 为 text 时使用）',
-    `file_path` VARCHAR(500) COMMENT '媒体文件路径（当 block_type 为 image/video/audio 时使用）',
-    `file_name` VARCHAR(200) DEFAULT '' COMMENT '原文件名',
-    `file_size` BIGINT UNSIGNED DEFAULT 0 COMMENT '文件大小（字节）',
-    `mime_type` VARCHAR(100) COMMENT 'MIME类型',
-    `description` VARCHAR(500) DEFAULT '' COMMENT '媒体描述（可选）',
-    `sort_order` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '排序序号，数字越小越靠前',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    FOREIGN KEY (`notice_id`) REFERENCES `Notice`(`id`) ON DELETE CASCADE,
-    INDEX idx_notice_sort (`notice_id`, `sort_order`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='公告内容区块表';
-
--- 18. 公告附件表（独立于内容区块的额外附件）
-CREATE TABLE IF NOT EXISTS `NoticeAttachment` (
-    `id` VARCHAR(36) PRIMARY KEY COMMENT '附件ID',
-    `notice_id` VARCHAR(36) NOT NULL COMMENT '关联公告ID',
-    `file_name` VARCHAR(200) NOT NULL COMMENT '附件原文件名',
-    `file_path` VARCHAR(500) NOT NULL COMMENT '附件文件路径',
-    `file_size` BIGINT UNSIGNED DEFAULT 0 COMMENT '文件大小（字节）',
+-- 17. 新闻媒体文件表（记录上传的图片/音视频）
+CREATE TABLE IF NOT EXISTS `NewsMedia` (
+    `id` VARCHAR(36) PRIMARY KEY COMMENT '媒体文件ID',
+    `news_id` VARCHAR(36) NOT NULL COMMENT '所属新闻ID',
+    `file_type` ENUM('image', 'video', 'audio') NOT NULL COMMENT '媒体类型',
+    `file_url` VARCHAR(512) NOT NULL COMMENT '访问URL（相对或绝对）',
+    `file_name` VARCHAR(200) NOT NULL COMMENT '原始文件名',
+    `file_size` BIGINT UNSIGNED NOT NULL COMMENT '文件大小（字节）',
     `mime_type` VARCHAR(100) NOT NULL COMMENT 'MIME类型',
-    `download_count` INT UNSIGNED DEFAULT 0 COMMENT '下载次数',
-    `sort` TINYINT UNSIGNED DEFAULT 0 COMMENT '展示排序',
+    `description` VARCHAR(500) DEFAULT '' COMMENT '说明（可选）',
+    `sort_order` INT UNSIGNED DEFAULT 0 COMMENT '在内容中出现的顺序（用于展示）',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间',
+    FOREIGN KEY (`news_id`) REFERENCES `News`(`id`) ON DELETE CASCADE,
+    INDEX idx_news_type (`news_id`, `file_type`),
+    INDEX idx_news_url (`news_id`, `file_url`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='新闻媒体文件表';
+
+-- 18. 首页轮播配置表
+CREATE TABLE IF NOT EXISTS `CarouselConfig` (
+    `id` VARCHAR(36) PRIMARY KEY COMMENT '轮播项ID',
+    `news_id` VARCHAR(36) NOT NULL COMMENT '关联的新闻ID（必须是已发布状态）',
+    `image_url` VARCHAR(512) NOT NULL COMMENT '轮播展示的图片URL（通常取自NewsMedia.file_url）',
+    `display_order` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '排序，数字越小越靠前',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    FOREIGN KEY (`notice_id`) REFERENCES `Notice`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='公告附件表';
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    FOREIGN KEY (`news_id`) REFERENCES `News`(`id`) ON DELETE CASCADE,
+    INDEX idx_news_order (`news_id`, `display_order`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='首页轮播配置表';
 
 -- =============================================
 -- 七、系统与通用

@@ -74,6 +74,20 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('../views/RegisterPage.vue'),
     meta: { title: '注册', guest: true },
   },
+  // 公共新闻列表与详情
+  {
+    path: '/news-list',
+    name: 'NewsList',
+    component: () => import('@/views/NewsList.vue'),
+    meta: { title: '新闻公告' },
+  },
+  {
+    path: '/news/:id',
+    name: 'PublicNewsDetail',
+    component: () => import('@/views/assistant/NewsDetail.vue'),
+    props: true,
+    meta: { title: '新闻详情' },
+  },
 
   // ============ 通用仪表板（重定向到角色专属仪表板） ============
   {
@@ -452,6 +466,49 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('@/views/assistant/TerminateProjects.vue'),
     meta: {
       title: '终止项目',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  // 新闻公告管理
+  {
+    path: '/assistant/news',
+    name: 'NewsManagement',
+    component: () => import('@/views/assistant/NewsManagement.vue'),
+    meta: {
+      title: '新闻公告管理',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/news/create',
+    name: 'CreateNews',
+    component: () => import('@/views/assistant/NewsEdit.vue'),
+    meta: {
+      title: '创建新闻',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/news/:id/edit',
+    name: 'EditNews',
+    component: () => import('@/views/assistant/NewsEdit.vue'),
+    props: true,
+    meta: {
+      title: '编辑新闻',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/news/:id',
+    name: 'NewsDetail',
+    component: () => import('@/views/assistant/NewsDetail.vue'),
+    props: true,
+    meta: {
+      title: '查看新闻',
       requiresAuth: true,
       role: ['project_manager'],
     },
