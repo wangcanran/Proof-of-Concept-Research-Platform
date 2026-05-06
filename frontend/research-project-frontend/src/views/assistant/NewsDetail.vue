@@ -27,7 +27,12 @@
             <div v-if="news.summary" class="detail-summary">
               <div class="summary-box">{{ news.summary }}</div>
             </div>
-            <div class="detail-content" v-html="news.content"></div>
+            <!-- 与 WangEditor 外层结构一致并引入其 css，否则正文片段会失去对齐、表格样式等 -->
+            <div class="detail-content news-rich-html w-e-text-container">
+              <div class="w-e-scroll">
+                <div data-slate-editor v-html="news.content"></div>
+              </div>
+            </div>
           </div>
           <div v-else class="detail-empty">
             <el-empty description="新闻不存在或已被删除" />
@@ -59,7 +64,11 @@
       <div v-if="news.summary" class="detail-summary">
         <div class="summary-box">{{ news.summary }}</div>
       </div>
-      <div class="detail-content" v-html="news.content"></div>
+      <div class="detail-content news-rich-html w-e-text-container">
+        <div class="w-e-scroll">
+          <div data-slate-editor v-html="news.content"></div>
+        </div>
+      </div>
     </div>
     <div v-else class="detail-empty">
       <el-empty description="新闻不存在或已被删除" />
@@ -76,6 +85,8 @@ import request from '@/utils/request'
 import axios from 'axios'
 import { getApiBaseUrl } from '@/utils/request'
 import HomeHeader from '@/components/HomeHeader.vue'
+/** 与编辑页一致，保证序列化 HTML（段落对齐、表格等）在阅读页生效 */
+import '@wangeditor/editor/dist/css/style.css'
 
 const route = useRoute()
 const router = useRouter()
@@ -240,6 +251,23 @@ onMounted(() => {
   font-size: 16px;
   line-height: 1.8;
   color: #303133;
+}
+
+/* 阅读页：编辑器外壳在 Wang CSS 里默认 height:100%，此处改为随正文增高 */
+.news-rich-html.w-e-text-container {
+  height: auto !important;
+}
+
+.news-rich-html :deep(.w-e-scroll) {
+  height: auto !important;
+  overflow: visible !important;
+}
+
+.news-rich-html :deep([data-slate-editor]) {
+  min-height: 0 !important;
+  border-top: none !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
 }
 
 .detail-content :deep(img) {

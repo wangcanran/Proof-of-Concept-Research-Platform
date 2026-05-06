@@ -14,7 +14,7 @@ const DB_CONFIG = {
   host: process.env.DB_HOST || 'localhost',
   port: Number(process.env.DB_PORT || 3306),
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'Gainian@2026',
+  password: process.env.DB_PASSWORD || '051005',
   database: process.env.DB_NAME || 'research_system',
   waitForConnections: true,
   connectionLimit: 10,
