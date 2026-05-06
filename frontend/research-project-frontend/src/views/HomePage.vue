@@ -42,6 +42,8 @@
                   :src="image.src"
                   :alt="image.alt"
                   class="carousel-image"
+                  :fetchpriority="index === 0 ? 'high' : undefined"
+                  decoding="async"
                   @error="handleImageError"
                 />
                 <div class="carousel-caption">
@@ -1053,11 +1055,11 @@ button {
   flex-grow: 0;
 }
 
-/* 轮播图片 */
+/* 轮播图片：contain 避免 cover 对小图过度放大导致满屏马赛克；依赖 hero-visual 深色底衬 letterbox */
 .carousel-image {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
   display: block;
   box-sizing: border-box;

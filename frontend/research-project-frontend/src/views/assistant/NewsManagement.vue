@@ -133,6 +133,14 @@
             />
           </el-form-item>
           <template v-if="carouselSwitchEnabled">
+            <el-alert
+              type="info"
+              :closable="false"
+              show-icon
+              class="carousel-quality-tip"
+              title="首页轮播区域较大（约半屏宽 × 一半视窗高），小图会被拉大显示，容易发糊。"
+              description="请选用正文里上传的清晰横图，建议宽度不低于 1920px；若只在正文里拖得很小的配图，像素往往不够，请单独上传一张高清横幅后再选。"
+            />
             <el-form-item label="图片选择">
               <div class="carousel-image-select">
                 <div
@@ -498,6 +506,10 @@ onMounted(() => {
 .carousel-dialog-body {
   max-height: 460px;
   overflow-y: auto;
+}
+
+.carousel-quality-tip {
+  margin-bottom: 12px;
 }
 
 .carousel-image-select {
