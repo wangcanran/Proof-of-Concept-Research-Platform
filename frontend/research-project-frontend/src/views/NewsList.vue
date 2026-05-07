@@ -123,6 +123,15 @@ onMounted(() => {
 }
 
 .news-list-landing {
+  /* 与 HomePage .home-landing 同一套字号变量，顶栏与主区域与首页切换时对齐一致 */
+  --el-font-size-extra-large: 24px;
+  --el-font-size-large: 22px;
+  --el-font-size-medium: 20px;
+  --el-font-size-base: 18px;
+  --el-font-size-small: 15px;
+  --el-font-size-extra-small: 14px;
+  --el-font-line-height-primary: 29px;
+
   position: relative;
   z-index: 1;
   max-width: 1320px;
@@ -169,6 +178,7 @@ onMounted(() => {
 
 .list-card-title {
   margin: 0;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
   font-size: 20px;
   font-weight: 700;
   color: #1f1f1f;
@@ -218,6 +228,7 @@ onMounted(() => {
 
 .news-row-title {
   margin: 0 0 6px;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
   font-size: 16px;
   font-weight: 600;
   color: #1a1a2e;

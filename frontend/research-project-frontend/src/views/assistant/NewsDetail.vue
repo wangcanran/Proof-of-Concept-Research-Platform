@@ -156,6 +156,15 @@ onMounted(() => {
 }
 
 .news-detail-landing {
+  /* 与 HomePage .home-landing 同一套字号变量 */
+  --el-font-size-extra-large: 24px;
+  --el-font-size-large: 22px;
+  --el-font-size-medium: 20px;
+  --el-font-size-base: 18px;
+  --el-font-size-small: 15px;
+  --el-font-size-extra-small: 14px;
+  --el-font-line-height-primary: 29px;
+
   position: relative;
   z-index: 1;
   max-width: 1320px;
@@ -216,6 +225,7 @@ onMounted(() => {
 
 /* ========== 公共样式 ========== */
 .detail-title {
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
   font-size: 26px;
   font-weight: 700;
   color: #1a1a2e;
@@ -270,12 +280,13 @@ onMounted(() => {
   padding-right: 0 !important;
 }
 
+/* block 级图片需 margin-inline:auto，否则仅靠编辑器 text-align:center 往往无法真正水平居中 */
 .detail-content :deep(img) {
   max-width: 100%;
   height: auto;
   border-radius: 4px;
   display: block;
-  margin: 12px 0;
+  margin: 12px auto;
 }
 
 .detail-content :deep(video) {
@@ -283,7 +294,7 @@ onMounted(() => {
   height: auto;
   border-radius: 4px;
   display: block;
-  margin: 12px 0;
+  margin: 12px auto;
 }
 
 .detail-content :deep(audio) {

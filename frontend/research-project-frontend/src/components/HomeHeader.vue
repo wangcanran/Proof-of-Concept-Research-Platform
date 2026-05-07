@@ -110,8 +110,7 @@ onMounted(() => {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 12px 40px rgba(0, 0, 0, 0.04);
   border: 1px solid rgba(0, 0, 0, 0.06);
   border-left: 4px solid #b31b1b;
-  max-width: 1320px;
-  margin: 0 auto;
+  /* 与 HomePage 一致：顶栏仅占满外层 .home-landing / .news-*-landing，不再单独 max-width，避免与下方白卡片宽度感知不一致 */
   width: 100%;
   box-sizing: border-box;
 }
@@ -149,6 +148,8 @@ onMounted(() => {
 }
 
 .brand-title {
+  /* 与首页 HomePage 顶栏 h1 一致：华文中宋 */
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
   font-size: clamp(21px, 2.5vw, 28px);
   font-weight: 700;
   color: #1a1a1a;
@@ -159,7 +160,7 @@ onMounted(() => {
 
 .brand-sub {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--el-font-size-small, 15px);
   color: #b31b1b;
   font-weight: 600;
   line-height: 1.3;
@@ -183,7 +184,7 @@ onMounted(() => {
 }
 
 .welcome-pill {
-  font-size: 15px;
+  font-size: var(--el-font-size-small, 15px);
   color: #5c3d3d;
   padding: 6px 12px;
   background: #fff5f4;
@@ -197,9 +198,9 @@ onMounted(() => {
 
 .btn-primary,
 .btn-ghost {
-  font-family: inherit;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
   padding: 10px 20px;
-  font-size: 16px;
+  font-size: var(--el-font-size-base, 16px);
   font-weight: 600;
   border-radius: 999px;
   cursor: pointer;

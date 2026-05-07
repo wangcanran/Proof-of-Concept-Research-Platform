@@ -39,6 +39,11 @@
   box-sizing: border-box;
 }
 
+html {
+  /* 路由切换时避免滚动条出现/消失导致主区域横向跳动 */
+  scrollbar-gutter: stable;
+}
+
 html,
 body {
   height: 100%;
