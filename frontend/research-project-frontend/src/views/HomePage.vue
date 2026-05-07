@@ -37,7 +37,15 @@
         <section class="hero-visual" aria-label="平台展示">
           <div class="carousel-container">
             <div class="carousel-wrapper" :style="carouselStyle">
-              <div v-for="(image, index) in carouselImages" :key="index" class="carousel-slide">
+              <div
+                v-for="(image, index) in carouselImages"
+                :key="index"
+                class="carousel-slide"
+                role="link"
+                tabindex="0"
+                @click="onCarouselSlideClick(image)"
+                @keydown.enter.prevent="onCarouselSlideClick(image)"
+              >
                 <img
                   :src="image.src"
                   :alt="image.alt"
@@ -459,6 +467,7 @@ const loadCarousel = async () => {
           title: item.title || '',
           description: item.summary || '',
         },
+        newsId: item.news_id != null && item.news_id !== '' ? String(item.news_id) : undefined,
       }))
     }
   } catch {
@@ -508,6 +517,20 @@ const goNewsList = () => {
 
 const goNewsDetail = (id: string) => {
   router.push(`/news/${id}`)
+}
+
+/** 点击轮播：有关联新闻则进详情，否则进新闻列表（静态占位图无 newsId） */
+function onCarouselSlideClick(image: {
+  src: string
+  alt: string
+  caption: { title: string; description: string }
+  newsId?: string
+}) {
+  if (image.newsId) {
+    router.push(`/news/${image.newsId}`)
+  } else {
+    router.push('/news-list')
+  }
 }
 
 const handleImageError = (e: Event) => {
@@ -1061,6 +1084,7 @@ button {
   position: relative;
   flex-shrink: 0;
   flex-grow: 0;
+  cursor: pointer;
 }
 
 /* 轮播图片：contain 避免 cover 对小图过度放大导致满屏马赛克；依赖 hero-visual 深色底衬 letterbox */
