@@ -181,6 +181,7 @@ onMounted(() => {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
 }
 
 .welcome-pill {
@@ -198,7 +199,7 @@ onMounted(() => {
 
 .btn-primary,
 .btn-ghost {
-  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
+  font-family: inherit;
   padding: 10px 20px;
   font-size: var(--el-font-size-base, 16px);
   font-weight: 600;

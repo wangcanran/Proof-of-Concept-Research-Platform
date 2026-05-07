@@ -167,15 +167,6 @@
                 <span class="stat-pill-label">登记成果</span>
               </div>
             </div>
-            <div class="stat-pill stat-pill-wide">
-              <span class="stat-pill-icon" aria-hidden="true">
-                <el-icon :size="20"><Money /></el-icon>
-              </span>
-              <div class="stat-pill-body">
-                <span class="stat-pill-num">{{ stats.totalBudget }}</span>
-                <span class="stat-pill-label">累计批准经费（万元）</span>
-              </div>
-            </div>
           </div>
         </div>
       </section>
@@ -266,7 +257,6 @@ import {
   TrendCharts,
   UserFilled,
   Trophy,
-  Money,
   Bell,
   FolderOpened,
   OfficeBuilding,
@@ -286,7 +276,6 @@ const stats = ref({
   incubatingProjects: 0,
   reviewerCount: 0,
   achievementCount: 0,
-  totalBudget: '0',
 })
 
 // 公告数据（首页仅展示部分）
@@ -371,8 +360,6 @@ const loadStats = async () => {
       stats.value.incubatingProjects = Number(d.incubatingProjects) || 0
       stats.value.reviewerCount = Number(d.reviewerCount) || 0
       stats.value.achievementCount = Number(d.achievementCount) || 0
-      stats.value.totalBudget =
-        d.totalBudget != null && d.totalBudget !== '' ? String(d.totalBudget) : '0'
     }
   } catch (e) {
     // 静默失败，保持默认值
@@ -682,6 +669,7 @@ button {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+  font-family: 'STZhongsong', '华文中宋', 'SimSun', serif;
 }
 
 .welcome-pill {
@@ -781,19 +769,43 @@ button {
   gap: 10px;
 }
 
-.stats-grid-band .stat-pill-wide {
-  grid-column: 1 / -1;
-}
-
 @media (max-width: 900px) {
   .stats-grid-band {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .stats-grid-band .stat-pill {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .stats-grid-band .stat-pill-icon {
+    width: 32px;
+    height: 32px;
   }
 }
 
-@media (max-width: 560px) {
+/* 窄屏仍保持一行：横向滑动查看六项 */
+@media (max-width: 640px) {
   .stats-grid-band {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 6px;
+    margin-inline: -4px;
+    padding-inline: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .stats-grid-band .stat-pill {
+    flex: 0 0 auto;
+    width: min(132px, 40vw);
+    min-width: 108px;
+    box-sizing: border-box;
   }
 }
 
@@ -878,10 +890,6 @@ button {
   background: #fff;
   border-color: rgba(179, 27, 27, 0.2);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-.stat-pill-wide {
-  grid-column: 1 / -1;
 }
 
 .stat-pill-icon {
@@ -1446,10 +1454,6 @@ button {
     min-height: 200px;
     max-height: 38vh;
     border-radius: 0;
-  }
-
-  .stats-grid-band {
-    grid-template-columns: 1fr;
   }
 
   .notice-compact-item {
