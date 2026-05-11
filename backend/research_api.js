@@ -566,6 +566,14 @@ function normalizeRegisterRole(r) {
   return 'applicant';
 }
 
+/** 创建项目时录入的团队成员占位账号：无用户名、无密码，可通过同邮箱注册写入凭证并激活（user id 不变，ProjectMember 关联保留） */
+function isClaimablePlaceholderUser(u) {
+  if (!u) return false;
+  const noPwd = u.password == null || String(u.password).trim() === '';
+  const noUsername = u.username == null || String(u.username).trim() === '';
+  return noPwd && noUsername;
+}
+
 // 计算工作量评分（如果还没有这个函数）
 function calculateWorkloadScore(recentReviews) {
   if (recentReviews === 0) return 100; // 无近期评审，工作量最小
@@ -595,6 +603,40 @@ function checkPermission(userRole, requiredRoles) {
 /** 用户管理类接口：系统管理员 / 项目经理（与侧边栏「用户管理」入口一致） */
 function canManageUsers(role) {
   return checkPermission(role, ['admin', 'project_manager']);
+}
+
+/** 主申请人或项目团队成员（孵化服务申请、成果反馈等申请人侧操作） */
+async function userIsApplicantOrTeamMember(pool, projectId, userId) {
+  const [a] = await pool.query(
+    'SELECT 1 FROM `Project` WHERE id = ? AND applicant_id = ? LIMIT 1',
+    [projectId, userId]
+  );
+  if (a.length) return true;
+  const [m] = await pool.query(
+    'SELECT 1 FROM `ProjectMember` WHERE project_id = ? AND user_id = ? LIMIT 1',
+    [projectId, userId]
+  );
+  return m.length > 0;
+}
+
+/**
+ * 查看孵化服务申请详情/附件：主申请人、团队成员、登记提交人、项目经理、管理员
+ */
+async function userMayViewIncubationProgress(pool, progress, user) {
+  const uid = user.userId || user.id;
+  if (checkPermission(user.role, ['admin'])) return true;
+  const [p] = await pool.query(
+    'SELECT applicant_id, manager_id FROM `Project` WHERE id = ?',
+    [progress.project_id]
+  );
+  if (!p.length) return false;
+  if (p[0].manager_id === uid || p[0].applicant_id === uid) return true;
+  if (progress.applicant_id === uid) return true;
+  const [m] = await pool.query(
+    'SELECT 1 FROM `ProjectMember` WHERE project_id = ? AND user_id = ? LIMIT 1',
+    [progress.project_id, uid]
+  );
+  return m.length > 0;
 }
 
 // 统一响应函数
@@ -1337,7 +1379,9 @@ const server = http.createServer(async (req, res) => {
         // 密码验证通过后再校验身份，避免未认证即泄露账号角色
         let passwordValid = false;
 
-        if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$')) {
+        if (!user.password) {
+          passwordValid = false;
+        } else if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$')) {
           try {
             const bcrypt = require('bcryptjs');
             passwordValid = await bcrypt.compare(body.password, user.password);
@@ -1474,13 +1518,155 @@ const server = http.createServer(async (req, res) => {
       }
 
       try {
-        // 检查用户名是否已存在
-        const [existingUser] = await pool.query(
-          'SELECT id FROM `User` WHERE username = ? OR email = ?',
-          [body.username, body.email]
+        const emailTrim = body.email.trim();
+
+        /** 同邮箱占位账号：激活而不新建用户，ProjectMember.user_id 无需变更 */
+        const [byEmailRows] = await pool.query(
+          'SELECT * FROM `User` WHERE email = ? LIMIT 1',
+          [emailTrim]
         );
 
-        if (existingUser.length > 0) {
+        if (byEmailRows.length > 0) {
+          const existing = byEmailRows[0];
+          if (!isClaimablePlaceholderUser(existing)) {
+            sendResponse(res, 409, {
+              success: false,
+              error: '用户名或邮箱已存在'
+            });
+            return;
+          }
+
+          const bcrypt = require('bcryptjs');
+          const hashedPassword = await bcrypt.hash(body.password, 10);
+
+          const [unameTaken] = await pool.query(
+            'SELECT id FROM `User` WHERE username = ? AND id <> ?',
+            [body.username, existing.id]
+          );
+          if (unameTaken.length > 0) {
+            sendResponse(res, 409, { success: false, error: '用户名已被使用' });
+            return;
+          }
+
+          const requestedRole = normalizeRegisterRole(body.role);
+
+          if (requestedRole === 'admin') {
+            sendResponse(res, 403, {
+              success: false,
+              error: '系统管理员无法通过自助注册开通，请由超级管理员在后台创建账号'
+            });
+            return;
+          }
+
+          let targetRole = requestedRole;
+          let invitationInfo = null;
+
+          if (requestedRole === 'reviewer' || requestedRole === 'project_manager') {
+            const code = body.invitationCode ? String(body.invitationCode).trim() : '';
+            if (!code) {
+              sendResponse(res, 400, {
+                success: false,
+                error: '注册评审专家或项目经理必须填写有效邀请码'
+              });
+              return;
+            }
+            const [invitations] = await pool.query(
+              `SELECT * FROM \`Invitation\` 
+         WHERE invitation_code = ? 
+         AND status = 'pending' 
+         AND expires_at > NOW()`,
+              [code]
+            );
+            if (invitations.length === 0) {
+              sendResponse(res, 400, {
+                success: false,
+                error: '邀请码无效或已过期'
+              });
+              return;
+            }
+            invitationInfo = invitations[0];
+            if (invitationInfo.target_role === 'admin') {
+              sendResponse(res, 403, {
+                success: false,
+                error: '系统管理员无法通过自助注册开通'
+              });
+              return;
+            }
+            if (invitationInfo.target_role !== requestedRole) {
+              sendResponse(res, 400, {
+                success: false,
+                error: '邀请码与所选注册身份不一致'
+              });
+              return;
+            }
+            targetRole = invitationInfo.target_role;
+          }
+
+          const initialStatus = process.env.REGISTER_DEFAULT_ACTIVE === 'false' ? 'inactive' : 'active';
+
+          await pool.query(
+            `UPDATE \`User\` SET username = ?, password = ?, name = ?, email = ?, role = ?, department = ?, title = ?, phone = ?, status = ?, updated_at = NOW() WHERE id = ?`,
+            [
+              body.username,
+              hashedPassword,
+              body.name,
+              emailTrim,
+              targetRole,
+              body.department || null,
+              body.title || null,
+              body.phone || null,
+              initialStatus,
+              existing.id
+            ]
+          );
+
+          if (targetRole === 'reviewer') {
+            const [epRows] = await pool.query('SELECT id FROM ExpertProfile WHERE id = ?', [existing.id]);
+            if (epRows.length === 0) {
+              await pool.query(
+                `INSERT INTO ExpertProfile (id, expertise_description, created_at) 
+         VALUES (?, ?, NOW())`,
+                [existing.id, body.expertiseDescription || null]
+              );
+            }
+          }
+
+          if (invitationInfo) {
+            await pool.query(
+              `UPDATE \`Invitation\` 
+         SET status = 'accepted', 
+             registered_user_id = ?, 
+             accepted_at = NOW() 
+         WHERE id = ?`,
+              [existing.id, invitationInfo.id]
+            );
+          }
+
+          console.log('✅ 占位账号激活成功（保留项目成员关联）:', {
+            username: body.username,
+            email: emailTrim,
+            role: targetRole,
+            userId: existing.id
+          });
+
+          sendResponse(res, 200, {
+            success: true,
+            message:
+              initialStatus === 'active'
+                ? '账号已激活，可直接登录（项目成员关联已保留）'
+                : '提交成功，请等待管理员审核（项目成员关联已保留）',
+            userId: existing.id,
+            claimedPlaceholder: true
+          });
+          return;
+        }
+
+        const [existingUsername] = await pool.query(
+          'SELECT id FROM `User` WHERE username = ?',
+          [body.username]
+        );
+
+        if (existingUsername.length > 0) {
           sendResponse(res, 409, {
             success: false,
             error: '用户名或邮箱已存在'
@@ -12470,6 +12656,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       try {
+        const uid = user.userId || user.id;
         let query = `
       SELECT 
         p.id,
@@ -12496,9 +12683,17 @@ const server = http.createServer(async (req, res) => {
         u.name as applicant_name
       FROM \`Project\` p
       LEFT JOIN \`User\` u ON p.applicant_id = u.id
-      WHERE p.applicant_id = ?
     `;
-        const params = [user.userId || user.id];
+        const params = [];
+
+        if (checkPermission(user.role, ['admin', 'project_manager'])) {
+          query += ' WHERE 1=1';
+        } else {
+          query += ` WHERE (p.applicant_id = ? OR p.id IN (
+            SELECT pm.project_id FROM \`ProjectMember\` pm WHERE pm.user_id = ?
+          ))`;
+          params.push(uid, uid);
+        }
 
         if (status && status !== 'all') {
           query += ' AND p.status = ?';
@@ -12749,6 +12944,8 @@ const server = http.createServer(async (req, res) => {
         });
 
         const effStatus = nextNormStatus !== undefined ? nextNormStatus : project.status;
+        /** 仅正式申报（submitted）时为未注册邮箱创建 inactive 占位账号；草稿保存只写 ProjectMember，user_id 可空 */
+        const materializePlaceholderUsers = effStatus === 'submitted';
 
         // 如果有提交操作，添加提交日期
         if (nextNormStatus !== undefined && effStatus === 'submitted' && project.status === 'draft') {
@@ -12836,8 +13033,8 @@ const server = http.createServer(async (req, res) => {
                   );
                   console.log('🔄 更新现有用户信息:', member.email);
                 }
-              } else {
-                // 创建新用户（inactive状态）
+              } else if (materializePlaceholderUsers) {
+                // 正式提交：创建新用户（inactive），便于后续同邮箱注册激活
                 memberUserId = randomUUID();
                 await pool.query(
                   `INSERT INTO \`User\` (
@@ -12853,6 +13050,8 @@ const server = http.createServer(async (req, res) => {
                   ]
                 );
                 console.log('✅ 创建新用户:', member.email);
+              } else {
+                memberUserId = null;
               }
             }
 
@@ -14049,10 +14248,20 @@ const server = http.createServer(async (req, res) => {
 
         const userId = user.userId || user.id;
         const isApplicant = projects[0]?.applicant_id === userId;
-        const isAdmin = user.role === 'admin';
-        const isProjectManager = user.role === 'project_manager';
+        const isAdmin = checkPermission(user.role, 'admin');
+        const isProjectManager = checkPermission(user.role, 'project_manager');
 
-        if (!isApplicant && !isProjectManager && !isAdmin) {
+        let canDownload =
+          isApplicant || isProjectManager || isAdmin;
+        if (!canDownload) {
+          const [pmAllow] = await pool.query(
+            'SELECT 1 FROM `ProjectMember` WHERE project_id = ? AND user_id = ? LIMIT 1',
+            [attachment.project_id, userId]
+          );
+          canDownload = pmAllow.length > 0;
+        }
+
+        if (!canDownload) {
           sendResponse(res, 403, {
             success: false,
             error: '没有权限下载此附件'
@@ -14410,14 +14619,24 @@ const server = http.createServer(async (req, res) => {
 
         const project = projects[0];
 
-        // 检查权限：申请人本人、项目经理、管理员、评审专家可以查看
+        // 检查权限：申请人本人、项目经理、管理员、评审专家、项目团队成员可查看
         const userId = user.userId || user.id;
         const isApplicant = project.applicant_id === userId;
         const isAdmin = checkPermission(user.role, 'admin');
         const isProjectManager = checkPermission(user.role, 'project_manager');
         const isReviewer = checkPermission(user.role, 'reviewer');
 
-        if (!isApplicant && !isProjectManager && !isAdmin && !isReviewer) {
+        let canViewProject =
+          isApplicant || isProjectManager || isAdmin || isReviewer;
+        if (!canViewProject) {
+          const [pmAllow] = await pool.query(
+            'SELECT 1 FROM `ProjectMember` WHERE project_id = ? AND user_id = ? LIMIT 1',
+            [projectId, userId]
+          );
+          canViewProject = pmAllow.length > 0;
+        }
+
+        if (!canViewProject) {
           sendResponse(res, 403, {
             success: false,
             error: '没有权限查看此项目'
@@ -14637,13 +14856,24 @@ const server = http.createServer(async (req, res) => {
 
         const project = projects[0];
 
-        // 检查权限
+        // 检查权限（与上方项目详情分支一致：含团队成员）
         const userId = user.userId || user.id;
         const isApplicant = project.applicant_id === userId;
-        const isAdmin = user.role === 'admin';
-        const isProjectManager = user.role === 'project_manager';
+        const isAdmin = checkPermission(user.role, 'admin');
+        const isProjectManager = checkPermission(user.role, 'project_manager');
+        const isReviewer = checkPermission(user.role, 'reviewer');
 
-        if (!isApplicant && !isProjectManager && !isAdmin) {
+        let canViewProject =
+          isApplicant || isProjectManager || isAdmin || isReviewer;
+        if (!canViewProject) {
+          const [pmAllow] = await pool.query(
+            'SELECT 1 FROM `ProjectMember` WHERE project_id = ? AND user_id = ? LIMIT 1',
+            [projectId, userId]
+          );
+          canViewProject = pmAllow.length > 0;
+        }
+
+        if (!canViewProject) {
           sendResponse(res, 403, {
             success: false,
             error: '没有权限查看此项目'
@@ -15023,22 +15253,8 @@ const server = http.createServer(async (req, res) => {
                   console.log('🔄 更新现有用户信息:', member.email);
                 }
               } else {
-                // 创建新用户（inactive状态）
-                memberUserId = randomUUID();
-                await pool.query(
-                  `INSERT INTO \`User\` (
-                id, name, email, department, title, phone, role, status, created_at, updated_at
-              ) VALUES (?, ?, ?, ?, ?, ?, 'applicant', 'inactive', NOW(), NOW())`,
-                  [
-                    memberUserId,
-                    member.name || '',
-                    member.email.trim(),
-                    member.organization || null,
-                    member.title || null,
-                    member.phone || null
-                  ]
-                );
-                console.log('✅ 创建新用户:', member.email);
+                // 新建项目均为草稿：不为未注册邮箱创建占位 User，仅写入 ProjectMember（user_id 可空）
+                memberUserId = null;
               }
             }
 
@@ -22981,9 +23197,13 @@ const server = http.createServer(async (req, res) => {
                  (SELECT COUNT(*) FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id) as service_count,
                  (SELECT ip.status FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id ORDER BY ip.created_at DESC LIMIT 1) as latest_service_status
           FROM \`Project\` p
-          WHERE p.applicant_id = ? AND p.status = 'approved'
+          WHERE p.status = 'approved'
+            AND (
+              p.applicant_id = ?
+              OR p.id IN (SELECT pm.project_id FROM \`ProjectMember\` pm WHERE pm.user_id = ?)
+            )
           ORDER BY p.updated_at DESC
-        `, [user.id]);
+        `, [user.id, user.id]);
 
         // 对每个项目添加是否可终止的标识
         const projectsWithFlag = projects.map(p => ({
@@ -23017,9 +23237,12 @@ const server = http.createServer(async (req, res) => {
           FROM \`IncubationProgress\` ip
           JOIN \`Project\` p ON ip.project_id = p.id
           LEFT JOIN \`User\` u ON ip.feedback_by = u.id
-          WHERE ip.applicant_id = ?
+          WHERE (
+            ip.applicant_id = ?
+            OR ip.project_id IN (SELECT pm.project_id FROM \`ProjectMember\` pm WHERE pm.user_id = ?)
+          )
         `;
-        const params = [user.id];
+        const params = [user.id, user.id];
 
         if (status) {
           sql += ' AND ip.status = ?';
@@ -23057,17 +23280,40 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         const body = await parseRequestBody(req);
-        const { project_id, service_requirement } = body;
+        const { project_id, service_requirement, service_categories } = body;
 
         if (!project_id || !service_requirement) {
           sendResponse(res, 400, { success: false, error: '项目ID和服务需求描述为必填项' });
           return;
         }
 
-        // 检查项目是否存在且状态为approved
+        const ALLOWED_SERVICE_CATEGORIES = new Set(['tech', 'business', 'ip', 'resource', 'incubation']);
+        const rawCats =
+          Array.isArray(service_categories)
+            ? service_categories
+            : typeof service_categories === 'string'
+              ? service_categories.split(/[,，]/)
+              : [];
+        const picked = [
+          ...new Set(
+            rawCats.map((s) => String(s).trim()).filter(Boolean).filter((k) => ALLOWED_SERVICE_CATEGORIES.has(k)),
+          ),
+        ].sort();
+        if (picked.length === 0) {
+          sendResponse(res, 400, { success: false, error: '请至少选择一项服务类别' });
+          return;
+        }
+        const serviceCategoriesStr = picked.join(',');
+
+        // 主申请人或团队成员可为该项目发起服务申请
         const [projects] = await pool.query(
-          'SELECT * FROM \`Project\` WHERE id = ? AND applicant_id = ?',
-          [project_id, user.id]
+          `SELECT p.* FROM \`Project\` p
+           WHERE p.id = ?
+             AND (
+               p.applicant_id = ?
+               OR EXISTS (SELECT 1 FROM \`ProjectMember\` pm WHERE pm.project_id = p.id AND pm.user_id = ?)
+             )`,
+          [project_id, user.id, user.id]
         );
 
         if (projects.length === 0) {
@@ -23087,9 +23333,9 @@ const server = http.createServer(async (req, res) => {
         // 创建服务申请记录
         await pool.query(
           `INSERT INTO \`IncubationProgress\` 
-           (id, project_id, applicant_id, application_date, service_requirement, status)
-           VALUES (?, ?, ?, NOW(), ?, 'pending')`,
-          [progressId, project_id, user.id, service_requirement]
+           (id, project_id, applicant_id, application_date, service_requirement, service_categories, status)
+           VALUES (?, ?, ?, NOW(), ?, ?, 'pending')`,
+          [progressId, project_id, user.id, service_requirement, serviceCategoriesStr]
         );
 
         // 更新项目状态为incubating
@@ -23300,13 +23546,17 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // 获取服务申请记录
+        // 主申请人或团队成员可提交成果反馈（IncubationProgress.applicant_id 为首次发起申请人，不必等于当前用户）
         const [progressRows] = await pool.query(
           `SELECT ip.*, p.title as project_title, p.manager_id
            FROM \`IncubationProgress\` ip
            JOIN \`Project\` p ON ip.project_id = p.id
-           WHERE ip.id = ? AND ip.applicant_id = ?`,
-          [progressId, user.id]
+           WHERE ip.id = ?
+             AND (
+               p.applicant_id = ?
+               OR EXISTS (SELECT 1 FROM \`ProjectMember\` pm WHERE pm.project_id = p.id AND pm.user_id = ?)
+             )`,
+          [progressId, user.id, user.id]
         );
 
         if (progressRows.length === 0) {
@@ -23487,6 +23737,36 @@ const server = http.createServer(async (req, res) => {
 
           console.log('孵化服务附件上传:', { progressId, attachmentType, fileName, fileSize });
 
+          const uid = user.userId || user.id;
+          const [ipRows] = await pool.query(
+            'SELECT * FROM `IncubationProgress` WHERE id = ?',
+            [progressId]
+          );
+          if (ipRows.length === 0) {
+            sendResponse(res, 404, { success: false, error: '服务申请不存在' });
+            return;
+          }
+          const prog = ipRows[0];
+          const attachType = String(attachmentType);
+          let uploadAllowed = false;
+          if (attachType === 'feedback') {
+            const [prj] = await pool.query(
+              'SELECT manager_id FROM `Project` WHERE id = ?',
+              [prog.project_id]
+            );
+            uploadAllowed =
+              Boolean(prj.length && prj[0].manager_id === uid) ||
+              checkPermission(user.role, ['admin']);
+          } else {
+            uploadAllowed =
+              prog.applicant_id === uid ||
+              (await userIsApplicantOrTeamMember(pool, prog.project_id, uid));
+          }
+          if (!uploadAllowed) {
+            sendResponse(res, 403, { success: false, error: '没有权限上传此附件' });
+            return;
+          }
+
           await pool.query(
             `INSERT INTO \`IncubationProgressFile\` 
              (id, progress_id, attachment_type, file_name, file_path, file_size, mime_type, uploaded_by, created_at)
@@ -23536,6 +23816,19 @@ const server = http.createServer(async (req, res) => {
         }
 
         const fileInfo = files[0];
+
+        const [ipRows] = await pool.query(
+          'SELECT * FROM `IncubationProgress` WHERE id = ?',
+          [fileInfo.progress_id]
+        );
+        if (ipRows.length === 0) {
+          sendResponse(res, 404, { success: false, error: '关联的服务申请不存在' });
+          return;
+        }
+        if (!(await userMayViewIncubationProgress(pool, ipRows[0], user))) {
+          sendResponse(res, 403, { success: false, error: '没有权限下载此文件' });
+          return;
+        }
 
         // 检查文件是否存在
         if (!fs.existsSync(fileInfo.file_path)) {
@@ -23593,6 +23886,11 @@ const server = http.createServer(async (req, res) => {
         }
 
         const progress = progressRows[0];
+
+        if (!(await userMayViewIncubationProgress(pool, progress, user))) {
+          sendResponse(res, 403, { success: false, error: '没有权限查看此服务申请' });
+          return;
+        }
 
         // 获取附件
         const [files] = await pool.query(

@@ -75,6 +75,20 @@
 
         <form @submit.prevent="submitRequest" class="request-form">
           <div class="form-group">
+            <label class="form-label required">服务类别</label>
+            <p class="form-hint-lead form-hint-above-cats">可申请但不限于以下服务（可多选）：</p>
+            <div class="service-category-list">
+              <label v-for="opt in SERVICE_CATEGORY_OPTIONS" :key="opt.key" class="service-category-item">
+                <input type="checkbox" :value="opt.key" v-model="selectedCategories" />
+                <span class="service-category-text">
+                  <span class="service-category-title">{{ opt.title }}</span>
+                  <span class="service-category-examples">：{{ opt.examples }}</span>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
             <label class="form-label required">服务需求描述</label>
             <textarea 
               v-model="serviceRequirement" 
@@ -85,14 +99,6 @@
             ></textarea>
             <div class="form-hint form-hint--services">
               <p class="form-hint-lead">请说明您的具体需求，我们为您精准匹配平台资源。</p>
-              <p class="form-hint-sub">可申请但不限于以下服务：</p>
-              <ul class="form-hint-list">
-                <li>・技术支持：中试放大、工艺优化、技术攻关、场景验证</li>
-                <li>・商业赋能：市场调研、商业模式设计、商业计划书、路演辅导</li>
-                <li>・知识产权：专利布局、风险排查、技术交易、合同审查</li>
-                <li>・资源对接：投融资、政府项目申报、产业链对接、中试基地</li>
-                <li>・创业孵化：公司注册、园区入驻、创业导师、财务法务咨询</li>
-              </ul>
             </div>
           </div>
 
@@ -213,6 +219,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
+import { SERVICE_CATEGORY_OPTIONS, type ServiceCategoryKey } from '@/constants/incubationCategories'
 
 const router = useRouter()
 
@@ -238,6 +245,7 @@ const submitting = ref(false)
 const eligibleProjects = ref<any[]>([])
 const myRequests = ref<any[]>([])
 const selectedProject = ref<any>(null)
+const selectedCategories = ref<ServiceCategoryKey[]>([])
 const serviceRequirement = ref('')
 const uploadedFiles = ref<File[]>([])
 const fileInput = ref<HTMLInputElement>()
@@ -289,6 +297,7 @@ const loadMyRequests = async () => {
 // 选择项目
 const selectProject = (project: any) => {
   selectedProject.value = project
+  selectedCategories.value = []
   serviceRequirement.value = ''
   uploadedFiles.value = []
 }
@@ -316,6 +325,10 @@ const submitRequest = async () => {
     ElMessage.warning('请选择要申请服务的项目')
     return
   }
+  if (selectedCategories.value.length === 0) {
+    ElMessage.warning('请至少选择一项服务类别')
+    return
+  }
   if (!serviceRequirement.value.trim()) {
     ElMessage.warning('请填写服务需求描述')
     return
@@ -326,7 +339,8 @@ const submitRequest = async () => {
     // 先创建服务申请
     const res = await api.post('/incubation/service-request', {
       project_id: selectedProject.value.id,
-      service_requirement: serviceRequirement.value.trim()
+      service_requirement: serviceRequirement.value.trim(),
+      service_categories: selectedCategories.value,
     })
 
     if (res.data.success) {
@@ -348,6 +362,7 @@ const submitRequest = async () => {
 
       ElMessage.success('服务申请提交成功')
       selectedProject.value = null
+      selectedCategories.value = []
       serviceRequirement.value = ''
       uploadedFiles.value = []
       
@@ -365,6 +380,7 @@ const submitRequest = async () => {
 
 const cancelForm = () => {
   selectedProject.value = null
+  selectedCategories.value = []
   serviceRequirement.value = ''
   uploadedFiles.value = []
 }
@@ -611,6 +627,56 @@ onMounted(() => {
 
 .request-form {
   padding: 24px;
+}
+
+.form-hint-above-cats {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #666;
+}
+
+.service-category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 8px;
+}
+
+.service-category-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.service-category-item input {
+  margin-top: 3px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: #b31b1b;
+}
+
+.service-category-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.service-category-title {
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.service-category-examples {
+  color: #666;
+  font-weight: 400;
 }
 
 .form-group {

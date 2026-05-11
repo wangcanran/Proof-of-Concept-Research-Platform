@@ -99,6 +99,10 @@
             <div class="form-value">{{ selectedRequest?.project_title }}</div>
           </div>
           <div class="form-group">
+            <label class="form-label">服务类别</label>
+            <div class="form-value">{{ categoryModalLine || '—' }}</div>
+          </div>
+          <div class="form-group">
             <label class="form-label">服务需求</label>
             <div class="form-value">{{ selectedRequest?.service_requirement }}</div>
           </div>
@@ -159,6 +163,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
+import { formatServiceCategoriesDisplay } from '@/constants/incubationCategories'
 
 const router = useRouter()
 
@@ -202,7 +207,9 @@ const filteredRequests = computed(() => {
   return requests.value.filter(r => r.status === currentTab.value)
 })
 
-// 加载数据
+const categoryModalLine = computed(() =>
+  formatServiceCategoriesDisplay(selectedRequest.value?.service_categories),
+)
 const loadRequests = async () => {
   loading.value = true
   try {

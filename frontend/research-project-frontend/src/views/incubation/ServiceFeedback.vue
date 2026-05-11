@@ -48,6 +48,10 @@
             <span class="info-value">{{ formatDateTime(request.application_date) }}</span>
           </div>
           <div class="info-row full-width">
+            <span class="info-label">服务类别</span>
+            <span class="info-value">{{ categoryLine || '—' }}</span>
+          </div>
+          <div class="info-row full-width">
             <span class="info-label">服务需求描述</span>
             <span class="info-value pre-wrap">{{ request.service_requirement }}</span>
           </div>
@@ -150,6 +154,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
+import { formatServiceCategoriesDisplay } from '@/constants/incubationCategories'
 
 const router = useRouter()
 const route = useRoute()
@@ -181,6 +186,8 @@ const uploadedFiles = ref<File[]>([])
 const applicationFiles = computed(() => {
   return (request.value?.files || []).filter((f: any) => f.attachment_type === 'application')
 })
+
+const categoryLine = computed(() => formatServiceCategoriesDisplay(request.value?.service_categories))
 
 // 加载服务申请详情
 const loadRequest = async () => {

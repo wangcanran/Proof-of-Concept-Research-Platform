@@ -1656,6 +1656,14 @@ const confirmSubmit = async () => {
     const response = await api.put(`/projects/${currentProject.value.id}`, {
       status: 'submitted',
       submit_date: new Date().toISOString().split('T')[0],
+      team_members: teamMembers.value.map((m) => ({
+        name: m.name,
+        email: m.email,
+        organization: m.organization,
+        title: m.title,
+        phone: m.phone,
+        role: m.role,
+      })),
       attachments: attachments.value.map((att) => ({
         file_name: att.originalName || att.file_name,
         file_path: att.file_path,

@@ -50,6 +50,10 @@
                 <span class="detail-label">服务需求：</span>
                 <span class="detail-value">{{ request.service_requirement }}</span>
               </div>
+              <div v-if="formatServiceCategoriesDisplay(request.service_categories)" class="detail-row">
+                <span class="detail-label">服务类别：</span>
+                <span class="detail-value">{{ formatServiceCategoriesDisplay(request.service_categories) }}</span>
+              </div>
               <!-- 申请附件 -->
               <div v-if="getApplicationFiles(request).length > 0" class="detail-row">
                 <span class="detail-label">申请附件：</span>
@@ -215,6 +219,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
+import { formatServiceCategoriesDisplay } from '@/constants/incubationCategories'
 
 const router = useRouter()
 const route = useRoute()

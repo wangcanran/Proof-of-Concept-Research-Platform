@@ -116,6 +116,16 @@
       <!-- 服务申请 -->
       <div v-if="activeTab === 'application'" class="tab-panel">
         <div class="section">
+          <h3 class="section-title">服务类别</h3>
+          <div class="content-box">
+            <template v-if="categoryLabelList.length">
+              <span v-for="label in categoryLabelList" :key="label" class="category-chip">{{ label }}</span>
+            </template>
+            <span v-else class="muted-text">未选择（历史申请可能无此项）</span>
+          </div>
+        </div>
+
+        <div class="section">
           <h3 class="section-title">服务需求描述</h3>
           <div class="content-box pre-wrap">{{ request.service_requirement || '暂无描述' }}</div>
         </div>
@@ -245,6 +255,10 @@
             <div class="form-value">{{ request?.project_title }}</div>
           </div>
           <div class="form-group">
+            <label class="form-label">服务类别</label>
+            <div class="form-value">{{ categoryDisplayLine || '—' }}</div>
+          </div>
+          <div class="form-group">
             <label class="form-label">服务需求</label>
             <div class="form-value">{{ request?.service_requirement }}</div>
           </div>
@@ -305,6 +319,11 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
+import {
+  parseServiceCategories,
+  SERVICE_CATEGORY_LABELS,
+  formatServiceCategoriesDisplay,
+} from '@/constants/incubationCategories'
 
 const router = useRouter()
 const route = useRoute()
@@ -367,6 +386,15 @@ const feedbackFiles = computed(() => {
 const resultFiles = computed(() => {
   return (request.value?.files || []).filter((f: any) => f.attachment_type === 'result')
 })
+
+const categoryLabelList = computed(() => {
+  const keys = parseServiceCategories(request.value?.service_categories)
+  return keys.map((k) => SERVICE_CATEGORY_LABELS[k] || k)
+})
+
+const categoryDisplayLine = computed(() =>
+  formatServiceCategoriesDisplay(request.value?.service_categories),
+)
 
 // 加载详情
 const loadRequest = async () => {
@@ -824,6 +852,22 @@ onMounted(() => {
 
 .content-box.pre-wrap {
   white-space: pre-wrap;
+}
+
+.category-chip {
+  display: inline-block;
+  margin: 0 8px 8px 0;
+  padding: 4px 10px;
+  background: rgba(179, 27, 27, 0.08);
+  border: 1px solid rgba(179, 27, 27, 0.2);
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+}
+
+.muted-text {
+  color: #999;
+  font-size: 14px;
 }
 
 .empty-section {

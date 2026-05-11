@@ -888,11 +888,8 @@ const loadDashboardData = async () => {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     }
 
-    // 获取用户的项目列表
-    const projectsRes = await axios.get(
-      `${getApiBaseUrl()}/projects?applicant_id=${userId.value}`,
-      config,
-    )
+    // 获取当前用户相关项目（本人申报 + 团队成员），由后端按 Token 解析，勿只用 applicant_id
+    const projectsRes = await axios.get(`${getApiBaseUrl()}/projects`, config)
     if (projectsRes.data.success) {
       const projects = projectsRes.data.data || []
       dashboardProjects.value = projects

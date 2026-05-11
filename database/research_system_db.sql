@@ -233,6 +233,7 @@ CREATE TABLE `IncubationProgress` (
     `applicant_id` VARCHAR(36) NOT NULL COMMENT '申请人ID',
     `application_date` DATETIME DEFAULT NULL COMMENT '申请日期',
     `service_requirement` TEXT NOT NULL COMMENT '服务需求描述',
+    `service_categories` SET('tech','business','ip','resource','incubation') DEFAULT NULL COMMENT '服务类别（多选）',
     `feedback_date` DATETIME DEFAULT NULL COMMENT '反馈日期',
     `feedback_by` VARCHAR(36) DEFAULT NULL COMMENT '反馈人（项目经理）ID',
     `feedback_action` ENUM('approved', 'rejected') DEFAULT NULL COMMENT '反馈动作：approved=给予服务，rejected=拒绝服务',
