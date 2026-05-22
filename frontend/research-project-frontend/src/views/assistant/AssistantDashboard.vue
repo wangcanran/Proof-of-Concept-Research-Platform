@@ -521,8 +521,12 @@ const userInitial = computed(() => {
   return userName.value ? userName.value.charAt(0).toUpperCase() : 'A'
 })
 
-/** 科研助理与项目经理为同一岗位，界面统一为「科研助理」 */
-const userRoleName = computed(() => '科研助理')
+/** 侧栏展示名称与登录角色一致（项目经理为主；旧版 assistant 仍显示科研助理） */
+const userRoleName = computed(() => {
+  const r = userInfo.value?.role
+  if (r === 'assistant') return '科研助理'
+  return '项目经理'
+})
 
 const handleLogoError = (e: Event) => {
   const img = e.target as HTMLImageElement
@@ -694,7 +698,7 @@ const loadUserInfo = async () => {
       userInfo.value = {
         id: user.id || '',
         username: user.username || '',
-        name: user.name || user.username || '科研助理',
+        name: user.name || user.username || '项目经理',
         role: user.role || 'project_manager',
         email: user.email || '',
         department: user.department || '',
@@ -704,7 +708,7 @@ const loadUserInfo = async () => {
     }
   } catch (error) {
     console.warn('加载用户信息失败:', error)
-    userName.value = localStorage.getItem('userName') || '科研助理'
+      userName.value = localStorage.getItem('userName') || '项目经理'
   }
 }
 
@@ -712,7 +716,7 @@ const loadUserInfo = async () => {
 const loadDashboardData = async () => {
   loading.value = true
   try {
-    console.log('正在获取科研助理仪表板数据...')
+    console.log('正在获取项目经理工作台数据...')
     await Promise.all([
       loadOverviewData(),
       loadPendingApplications(),
@@ -981,12 +985,12 @@ const showMockData = () => {
 
 // 组件生命周期
 onMounted(() => {
-  console.log('=== 初始化科研助理工作台页面 ===')
+  console.log('=== 初始化项目经理工作台页面 ===')
   loadUserInfo().then(() => {
     const userRole = localStorage.getItem('userRole')
     const r = userRole?.toLowerCase() || ''
     if (r !== 'project_manager') {
-      ElMessage.warning('检测到您不是科研助理，将跳转到对应工作台')
+      ElMessage.warning('检测到您不是项目经理，将跳转到对应工作台')
       setTimeout(() => {
         const rolePaths: Record<string, string> = {
           applicant: '/applicant/dashboard',

@@ -263,6 +263,13 @@ function normalizeProjectStatusForDb(status) {
   return s;
 }
 
+/** 库表 tech_maturity 为 ENUM；空串或非法值必须写 NULL，否则严格模式下报 Data truncated */
+function normalizeTechMaturityForDb(value) {
+  const allowed = new Set(['rd', 'pilot', 'intermediate_trial', 'small_batch_prod']);
+  const s = value == null ? '' : String(value).trim();
+  return allowed.has(s) ? s : null;
+}
+
 // 辅助函数：解析请求体
 function parseRequestBody(req) {
   return new Promise((resolve, reject) => {
@@ -12926,6 +12933,9 @@ const server = http.createServer(async (req, res) => {
               nextNormStatus = normalizeProjectStatusForDb(v);
               v = nextNormStatus;
             }
+            if (field === 'tech_maturity') {
+              v = normalizeTechMaturityForDb(v);
+            }
             // 处理数组类型字段（SET类型），转换为逗号分隔的字符串
             if (field === 'achievement_transform' || field === 'poc_stage_requirement') {
               if (Array.isArray(v)) {
@@ -15176,7 +15186,7 @@ const server = http.createServer(async (req, res) => {
           userId,
           body.title,
           body.project_domain_other_text || null,
-          body.tech_maturity || null,
+          normalizeTechMaturityForDb(body.tech_maturity),
           achievementTransform,  // 使用逗号分隔的字符串
           body.achievement_transform_other_text || null,
           pocStageRequirement,   // 使用逗号分隔的字符串
