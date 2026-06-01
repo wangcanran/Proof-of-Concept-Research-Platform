@@ -145,8 +145,7 @@ const editorConfig: Partial<IEditorConfig> = {
       customUpload: async (file: File, insertFn: (url: string, alt?: string, href?: string) => void) => {
         const result = await uploadFile(file)
         if (result) {
-          const fullUrl = result.url.startsWith('http') ? result.url : apiOrigin + result.url
-          insertFn(fullUrl, result.name, '')
+          insertFn(result.url, result.name, '')
         }
       },
     },
@@ -155,8 +154,7 @@ const editorConfig: Partial<IEditorConfig> = {
       customUpload: async (file: File, insertFn: (url: string, poster?: string) => void) => {
         const result = await uploadFile(file)
         if (result) {
-          const fullUrl = result.url.startsWith('http') ? result.url : apiOrigin + result.url
-          insertFn(fullUrl, '')
+          insertFn(result.url, '')
         }
       },
     },
@@ -196,10 +194,9 @@ class UploadAudioMenu {
       }
       const result = await uploadFile(file)
       if (result) {
-        const fullUrl = result.url.startsWith('http') ? result.url : apiOrigin + result.url
         editor.insertNode({
           type: 'audio',
-          src: fullUrl,
+          src: result.url,
           children: [{ text: '' }]
         })
       }

@@ -8,15 +8,46 @@
           <el-icon class="back-icon"><ArrowLeft /></el-icon>
           <span class="back-text">返回工作台</span>
         </button>
-        <h1>项目管理</h1>
+        <h1>{{ isFundsManagerMode ? '在研项目' : '项目管理' }}</h1>
         <div class="header-subtitle">
-          管理您负责的项目和待领取的项目申请
+          {{ isFundsManagerMode ? '查看所有已立项与孵化中的项目' : '管理您负责的项目和待领取的项目申请' }}
         </div>
       </div>
     </div>
 
     <!-- 标签切换 -->
-    <div class="tabs-container">
+    <div v-if="isFundsManagerMode" class="tabs-container">
+      <div class="tabs">
+        <button
+          class="tab-btn"
+          :class="{ active: fundsStatusFilter === 'all' }"
+          @click="switchFundsStatusTab('all')"
+        >
+          <span class="tab-icon">📋</span>
+          <span class="tab-text">全部项目</span>
+          <span v-if="fundsProjects.length > 0" class="tab-badge">{{ fundsProjects.length }}</span>
+        </button>
+        <button
+          class="tab-btn"
+          :class="{ active: fundsStatusFilter === 'approved' }"
+          @click="switchFundsStatusTab('approved')"
+        >
+          <span class="tab-icon">✅</span>
+          <span class="tab-text">已立项</span>
+          <span v-if="fundsApprovedCount > 0" class="tab-badge">{{ fundsApprovedCount }}</span>
+        </button>
+        <button
+          class="tab-btn"
+          :class="{ active: fundsStatusFilter === 'incubating' }"
+          @click="switchFundsStatusTab('incubating')"
+        >
+          <span class="tab-icon">🚀</span>
+          <span class="tab-text">孵化中</span>
+          <span v-if="fundsIncubatingCount > 0" class="tab-badge">{{ fundsIncubatingCount }}</span>
+        </button>
+      </div>
+    </div>
+    <div v-else class="tabs-container">
       <div class="tabs">
         <button
           class="tab-btn"
@@ -51,20 +82,113 @@
         <button class="search-btn" @click="handleSearch">🔍</button>
       </div>
       <div class="filter-actions">
-        <button type="button" class="select-export-btn" @click="selectAllForExport">全选当前列表</button>
-        <button type="button" class="export-btn" @click="openProjectExport">📥 导出 Excel</button>
+        <template v-if="!isFundsManagerMode">
+          <button type="button" class="select-export-btn" @click="selectAllForExport">全选当前列表</button>
+          <button type="button" class="export-btn" @click="openProjectExport">📥 导出 Excel</button>
+        </template>
         <button class="refresh-btn" @click="refreshData" :disabled="loading">
           🔄 {{ loading ? '刷新中...' : '刷新' }}
         </button>
       </div>
     </div>
 
-    <ProjectExportDialog v-model="showProjectExport" :project-ids="exportSelectedIds" />
+    <ProjectExportDialog v-if="!isFundsManagerMode" v-model="showProjectExport" :project-ids="exportSelectedIds" />
 
     <!-- 加载状态 -->
     <div v-if="loading" class="loading-container">
       <div class="loading-spinner"></div>
       <div class="loading-text">正在加载项目数据...</div>
+    </div>
+
+    <!-- 经费管理员 - 在研项目列表 -->
+    <div v-else-if="isFundsManagerMode" class="projects-section">
+      <div v-if="filteredFundsProjects.length === 0" class="empty-state">
+        <div class="empty-icon">📭</div>
+        <h3>暂无在研项目</h3>
+        <p>当前没有符合筛选条件的已立项或孵化中项目</p>
+      </div>
+      <div v-else class="projects-grid">
+        <div
+          v-for="project in filteredFundsProjects"
+          :key="project.id"
+          class="project-card"
+          @click="viewProjectDetail(project.id)"
+        >
+          <div class="card-header">
+            <div class="project-title">{{ project.title }}</div>
+            <div class="project-status" :class="getStatusClass(project.status)">
+              {{ getStatusText(project.status) }}
+            </div>
+          </div>
+
+          <div class="funds-budget-strip">
+            <div class="budget-stat">
+              <span class="budget-stat-label">总预算</span>
+              <span class="budget-stat-value">¥ {{ formatAmount(project.budget_total) }}</span>
+            </div>
+            <div class="budget-stat spent">
+              <span class="budget-stat-label">已使用</span>
+              <span class="budget-stat-value">¥ {{ formatAmount(project.spent_amount) }}</span>
+            </div>
+            <div class="budget-stat remain">
+              <span class="budget-stat-label">剩余</span>
+              <span class="budget-stat-value" :class="{ over: getFundsRemain(project) < 0 }">
+                ¥ {{ formatAmount(getFundsRemain(project)) }}
+              </span>
+            </div>
+          </div>
+          <div v-if="Number(project.budget_total) > 0" class="funds-usage-bar">
+            <div
+              class="funds-usage-fill"
+              :style="{ width: getFundsUsagePercent(project) + '%' }"
+            ></div>
+          </div>
+
+          <div class="project-meta">
+            <div class="meta-item">
+              <span class="meta-label">项目编号：</span>
+              <span class="meta-value">{{ project.project_code || '待生成' }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">申请人：</span>
+              <span class="meta-value">{{ project.applicant_name || '未知' }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">项目经理：</span>
+              <span class="meta-value">{{ project.manager_name || '未分配' }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">所属领域：</span>
+              <span class="meta-value">{{ project.research_field || '未指定' }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">评审专家：</span>
+              <span class="meta-value">{{ project.expert_count || 0 }} 人</span>
+            </div>
+          </div>
+
+          <div class="project-actions">
+            <button class="action-btn secondary" @click.stop="viewProjectDetail(project.id)">
+              查看详情
+            </button>
+          </div>
+
+          <div class="project-footer">
+            <span class="footer-item">
+              <span class="footer-icon">📅</span>
+              {{ formatDate(project.updated_at || project.created_at) }}
+            </span>
+            <span class="footer-item">
+              <span class="footer-icon">👤</span>
+              {{ project.applicant_name || '申请人' }}
+            </span>
+            <span class="footer-item">
+              <span class="footer-icon">📊</span>
+              {{ getStatusText(project.status) }}
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 待领取项目列表 -->
@@ -253,6 +377,7 @@
 </template>
 
 <script setup lang="ts">
+import { calcProjectFundsRemaining } from '@/utils/projectFunds'
 import { getApiBaseUrl } from '@/utils/request'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
@@ -263,6 +388,10 @@ import ProjectExportDialog from '@/components/ProjectExportDialog.vue'
 
 const router = useRouter()
 const route = useRoute()
+
+const isFundsManagerMode = computed(() =>
+  route.meta.fundsManagerMode === true || route.path.startsWith('/funds-manager/projects')
+)
 
 // Props
 const props = defineProps<{
@@ -313,10 +442,30 @@ const currentUser = ref<any>(null)
 // 项目数据
 const unassignedProjects = ref<any[]>([])
 const myProjects = ref<any[]>([])
+const fundsProjects = ref<any[]>([])
+const fundsStatusFilter = ref<'all' | 'approved' | 'incubating'>('all')
 
 // 计算属性
 const unassignedCount = computed(() => unassignedProjects.value.length)
 const myProjectsCount = computed(() => myProjects.value.length)
+const fundsApprovedCount = computed(() => fundsProjects.value.filter((p) => p.status === 'approved').length)
+const fundsIncubatingCount = computed(() => fundsProjects.value.filter((p) => p.status === 'incubating').length)
+
+const filteredFundsProjects = computed(() => {
+  let list = fundsProjects.value
+  if (fundsStatusFilter.value !== 'all') {
+    list = list.filter((p) => p.status === fundsStatusFilter.value)
+  }
+  if (!searchKeyword.value.trim()) return list
+  const keyword = searchKeyword.value.toLowerCase().trim()
+  return list.filter(
+    (p) =>
+      (p.title && p.title.toLowerCase().includes(keyword)) ||
+      (p.project_code && p.project_code.toLowerCase().includes(keyword)) ||
+      (p.applicant_name && p.applicant_name.toLowerCase().includes(keyword)) ||
+      (p.manager_name && p.manager_name.toLowerCase().includes(keyword))
+  )
+})
 
 const filteredUnassignedProjects = computed(() => {
   if (!searchKeyword.value.trim()) return unassignedProjects.value
@@ -374,8 +523,13 @@ const switchTab = (tab: 'unassigned' | 'my') => {
   }
 }
 
+const switchFundsStatusTab = (tab: 'all' | 'approved' | 'incubating') => {
+  fundsStatusFilter.value = tab
+  searchKeyword.value = ''
+}
+
 const goToWorkbench = () => {
-  router.push('/assistant/dashboard')
+  router.push(isFundsManagerMode.value ? '/funds-manager/dashboard' : '/assistant/dashboard')
 }
 
 const handleSearch = () => {
@@ -397,7 +551,30 @@ const loadCurrentUser = async () => {
   }
 }
 
+const loadFundsProjects = async () => {
+  loading.value = true
+  try {
+    const res = await api.get('/funds-manager/projects', {
+      params: { page: 1, pageSize: 500 },
+    })
+    if (res.success) {
+      fundsProjects.value = res.data?.projects || []
+    } else {
+      ElMessage.error(res.error || '加载项目数据失败')
+    }
+  } catch (error) {
+    console.error('加载在研项目失败:', error)
+    ElMessage.error('加载项目数据失败')
+  } finally {
+    loading.value = false
+  }
+}
+
 const loadProjects = async () => {
+  if (isFundsManagerMode.value) {
+    await loadFundsProjects()
+    return
+  }
   loading.value = true
   try {
     // 加载待领取项目（已提交但没有项目经理的项目）
@@ -420,6 +597,10 @@ const loadProjects = async () => {
 }
 
 const viewProjectDetail = (projectId: string) => {
+  if (isFundsManagerMode.value) {
+    router.push(`/funds-manager/projects/${projectId}`)
+    return
+  }
   // 传递当前tab作为来源参数
   router.push(`/assistant/projects/detail/${projectId}?from=${activeTab.value}`)
 }
@@ -551,6 +732,29 @@ const formatDate = (dateString?: string) => {
   } catch {
     return dateString
   }
+}
+
+const formatAmount = (value: number | string | null | undefined) => {
+  const n = Number(value) || 0
+  return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+const getFundsRemain = (project: {
+  budget_total?: number | string
+  spent_amount?: number | string
+  remaining_amount?: number | string
+}) => {
+  if (project.remaining_amount != null && project.remaining_amount !== '') {
+    return Number(project.remaining_amount) || 0
+  }
+  return calcProjectFundsRemaining(project.budget_total, project.spent_amount)
+}
+
+const getFundsUsagePercent = (project: { budget_total?: number | string; spent_amount?: number | string }) => {
+  const total = Number(project.budget_total) || 0
+  if (total <= 0) return 0
+  const spent = Number(project.spent_amount) || 0
+  return Math.min(100, Math.round((spent / total) * 1000) / 10)
 }
 
 const getTechMaturityText = (maturity: string) => {
@@ -1026,6 +1230,62 @@ onMounted(async () => {
   transform: translateY(-4px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   border-color: #b31b1b;
+}
+
+.funds-budget-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 8px;
+  border: 1px solid #f0f0f0;
+}
+
+.budget-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: center;
+}
+
+.budget-stat-label {
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+.budget-stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.budget-stat.spent .budget-stat-value {
+  color: #fa8c16;
+}
+
+.budget-stat.remain .budget-stat-value {
+  color: #52c41a;
+}
+
+.budget-stat-value.over {
+  color: #ff4d4f;
+}
+
+.funds-usage-bar {
+  height: 4px;
+  background: #f0f0f0;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.funds-usage-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #b31b1b, #fa8c16);
+  border-radius: 2px;
+  transition: width 0.3s;
 }
 
 .card-header {

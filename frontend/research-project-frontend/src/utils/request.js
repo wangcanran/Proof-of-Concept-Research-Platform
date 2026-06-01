@@ -118,6 +118,26 @@ export function getApiOrigin() {
   return resolveApiOrigin()
 }
 
+/**
+ * 上传文件访问地址。
+ * - 开发：返回 /uploads/...，由 Vite 代理到后端
+ * - 生产：页面与 API 同源时用相对路径；不同源时拼 API 根地址
+ */
+export function getUploadUrl(filePath) {
+  if (!filePath) return ''
+  const p = String(filePath).trim()
+  if (p.startsWith('http://') || p.startsWith('https://')) return p
+  const rel = p.startsWith('/') ? p : `/${p.replace(/^\/+/, '')}`
+  if (import.meta.env.DEV) return rel
+  if (typeof window !== 'undefined') {
+    const apiOrigin = resolveApiOrigin()
+    if (apiOrigin && apiOrigin !== window.location.origin) {
+      return apiOrigin + rel
+    }
+  }
+  return rel
+}
+
 /** 含 /api 前缀，如 http://host:port/api */
 export function getApiBaseUrl() {
   return `${getApiOrigin()}/api`

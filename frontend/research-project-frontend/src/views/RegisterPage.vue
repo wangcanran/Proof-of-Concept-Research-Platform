@@ -110,7 +110,7 @@
                 required
               />
               <p class="field-hint">
-                评审专家与项目经理须凭有效邀请码注册（由系统管理员或项目经理在「邀请码管理」中生成），邀请码与所选身份须一致。
+                评审专家、项目经理与经费管理员须凭有效邀请码注册（由系统管理员或项目经理在「邀请码管理」中生成），邀请码与所选身份须一致。
               </p>
             </div>
 
@@ -177,6 +177,7 @@ const registerRoles = [
   { value: 'applicant', name: '项目申请人', icon: '📝' },
   { value: 'reviewer', name: '评审专家', icon: '⭐' },
   { value: 'project_manager', name: '项目经理', icon: '📊' },
+  { value: 'funds_manager', name: '经费管理员', icon: '💰' },
 ]
 
 const passwordMismatch = computed(() => {
@@ -189,7 +190,9 @@ const passwordMismatch = computed(() => {
 
 const needsInvitationCode = computed(
   () =>
-    formData.value.role === 'reviewer' || formData.value.role === 'project_manager',
+    formData.value.role === 'reviewer' ||
+    formData.value.role === 'project_manager' ||
+    formData.value.role === 'funds_manager',
 )
 
 const canRegister = computed(() => {
@@ -210,7 +213,7 @@ const canRegister = computed(() => {
 
 const selectRole = (role: string) => {
   formData.value.role = role
-  if (role !== 'reviewer' && role !== 'project_manager') {
+  if (role !== 'reviewer' && role !== 'project_manager' && role !== 'funds_manager') {
     formData.value.invitationCode = ''
   }
 }
@@ -223,7 +226,7 @@ const nextStep = async () => {
 
   if (currentStep.value === 2) {
     if (needsInvitationCode.value && !String(formData.value.invitationCode || '').trim()) {
-      registerError.value = '注册评审专家或项目经理必须填写邀请码'
+      registerError.value = '注册评审专家、项目经理或经费管理员必须填写邀请码'
       return
     }
     if (!canRegister.value) {

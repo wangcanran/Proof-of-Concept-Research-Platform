@@ -440,6 +440,12 @@ const roles = ref([
     icon: '👨‍🔬',
     description: '负责项目的日常管理和审核工作',
   },
+  {
+    value: 'funds_manager',
+    label: '经费管理员',
+    icon: '💰',
+    description: '负责项目经费申请的审核与反馈',
+  },
   { value: 'admin', label: '系统管理员', icon: '👨‍💼', description: '负责系统配置和用户管理' },
 ])
 

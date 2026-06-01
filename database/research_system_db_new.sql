@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS `Project` (
     `manager_id` VARCHAR(36) COMMENT '项目经理ID',
     `project_code` VARCHAR(50) UNIQUE COMMENT '项目编号',
     `title` VARCHAR(200) NOT NULL COMMENT '项目名称',
+    `team_introduction` TEXT COMMENT '团队简介',
     `project_domain_other_text` VARCHAR(500) COMMENT '所属领域含「其他」时请注明具体内容',
     `tech_maturity` ENUM(
         'rd',
@@ -234,7 +235,6 @@ CREATE TABLE `IncubationProgress` (
     `applicant_id` VARCHAR(36) NOT NULL COMMENT '申请人ID',
     `application_date` DATETIME DEFAULT NULL COMMENT '申请日期',
     `service_requirement` TEXT NOT NULL COMMENT '服务需求描述',
-    `service_categories` SET('tech','business','ip','resource','incubation') DEFAULT NULL COMMENT '服务类别（多选）',
     `feedback_date` DATETIME DEFAULT NULL COMMENT '反馈日期',
     `feedback_by` VARCHAR(36) DEFAULT NULL COMMENT '反馈人（项目经理）ID',
     `feedback_action` ENUM('approved', 'rejected') DEFAULT NULL COMMENT '反馈动作：approved=给予服务，rejected=拒绝服务',
@@ -275,7 +275,6 @@ CREATE TABLE IF NOT EXISTS `FundsRequest` (
     `id` VARCHAR(36) PRIMARY KEY,
     `project_id` VARCHAR(36) NOT NULL COMMENT '项目ID',
     `applicant_id` VARCHAR(36) NOT NULL COMMENT '申请人ID（项目负责人/申请人）',
-    `submission_type` ENUM('applicant_request', 'manager_direct') NOT NULL DEFAULT 'applicant_request' COMMENT '提交方式：申请人申请待审 / 管理员直接登记（免审）',
     `application_date` DATETIME DEFAULT NULL COMMENT '申请日期',
     `service_requirement` TEXT NOT NULL COMMENT '经费使用需求描述（整体说明）',
     `feedback_date` DATETIME DEFAULT NULL COMMENT '反馈日期',
@@ -429,7 +428,7 @@ CREATE TABLE IF NOT EXISTS `CarouselConfig` (
 CREATE TABLE IF NOT EXISTS `Notification` (
     `id` VARCHAR(36) PRIMARY KEY,
     `user_id` VARCHAR(36) NOT NULL,
-    `type` ENUM('project', 'review', 'funding', 'incubation', 'system', 'reminder', 'invitation') NOT NULL, --
+    `type` ENUM('project', 'review', 'funding', 'incubation', 'system', 'reminder', 'invitation') NOT NULL,
     `title` VARCHAR(200) NOT NULL,
     `content` TEXT NOT NULL,
     `related_id` VARCHAR(36) COMMENT '关联记录ID',

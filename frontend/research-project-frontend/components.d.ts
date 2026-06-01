@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    BudgetItemsEditor: typeof import('./src/components/BudgetItemsEditor.vue')['default']
     ElAffix: typeof import('element-plus/es')['ElAffix']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']
@@ -70,8 +71,10 @@ declare module 'vue' {
     ErrorHandler: typeof import('./src/components/ErrorHandler.vue')['default']
     HomeHeader: typeof import('./src/components/HomeHeader.vue')['default']
     ProjectExportDialog: typeof import('./src/components/ProjectExportDialog.vue')['default']
+    ProjectFundsUsagePanel: typeof import('./src/components/ProjectFundsUsagePanel.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    ShowcaseMediaPreviewDialog: typeof import('./src/components/ShowcaseMediaPreviewDialog.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

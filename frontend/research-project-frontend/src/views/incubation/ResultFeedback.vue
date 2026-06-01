@@ -9,18 +9,18 @@
           <span>返回</span>
         </button>
         <h1>成果反馈</h1>
-        <div class="header-subtitle">就已获批准的服务申请提交成果反馈</div>
+        <div class="header-subtitle">就已获批准的服务申请、经费申请分别提交成果反馈</div>
       </div>
     </div>
 
     <!-- 主要内容 -->
     <div class="content-wrapper">
-      <!-- 待提交成果的服务申请列表 -->
+      <!-- 待提交成果 -->
       <div class="section-card">
         <div class="section-header">
           <h3 class="section-title">
             <span class="section-icon">📝</span>
-            待提交成果的服务申请
+            待提交成果
           </h3>
         </div>
 
@@ -29,16 +29,23 @@
           <p>加载中...</p>
         </div>
 
-        <div v-else-if="pendingFeedback.length === 0" class="empty-state">
-          <div class="empty-icon">✅</div>
-          <p>暂无待提交成果的服务申请</p>
-          <p class="empty-subtext">服务申请获批后，在此提交成果反馈</p>
-        </div>
+        <template v-else>
+          <div v-if="pendingServiceFeedback.length === 0 && pendingFundsFeedback.length === 0" class="empty-state">
+            <div class="empty-icon">✅</div>
+            <p>暂无待提交成果的申请</p>
+            <p class="empty-subtext">服务申请或经费申请获批后，可在此分别提交成果反馈</p>
+          </div>
 
-        <div v-else class="requests-list">
-          <div v-for="request in pendingFeedback" :key="request.id" class="request-item">
+          <template v-else>
+            <h4 v-if="pendingServiceFeedback.length > 0" class="subsection-title">
+              <span class="type-badge type-service">服务申请</span>
+              待提交成果（{{ pendingServiceFeedback.length }}）
+            </h4>
+            <div v-if="pendingServiceFeedback.length > 0" class="requests-list">
+          <div v-for="request in pendingServiceFeedback" :key="'svc-' + request.id" class="request-item">
             <div class="request-header">
               <div class="request-info">
+                <span class="type-badge type-service">服务申请</span>
                 <span class="project-code">{{ request.project_code }}</span>
                 <h4 class="project-title">{{ request.project_title }}</h4>
               </div>
@@ -100,10 +107,10 @@
               </div>
             </div>
 
-            <div class="feedback-form" v-if="activeFormId === request.id">
+            <div class="feedback-form" v-if="activeFormKey === formKey('incubation', request.id)">
               <div class="form-divider"></div>
-              <h5 class="form-title">提交成果反馈</h5>
-              <form @submit.prevent="submitResult(request.id)">
+              <h5 class="form-title">提交成果反馈 · 服务申请</h5>
+              <form @submit.prevent="submitResult('incubation', request.id)">
                 <div class="form-group">
                   <label class="form-label required">成果描述</label>
                   <textarea 
@@ -151,12 +158,125 @@
             </div>
 
             <div v-else class="action-area">
-              <button class="btn btn-primary" @click="showForm(request.id)">
+              <button class="btn btn-primary" @click="showForm('incubation', request.id)">
                 提交成果反馈
               </button>
             </div>
           </div>
-        </div>
+            </div>
+
+            <h4 v-if="pendingFundsFeedback.length > 0" class="subsection-title">
+              <span class="type-badge type-funds">经费申请</span>
+              待提交成果（{{ pendingFundsFeedback.length }}）
+            </h4>
+            <div v-if="pendingFundsFeedback.length > 0" class="requests-list">
+          <div v-for="request in pendingFundsFeedback" :key="'fund-' + request.id" class="request-item request-item-funds">
+            <div class="request-header">
+              <div class="request-info">
+              <span
+                class="type-badge type-funds"
+                :class="{ 'type-manager': request.submission_type === 'manager_direct' }"
+              >
+                {{ request.submission_type === 'manager_direct' ? '经费·管理员登记' : '经费申请' }}
+              </span>
+              <span class="project-code">{{ request.project_code }}</span>
+              <h4 class="project-title">{{ request.project_title }}</h4>
+            </div>
+            <span class="status-badge pending">待提交成果</span>
+          </div>
+          
+          <div class="request-details">
+            <div class="detail-row">
+              <span class="detail-label">经费说明：</span>
+                <span class="detail-value">{{ request.service_requirement }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">申请金额：</span>
+                <span class="detail-value">¥ {{ formatAmount(request.total_amount) }}</span>
+              </div>
+              <div class="detail-row" v-if="request.approved_amount != null">
+                <span class="detail-label">批准金额：</span>
+                <span class="detail-value">¥ {{ formatAmount(request.approved_amount) }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">反馈结果：</span>
+                <span class="detail-value success">{{ fundsFeedbackLabel(request.feedback_action) }}</span>
+              </div>
+              <div class="detail-row" v-if="request.feedback_comment">
+                <span class="detail-label">反馈说明：</span>
+                <span class="detail-value">{{ request.feedback_comment }}</span>
+              </div>
+              <div v-if="getFundsApplicationFiles(request).length > 0" class="detail-row">
+                <span class="detail-label">申请附件：</span>
+                <span class="detail-value">
+                  {{ getFundsApplicationFiles(request).map((f: any) => f.file_name).join('、') }}
+                </span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">反馈时间：</span>
+                <span class="detail-value">{{ formatDateTime(request.feedback_date) }}</span>
+              </div>
+            </div>
+
+            <div class="feedback-form" v-if="activeFormKey === formKey('funds', request.id)">
+              <div class="form-divider"></div>
+              <h5 class="form-title">提交成果反馈 · 经费申请</h5>
+              <form @submit.prevent="submitResult('funds', request.id)">
+                <div class="form-group">
+                  <label class="form-label required">成果描述</label>
+                  <textarea
+                    v-model="resultDescription"
+                    class="form-textarea"
+                    placeholder="请详细描述经费使用成果..."
+                    rows="5"
+                    required
+                  ></textarea>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">附件材料（可选）</label>
+                  <div class="upload-area">
+                    <input
+                      type="file"
+                      :id="'file-input-funds-' + request.id"
+                      @change="handleFileChange"
+                      multiple
+                      accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                      style="display: none"
+                    />
+                    <label :for="'file-input-funds-' + request.id" class="upload-btn">
+                      <span class="upload-icon">📎</span>
+                      选择文件
+                    </label>
+                    <span class="upload-hint">支持 PDF、Word、Excel、图片</span>
+                  </div>
+                  <div v-if="uploadedFiles.length > 0" class="file-list">
+                    <div v-for="(file, index) in uploadedFiles" :key="index" class="file-item">
+                      <span class="file-icon">📄</span>
+                      <span class="file-name">{{ file.name }}</span>
+                      <button type="button" class="file-remove" @click="removeFile(index)">×</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-actions">
+                  <button type="button" class="btn btn-secondary" @click="cancelForm">取消</button>
+                  <button type="submit" class="btn btn-primary" :disabled="submitting">
+                    {{ submitting ? '提交中...' : '提交成果' }}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div v-else class="action-area">
+              <button class="btn btn-primary" @click="showForm('funds', request.id)">
+                提交成果反馈
+              </button>
+            </div>
+          </div>
+            </div>
+          </template>
+        </template>
       </div>
 
       <!-- 已提交的成果反馈列表 -->
@@ -184,11 +304,17 @@
             :key="item.id" 
             class="request-card"
           >
-            <div class="card-header" @click="goToDetail(item.id)">
+            <div class="card-header" @click="goToDetail(item)">
+              <span
+                class="type-badge"
+                :class="item.request_type === 'funds' ? 'type-funds' : 'type-service'"
+              >
+                {{ item.request_type === 'funds' ? '经费申请' : '服务申请' }}
+              </span>
               <span class="card-project-title">{{ item.project_title }}</span>
               <span class="card-status completed">已完成</span>
             </div>
-            <div class="card-body" @click="goToDetail(item.id)">
+            <div class="card-body" @click="goToDetail(item)">
               <div class="card-info">
                 <span class="info-label">项目编号</span>
                 <span class="info-value">{{ item.project_code || '-' }}</span>
@@ -201,9 +327,27 @@
                 <span class="info-label">提交时间</span>
                 <span class="info-value">{{ formatDateTime(item.result_date) }}</span>
               </div>
+              <div
+                v-if="item.request_type === 'funds' && getFundsResultFiles(item).length > 0"
+                class="card-info attachments-row"
+              >
+                <span class="info-label">成果附件</span>
+                <span class="info-value">
+                  <a
+                    v-for="file in getFundsResultFiles(item)"
+                    :key="file.id"
+                    class="attachment-link-inline"
+                    :href="getFundsFileUrl(file.id)"
+                    target="_blank"
+                    @click.stop
+                  >
+                    📎 {{ file.file_name }}
+                  </a>
+                </span>
+              </div>
             </div>
             <div class="card-footer">
-              <button class="btn-view-detail" @click.stop="goToDetail(item.id)">查看详情</button>
+              <button class="btn-view-detail" @click.stop="goToDetail(item)">查看详情</button>
             </div>
           </div>
         </div>
@@ -240,26 +384,48 @@ api.interceptors.request.use((config) => {
 })
 
 // 响应式数据
+type RequestType = 'incubation' | 'funds'
+
 const loading = ref(false)
 const loadingCompleted = ref(false)
 const submitting = ref(false)
-const pendingFeedback = ref<any[]>([])
+const pendingServiceFeedback = ref<any[]>([])
+const pendingFundsFeedback = ref<any[]>([])
 const completedFeedback = ref<any[]>([])
-const activeFormId = ref<string | null>(null)
+const activeFormKey = ref<string | null>(null)
 const resultDescription = ref('')
 const uploadedFiles = ref<File[]>([])
+
+const formKey = (type: RequestType, id: string) => `${type}:${id}`
+
+const formatAmount = (v: number | string | null | undefined) => {
+  const n = Number(v) || 0
+  return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+const fundsFeedbackLabel = (action: string) =>
+  ({
+    approved: '全部批准',
+    partial_approved: '部分批准',
+    rejected: '全部拒绝',
+  })[action] || action
 
 // 加载数据
 const loadPendingFeedback = async () => {
   loading.value = true
   try {
-    const res = await api.get('/incubation/my-requests', {
-      params: { status: 'feedback_given' }
-    })
-    if (res.data.success) {
-      // 只显示feedback_action为approved的
-      pendingFeedback.value = (res.data.data || []).filter(
-        (r: any) => r.feedback_action === 'approved'
+    const [svcRes, fundsRes] = await Promise.all([
+      api.get('/incubation/my-requests', { params: { status: 'feedback_given' } }),
+      api.get('/applicant/funds-requests', { params: { status: 'feedback_given' } }),
+    ])
+    if (svcRes.data.success) {
+      pendingServiceFeedback.value = (svcRes.data.data || []).filter(
+        (r: any) => r.feedback_action === 'approved',
+      )
+    }
+    if (fundsRes.data.success) {
+      pendingFundsFeedback.value = (fundsRes.data.data || []).filter((r: any) =>
+        ['approved', 'partial_approved'].includes(r.feedback_action),
       )
     }
   } catch (error) {
@@ -272,12 +438,27 @@ const loadPendingFeedback = async () => {
 const loadCompletedFeedback = async () => {
   loadingCompleted.value = true
   try {
-    const res = await api.get('/incubation/my-requests', {
-      params: { status: 'result_submitted' }
-    })
-    if (res.data.success) {
-      completedFeedback.value = res.data.data || []
+    const [svcRes, fundsRes] = await Promise.all([
+      api.get('/incubation/my-requests', { params: { status: 'result_submitted' } }),
+      api.get('/applicant/funds-requests', { params: { status: 'result_submitted' } }),
+    ])
+    const merged: any[] = []
+    if (svcRes.data.success) {
+      for (const r of svcRes.data.data || []) {
+        merged.push({ ...r, request_type: 'incubation' as const })
+      }
     }
+    if (fundsRes.data.success) {
+      for (const r of fundsRes.data.data || []) {
+        merged.push({ ...r, request_type: 'funds' as const })
+      }
+    }
+    merged.sort(
+      (a, b) =>
+        new Date(b.result_date || b.created_at).getTime() -
+        new Date(a.result_date || a.created_at).getTime(),
+    )
+    completedFeedback.value = merged
   } catch (error) {
     console.error('加载已完成列表失败:', error)
   } finally {
@@ -285,15 +466,14 @@ const loadCompletedFeedback = async () => {
   }
 }
 
-// 显示表单
-const showForm = (requestId: string) => {
-  activeFormId.value = requestId
+const showForm = (type: RequestType, requestId: string) => {
+  activeFormKey.value = formKey(type, requestId)
   resultDescription.value = ''
   uploadedFiles.value = []
 }
 
 const cancelForm = () => {
-  activeFormId.value = null
+  activeFormKey.value = null
   resultDescription.value = ''
   uploadedFiles.value = []
 }
@@ -312,7 +492,7 @@ const removeFile = (index: number) => {
 }
 
 // 提交成果
-const submitResult = async (requestId: string) => {
+const submitResult = async (type: RequestType, requestId: string) => {
   if (!resultDescription.value.trim()) {
     ElMessage.warning('请填写成果描述')
     return
@@ -320,32 +500,52 @@ const submitResult = async (requestId: string) => {
 
   submitting.value = true
   try {
-    // 提交成果
-    const res = await api.put(`/incubation/requests/${requestId}/result`, {
-      result_description: resultDescription.value.trim()
-    })
-
-    if (res.data.success) {
-      // 如果有附件，上传附件
-      if (uploadedFiles.value.length > 0) {
+    let ok = false
+    if (type === 'incubation') {
+      const res = await api.put(`/incubation/requests/${requestId}/result`, {
+        result_description: resultDescription.value.trim(),
+      })
+      ok = res.data.success
+      if (ok && uploadedFiles.value.length > 0) {
         for (const file of uploadedFiles.value) {
           const formData = new FormData()
           formData.append('file', file)
           formData.append('progress_id', requestId)
           formData.append('attachment_type', 'result')
-          
           await api.post('/incubation/upload', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
+            headers: { 'Content-Type': 'multipart/form-data' },
           })
         }
       }
+    } else {
+      const res = await api.put(`/applicant/funds-requests/${requestId}/result`, {
+        result_description: resultDescription.value.trim(),
+      })
+      ok = res.data.success
+      if (ok && uploadedFiles.value.length > 0) {
+        for (const file of uploadedFiles.value) {
+          const formData = new FormData()
+          formData.append('file', file)
+          formData.append('funds_request_id', requestId)
+          formData.append('attachment_type', 'result')
+          try {
+            await api.post('/applicant/funds-requests/upload', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' },
+            })
+          } catch (uploadErr: any) {
+            ElMessage.warning(
+              uploadErr.response?.data?.error || `附件「${file.name}」上传失败，成果描述已保存`,
+            )
+          }
+        }
+      }
+    }
 
+    if (ok) {
       ElMessage.success('成果反馈提交成功')
-      activeFormId.value = null
+      activeFormKey.value = null
       resultDescription.value = ''
       uploadedFiles.value = []
-      
-      // 刷新列表
       loadPendingFeedback()
       loadCompletedFeedback()
     }
@@ -358,11 +558,15 @@ const submitResult = async (requestId: string) => {
 }
 
 const goBack = () => {
-  router.push('/incubation/service-request')
+  router.push('/applicant/dashboard')
 }
 
-const goToDetail = (requestId: string) => {
-  router.push(`/incubation/request/${requestId}?from=result-feedback`)
+const goToDetail = (item: { id: string; request_type?: string }) => {
+  if (item.request_type === 'funds') {
+    router.push(`/funds-request/${item.id}?from=result-feedback`)
+  } else {
+    router.push(`/incubation/request/${item.id}?from=result-feedback`)
+  }
 }
 
 // 工具函数
@@ -389,15 +593,30 @@ const getResultFiles = (request: any) => {
   return (request.files || []).filter((f: any) => f.attachment_type === 'result')
 }
 
-onMounted(() => {
-  // 检查是否有从服务申请页面传来的requestId
+const getFundsApplicationFiles = (request: any) =>
+  (request.files || []).filter((f: any) => f.attachment_type === 'application')
+
+const getFundsResultFiles = (request: any) =>
+  (request.files || []).filter((f: any) => f.attachment_type === 'result')
+
+const getFundsFileUrl = (fileId: string) => {
+  if (!fileId) return '#'
+  const token = localStorage.getItem('token')
+  return `${API_BASE_URL}/funds-requests/files/${fileId}?token=${token}`
+}
+
+onMounted(async () => {
   const requestId = route.query.requestId as string
-  if (requestId) {
-    activeFormId.value = requestId
-  }
-  
-  loadPendingFeedback()
+  const type = (route.query.type as string) || 'incubation'
+  await loadPendingFeedback()
   loadCompletedFeedback()
+  if (requestId) {
+    if (type === 'funds') {
+      activeFormKey.value = formKey('funds', requestId)
+    } else {
+      activeFormKey.value = formKey('incubation', requestId)
+    }
+  }
 })
 </script>
 
@@ -443,6 +662,59 @@ onMounted(() => {
   font-size: 24px;
   color: #2c3e50;
   font-weight: 600;
+}
+
+.subsection-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 24px 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.subsection-title:first-of-type {
+  margin-top: 0;
+}
+
+.type-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  flex-shrink: 0;
+}
+
+.type-service {
+  background: #e8f4ff;
+  color: #1890ff;
+  border: 1px solid #91d5ff;
+}
+
+.type-funds {
+  background: #fff7e6;
+  color: #d48806;
+  border: 1px solid #ffd591;
+}
+
+.request-info .type-badge {
+  margin-right: 8px;
+}
+
+.request-item-funds {
+  border-left: 3px solid #faad14;
+}
+
+.card-header {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.card-header .type-badge {
+  margin-right: 4px;
 }
 
 .header-subtitle {

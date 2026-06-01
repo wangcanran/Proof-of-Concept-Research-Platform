@@ -65,6 +65,7 @@ function goToDashboard() {
     applicant: '/applicant/dashboard',
     reviewer: '/reviewer/dashboard',
     project_manager: '/assistant/dashboard',
+    funds_manager: '/funds-manager/dashboard',
     admin: '/admin/dashboard',
   }
   router.push(roleRouteMap[role || ''] || '/applicant/dashboard')

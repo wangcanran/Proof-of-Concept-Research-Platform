@@ -6,7 +6,7 @@
         <button type="button" class="back-btn" @click="goBack">← 返回工作台</button>
         <h1 class="page-title">邀请码管理</h1>
         <p class="page-desc">
-          生成邀请码并交给对方，对方注册「评审专家」或「项目经理」时需填写此码。数据来自系统表
+          生成邀请码并交给对方，对方注册「评审专家」「项目经理」或「经费管理员」时需填写此码。数据来自系统表
           <code>Invitation</code>。下表过期时间、创建时间均为<strong>北京时间</strong>（东八区）。
         </p>
       </div>
@@ -21,6 +21,7 @@
           <el-select v-model="form.target_role" placeholder="请选择" style="width: 200px">
             <el-option label="评审专家" value="reviewer" />
             <el-option label="项目经理" value="project_manager" />
+            <el-option label="经费管理员" value="funds_manager" />
           </el-select>
         </el-form-item>
         <el-form-item label="有效天数">
@@ -100,7 +101,7 @@ const loading = ref(false)
 const creating = ref(false)
 const list = ref<any[]>([])
 const form = ref({
-  target_role: 'reviewer' as 'reviewer' | 'project_manager',
+  target_role: 'reviewer' as 'reviewer' | 'project_manager' | 'funds_manager',
   expiresInDays: 30,
 })
 
@@ -156,6 +157,7 @@ function roleLabel(r: string) {
   const m: Record<string, string> = {
     reviewer: '评审专家',
     project_manager: '项目经理',
+    funds_manager: '经费管理员',
     admin: '系统管理员',
   }
   return m[r] || r

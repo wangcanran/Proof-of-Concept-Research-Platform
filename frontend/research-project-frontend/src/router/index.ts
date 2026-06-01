@@ -36,6 +36,8 @@ const getDashboardPath = (userRole: string) => {
       return '/reviewer/dashboard'
     case 'PROJECT_MANAGER':
       return '/assistant/dashboard'
+    case 'FUNDS_MANAGER':
+      return '/funds-manager/dashboard'
     case 'ADMIN':
       return '/admin/dashboard'
     default:
@@ -222,6 +224,27 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('../views/incubation/ResultFeedback.vue'),
     meta: {
       title: '成果反馈',
+      requiresAuth: true,
+      role: 'APPLICANT',
+    },
+  },
+  {
+    path: '/funds-request/apply',
+    name: 'FundsRequestApply',
+    component: () => import('../views/funds-applicant/FundsRequestApply.vue'),
+    meta: {
+      title: '经费申请',
+      requiresAuth: true,
+      role: 'APPLICANT',
+    },
+  },
+  {
+    path: '/funds-request/:id',
+    name: 'ApplicantFundsRequestDetail',
+    component: () => import('../views/funds-applicant/FundsRequestDetail.vue'),
+    props: true,
+    meta: {
+      title: '经费申请详情',
       requiresAuth: true,
       role: 'APPLICANT',
     },
@@ -711,6 +734,78 @@ const routes: Array<RouteRecordRaw> = [
         },
       },
     ],
+  },
+
+  // ============ 经费管理员专属路由 ============
+  {
+    path: '/funds-manager/dashboard',
+    name: 'FundsManagerDashboard',
+    component: () => import('@/views/funds-manager/FundsManagerDashboard.vue'),
+    meta: {
+      title: '经费管理员工作台',
+      requiresAuth: true,
+      role: ['funds_manager'],
+      permissions: ['view_dashboard'],
+    },
+  },
+  {
+    path: '/funds-manager/projects',
+    name: 'FundsManagerProjects',
+    component: () => import('@/views/assistant/ManagerProjects.vue'),
+    meta: {
+      title: '在研项目',
+      requiresAuth: true,
+      role: ['funds_manager'],
+      permissions: ['view_projects'],
+      fundsManagerMode: true,
+    },
+  },
+  {
+    path: '/funds-manager/projects/:id',
+    name: 'FundsManagerProjectDetail',
+    component: () => import('@/views/assistant/ManagerProjectDetail.vue'),
+    props: true,
+    meta: {
+      title: '项目详情',
+      requiresAuth: true,
+      role: ['funds_manager'],
+      permissions: ['view_project_detail'],
+      fundsManagerMode: true,
+    },
+  },
+  {
+    path: '/funds-manager/funds-request/apply',
+    name: 'FundsManagerRequestApply',
+    component: () => import('@/views/funds-applicant/FundsRequestApply.vue'),
+    meta: {
+      title: '经费申请',
+      requiresAuth: true,
+      role: ['funds_manager'],
+      fundsManagerMode: true,
+    },
+  },
+  {
+    path: '/funds-manager/requests',
+    name: 'FundsManagerRequests',
+    component: () => import('@/views/funds-manager/FundsRequestList.vue'),
+    meta: {
+      title: '经费申请审核',
+      requiresAuth: true,
+      role: ['funds_manager'],
+      permissions: ['review_funding_applications'],
+    },
+  },
+  {
+    path: '/funds-manager/requests/:id',
+    name: 'FundsManagerRequestDetail',
+    component: () => import('@/views/funds-manager/FundsRequestList.vue'),
+    props: true,
+    meta: {
+      title: '经费申请详情',
+      requiresAuth: true,
+      role: ['funds_manager'],
+      permissions: ['review_funding_applications'],
+    },
   },
 
   // ============ 经费管理模块 ============

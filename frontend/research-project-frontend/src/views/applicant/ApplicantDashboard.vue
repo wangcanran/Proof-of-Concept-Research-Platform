@@ -51,6 +51,10 @@
             <span class="nav-icon">📝</span>
             <span v-if="!sidebarCollapsed" class="nav-text">服务申请</span>
           </router-link>
+          <router-link to="/funds-request/apply" class="nav-link" active-class="active">
+            <span class="nav-icon">💰</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">经费申请</span>
+          </router-link>
           <router-link to="/incubation/result-feedback" class="nav-link" active-class="active">
             <span class="nav-icon">📊</span>
             <span v-if="!sidebarCollapsed" class="nav-text">成果反馈</span>
@@ -276,6 +280,13 @@
                   <div class="action-content">
                     <h4>服务申请</h4>
                     <p>为已批准项目发起孵化服务申请</p>
+                  </div>
+                </button>
+                <button class="action-card" @click="navigateTo('funds-request')">
+                  <div class="action-icon">💰</div>
+                  <div class="action-content">
+                    <h4>经费申请</h4>
+                    <p>为在研项目提交经费使用申请</p>
                   </div>
                 </button>
               </div>
@@ -782,6 +793,7 @@ const navigateTo = (action: string) => {
     'all-projects': '/projects',
     'submit-achievement': '/achievements/create',
     'service-request': '/incubation/service-request',
+    'funds-request': '/funds-request/apply',
     notifications: '/notifications',
   }
   if (routes[action]) {

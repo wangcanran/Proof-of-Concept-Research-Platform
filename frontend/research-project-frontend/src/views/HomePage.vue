@@ -252,7 +252,7 @@
 </template>
 
 <script setup lang="ts">
-import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
+import { getApiBaseUrl, getApiOrigin, getUploadUrl } from '@/utils/request'
 import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
@@ -405,6 +405,7 @@ const goToDashboard = () => {
     applicant: '/applicant/dashboard',
     reviewer: '/reviewer/dashboard',
     project_manager: '/assistant/dashboard',
+    funds_manager: '/funds-manager/dashboard',
     admin: '/admin/dashboard',
   }
   router.push(roleRouteMap[role || ''] || '/applicant/dashboard')
@@ -459,9 +460,8 @@ const loadCarousel = async () => {
   try {
     const res = await axios.get(`${getApiBaseUrl()}/home/carousel`)
     if (res.data?.success && Array.isArray(res.data.data) && res.data.data.length > 0) {
-      const origin = getApiOrigin()
       carouselImages.value = res.data.data.map((item: any) => ({
-        src: item.image_url?.startsWith('http') ? item.image_url : origin + item.image_url,
+        src: getUploadUrl(item.image_url),
         alt: item.title || '',
         caption: {
           title: item.title || '',

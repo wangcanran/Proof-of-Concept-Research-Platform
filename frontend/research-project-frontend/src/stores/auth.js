@@ -37,6 +37,9 @@ export const useAuthStore = defineStore('auth', () => {
         case 'project_manager':
           router.push('/assistant/dashboard')
           break
+        case 'funds_manager':
+          router.push('/funds-manager/dashboard')
+          break
         case 'reviewer':
           router.push('/reviewer/dashboard')
           break

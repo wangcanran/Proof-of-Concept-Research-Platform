@@ -170,6 +170,7 @@
                   <th>职称</th>
                   <th>角色</th>
                   <th>邮箱</th>
+                  <th class="col-intro">成员介绍</th>
                 </tr>
               </thead>
               <tbody>
@@ -184,6 +185,7 @@
                     </span>
                   </td>
                   <td>{{ member.email || '未提供' }}</td>
+                  <td class="member-intro-cell">{{ member.member_introduction || '—' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -229,18 +231,35 @@
         </div>
       </div>
 
-      <!-- 图片展示 -->
+      <!-- 图片与视频展示 -->
       <div v-if="activeTab === 'images'" class="tab-panel">
         <div class="section">
-          <h3>项目图片</h3>
+          <h3>图片与视频</h3>
           <div v-if="images.length === 0" class="empty-state">
-            <p>暂无项目图片</p>
+            <p>暂无图片或视频</p>
                 </div>
           <div v-else class="images-grid">
             <div v-for="image in images" :key="image.id" class="image-card">
-              <div class="image-preview">
-                <img :src="`${getApiOrigin()}${image.file_path}`" :alt="image.file_name" />
-                </div>
+              <div
+                class="image-preview showcase-preview-trigger"
+                title="点击预览"
+                @click="openShowcasePreview(image)"
+              >
+                <video
+                  v-if="isProjectVideoMedia(image)"
+                  :src="getShowcaseMediaSrc(image, apiOrigin)"
+                  muted
+                  playsinline
+                  preload="metadata"
+                  class="preview-video"
+                />
+                <img
+                  v-else
+                  :src="getShowcaseMediaSrc(image, apiOrigin)"
+                  :alt="image.file_name"
+                />
+                <span class="preview-badge">预览</span>
+              </div>
               <div class="image-info">
                 <div class="image-name">{{ image.file_name }}</div>
                 <div class="image-desc" v-if="image.description">{{ image.description }}</div>
@@ -248,9 +267,9 @@
                   <span>{{ formatFileSize(image.file_size) }}</span>
                   <span>{{ formatDateTime(image.created_at) }}</span>
                 </div>
-                </div>
+              </div>
               <div class="image-actions">
-                <button class="download-btn" @click="downloadAttachment(image)">下载</button>
+                <button class="download-btn" @click.stop="downloadAttachment(image)">下载</button>
               </div>
             </div>
           </div>
@@ -384,6 +403,11 @@
         </button>
       </div>
     </div>
+
+    <ShowcaseMediaPreviewDialog
+      v-model="showcasePreviewVisible"
+      :item="showcasePreviewItem"
+    />
   </div>
 </template>
 
@@ -393,6 +417,12 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import request, { getApiOrigin } from '@/utils/request'
+import ShowcaseMediaPreviewDialog from '@/components/ShowcaseMediaPreviewDialog.vue'
+import {
+  getShowcaseMediaSrc,
+  isProjectShowcaseMedia,
+  isProjectVideoMedia,
+} from '@/utils/projectMedia'
 
 const router = useRouter()
 const route = useRoute()
@@ -418,7 +448,7 @@ const tabs = [
   { key: 'detail', label: '项目详情' },
   { key: 'team', label: '研究团队' },
   { key: 'budget', label: '经费预算' },
-  { key: 'images', label: '图片展示' },
+  { key: 'images', label: '图片与视频' },
   { key: 'attachments', label: '附件材料' },
   { key: 'reviews', label: '评审意见' },
   { key: 'progress', label: '项目进展' },
@@ -438,16 +468,22 @@ const totalBudget = computed(() => {
 })
 
 const images = computed(() => {
-  return attachments.value.filter((a: any) =>
-    a.type === 'image' || (a.mime_type && a.mime_type.startsWith('image/'))
-  )
+  return attachments.value.filter((a: any) => isProjectShowcaseMedia(a))
 })
 
 const documents = computed(() => {
-  return attachments.value.filter((a: any) =>
-    a.type !== 'image' && !(a.mime_type && a.mime_type.startsWith('image/'))
-  )
+  return attachments.value.filter((a: any) => !isProjectShowcaseMedia(a))
 })
+
+const apiOrigin = getApiOrigin()
+const showcasePreviewVisible = ref(false)
+const showcasePreviewItem = ref<Record<string, unknown> | null>(null)
+
+const openShowcasePreview = (item: Record<string, unknown>) => {
+  if (!item.file_path) return
+  showcasePreviewItem.value = item
+  showcasePreviewVisible.value = true
+}
 
 const canStartReview = computed(() => {
   if (!project.value || !myReview.value) return false
@@ -1173,6 +1209,20 @@ onMounted(() => {
   vertical-align: top;
 }
 
+.team-table th.col-intro,
+.team-table td.member-intro-cell {
+  min-width: 160px;
+  max-width: 280px;
+}
+
+.team-table td.member-intro-cell {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #555;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .text-right {
   text-align: right;
 }
@@ -1447,13 +1497,20 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 
-.image-preview img {
+.image-preview img,
+.image-preview .preview-video {
   width: 100%;
   height: 100%;
   object-fit: cover;
   transition: transform 0.3s;
+}
+
+.image-preview .preview-video {
+  object-fit: contain;
+  background: #000;
 }
 
 .image-card:hover .image-preview img {

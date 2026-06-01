@@ -61,42 +61,6 @@ function fixMultipartFilename(name) {
   }
 }
 
-// 项目附件上传（须在 createServer 路由之前定义，供 /api/projects/upload-attachment 使用）
-const projectUploadsDir = path.join(__dirname, 'uploads', 'projects');
-if (!fs.existsSync(projectUploadsDir)) {
-  fs.mkdirSync(projectUploadsDir, { recursive: true });
-}
-const projectUploadStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, projectUploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const safe = fixMultipartFilename(file.originalname || '');
-    const ext = path.extname(safe) || path.extname(file.originalname || '');
-    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
-  }
-});
-const projectUploadFileFilter = (req, file, cb) => {
-  const allowedTypes = [
-    'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.ms-excel',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/zip'
-  ];
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('不支持的文件类型'), false);
-  }
-};
-const projectUpload = multer({
-  storage: projectUploadStorage,
-  fileFilter: projectUploadFileFilter,
-  limits: { fileSize: 10 * 1024 * 1024 }
-});
 function getTaskTypeLabel(type) {
   switch (type) {
     case 1: return '审批任务'
@@ -219,6 +183,326 @@ function sqlProjectBudgetTotal(alias = 'p') {
   return `(SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = ${alias}.id)`;
 }
 
+const FUNDS_REQUEST_UPLOADS_DIR = path.join(__dirname, 'uploads', 'funds-requests');
+const INCUBATION_UPLOADS_DIR = path.join(__dirname, 'uploads', 'incubation');
+
+/** 入库用相对路径（相对 backend 根目录），便于迁移部署 */
+function uploadFileStoredPath(absoluteDiskPath, fallbackRelativeDir) {
+  const abs = path.resolve(absoluteDiskPath);
+  const rel = path.relative(__dirname, abs).replace(/\\/g, '/');
+  if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+    return rel;
+  }
+  const dir = String(fallbackRelativeDir).replace(/^[/\\]+/, '').replace(/\\/g, '/');
+  return `${dir}/${path.basename(abs)}`;
+}
+
+/** 解析上传附件磁盘路径（兼容相对路径、/uploads/...、历史绝对路径） */
+function resolveUploadDiskPath(storedPath, uploadDir) {
+  if (!storedPath) return null;
+  const raw = String(storedPath).trim();
+  const baseName = path.basename(raw.replace(/\\/g, '/'));
+  const candidates = [
+    path.join(__dirname, raw.replace(/^[/\\]+/, '')),
+    path.join(uploadDir, baseName),
+  ];
+  if (path.isAbsolute(raw)) {
+    candidates.unshift(path.normalize(raw));
+  }
+  const normRaw = raw.replace(/\\/g, '/');
+  const subDir = path.basename(uploadDir);
+  const subIdx = normRaw.indexOf(`${subDir}/`);
+  if (subIdx >= 0) {
+    candidates.push(path.join(__dirname, 'uploads', normRaw.slice(subIdx)));
+  }
+  const seen = new Set();
+  for (const p of candidates) {
+    const norm = path.normalize(p);
+    if (!norm || seen.has(norm)) continue;
+    seen.add(norm);
+    if (fs.existsSync(norm)) return norm;
+  }
+  return path.normalize(candidates[0]);
+}
+
+function fundsRequestFileStoredPath(absoluteDiskPath) {
+  return uploadFileStoredPath(absoluteDiskPath, 'uploads/funds-requests');
+}
+
+function resolveFundsRequestFileDiskPath(storedPath) {
+  return resolveUploadDiskPath(storedPath, FUNDS_REQUEST_UPLOADS_DIR);
+}
+
+function incubationFileStoredPath(absoluteDiskPath) {
+  return uploadFileStoredPath(absoluteDiskPath, 'uploads/incubation');
+}
+
+function resolveIncubationFileDiskPath(storedPath) {
+  return resolveUploadDiskPath(storedPath, INCUBATION_UPLOADS_DIR);
+}
+
+const PROJECT_UPLOADS_DIR = path.join(__dirname, 'uploads', 'projects');
+
+function projectAttachmentStoredPath(absoluteDiskPath) {
+  return uploadFileStoredPath(absoluteDiskPath, 'uploads/projects');
+}
+
+/** 解析项目附件磁盘路径（兼容相对路径、/uploads/projects/...、历史绝对路径及按项目分子目录） */
+function resolveProjectAttachmentDiskPath(storedPath) {
+  if (!storedPath) return null;
+  const raw = String(storedPath).trim();
+  const normRaw = raw.replace(/\\/g, '/');
+  const baseName = path.basename(normRaw);
+  const candidates = [];
+  if (path.isAbsolute(raw)) {
+    candidates.push(path.normalize(raw));
+  }
+  candidates.push(path.join(__dirname, raw.replace(/^[/\\]+/, '')));
+  candidates.push(path.join(PROJECT_UPLOADS_DIR, baseName));
+  const projectsIdx = normRaw.indexOf('projects/');
+  if (projectsIdx >= 0) {
+    candidates.push(path.join(__dirname, 'uploads', normRaw.slice(projectsIdx)));
+  }
+  const segments = normRaw.split('/').filter(Boolean);
+  const pi = segments.indexOf('projects');
+  if (pi >= 0 && segments.length > pi + 1) {
+    candidates.push(path.join(PROJECT_UPLOADS_DIR, ...segments.slice(pi + 1)));
+  }
+  const seen = new Set();
+  for (const p of candidates) {
+    const norm = path.normalize(p);
+    if (!norm || seen.has(norm)) continue;
+    seen.add(norm);
+    if (fs.existsSync(norm)) return norm;
+  }
+  return path.normalize(candidates[0]);
+}
+
+/** 返回给前端的访问路径（带前导 /，便于拼接 origin） */
+function projectAttachmentPublicPath(storedPath) {
+  if (!storedPath) return '';
+  const p = String(storedPath).trim().replace(/\\/g, '/');
+  return p.startsWith('/') ? p : `/${p}`;
+}
+
+/** 入库路径：相对 uploads/projects/...，兼容前端 /uploads/... 与历史绝对路径 */
+function projectAttachmentPathForDb(filePath) {
+  if (!filePath) return filePath;
+  const p = String(filePath).trim();
+  if (path.isAbsolute(p) && !p.replace(/\\/g, '/').startsWith('/')) {
+    return projectAttachmentStoredPath(p);
+  }
+  return p.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+// 项目附件上传（须在 createServer 路由之前定义，供 /api/projects/upload-attachment 使用）
+if (!fs.existsSync(PROJECT_UPLOADS_DIR)) {
+  fs.mkdirSync(PROJECT_UPLOADS_DIR, { recursive: true });
+}
+const projectUploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, PROJECT_UPLOADS_DIR);
+  },
+  filename: (req, file, cb) => {
+    const safe = fixMultipartFilename(file.originalname || '');
+    const ext = path.extname(safe) || path.extname(file.originalname || '');
+    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+  }
+});
+function projectAttachmentTypeFromMime(mimeType) {
+  const m = String(mimeType || '');
+  if (m.startsWith('image/')) return 'image';
+  if (m.startsWith('video/')) return 'video';
+  if (m.startsWith('audio/')) return 'audio';
+  return 'attachment';
+}
+
+const projectUploadFileFilter = (req, file, cb) => {
+  const allowedTypes = [
+    'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
+    'video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo', 'video/mpeg',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/zip'
+  ];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('不支持的文件类型'), false);
+  }
+};
+const projectUpload = multer({
+  storage: projectUploadStorage,
+  fileFilter: projectUploadFileFilter,
+  limits: { fileSize: 50 * 1024 * 1024 }
+});
+
+const NEWS_UPLOADS_DIR = path.join(__dirname, 'uploads', 'news');
+
+function newsMediaStoredPath(absoluteDiskPath) {
+  return uploadFileStoredPath(absoluteDiskPath, 'uploads/news');
+}
+
+function resolveNewsMediaDiskPath(storedPath) {
+  return resolveUploadDiskPath(storedPath, NEWS_UPLOADS_DIR);
+}
+
+function newsMediaPublicPath(storedPath) {
+  if (!storedPath) return '';
+  let p = String(storedPath).trim().replace(/\\/g, '/');
+  if (/^https?:\/\//i.test(p)) {
+    try {
+      p = new URL(p).pathname;
+    } catch { /* keep p */ }
+  }
+  return p.startsWith('/') ? p : `/${p}`;
+}
+
+/** 入库路径：相对 uploads/news/...，兼容 /uploads/...、完整 URL 与历史绝对路径 */
+function newsMediaPathForDb(filePath) {
+  if (!filePath) return filePath;
+  let p = String(filePath).trim();
+  if (/^https?:\/\//i.test(p)) {
+    try {
+      return newsMediaPathForDb(new URL(p).pathname);
+    } catch { /* fall through */ }
+  }
+  if (path.isAbsolute(p) && !p.replace(/\\/g, '/').startsWith('/')) {
+    return newsMediaStoredPath(p);
+  }
+  return p.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function mapNewsMediaRow(row) {
+  if (!row) return row;
+  return { ...row, file_url: newsMediaPublicPath(row.file_url) };
+}
+
+function mapCarouselRow(row) {
+  if (!row) return row;
+  return { ...row, image_url: newsMediaPublicPath(row.image_url) };
+}
+
+/** 正文 HTML 中媒体地址统一为 /uploads/news/...（去掉域名，便于跨环境部署） */
+function normalizeNewsContentForDb(html) {
+  if (!html || typeof html !== 'string') return html;
+  return html.replace(
+    /(src|href)=(["'])([^"']+)\2/gi,
+    (m, attr, q, url) => {
+      if (!/uploads[/\\]news[/\\]/i.test(url)) return m;
+      const pub = newsMediaPublicPath(newsMediaPathForDb(url));
+      return `${attr}=${q}${pub}${q}`;
+    }
+  );
+}
+
+if (!fs.existsSync(NEWS_UPLOADS_DIR)) {
+  fs.mkdirSync(NEWS_UPLOADS_DIR, { recursive: true });
+}
+const newsUploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, NEWS_UPLOADS_DIR),
+  filename: (req, file, cb) => {
+    const safe = fixMultipartFilename(file.originalname || '');
+    const ext = path.extname(safe) || path.extname(file.originalname || '');
+    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+  },
+});
+const newsUpload = multer({
+  storage: newsUploadStorage,
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+
+/** 项目已花费：经费申请批准金额合计 */
+function sqlProjectFundsSpent(alias = 'p') {
+  return `(SELECT COALESCE(SUM(fri.feedback_amount), 0)
+    FROM \`FundsRequestItem\` fri
+    INNER JOIN \`FundsRequest\` fr ON fr.id = fri.funds_request_id
+    WHERE fr.project_id = ${alias}.id
+      AND fr.feedback_action IN ('approved', 'partial_approved')
+      AND fri.feedback_amount IS NOT NULL)`;
+}
+
+/** 剩余预算（元）= 总预算 - 已花费，与列表卡片一致，可为负表示超支 */
+function calcProjectFundsRemaining(totalBudget, spentAmount) {
+  const total = parseFloat(totalBudget) || 0;
+  const spent = parseFloat(spentAmount) || 0;
+  return parseFloat((total - spent).toFixed(2));
+}
+
+/** 项目经费使用汇总（总预算、已花费、历次申请及明细） */
+async function getProjectFundsUsageData(pool, projectId) {
+  const [budgetResult] = await pool.query(
+    'SELECT COALESCE(SUM(amount), 0) AS total_budget FROM `ProjectBudget` WHERE project_id = ?',
+    [projectId],
+  );
+  const totalBudget = parseFloat(budgetResult[0]?.total_budget) || 0;
+
+  const [spentRows] = await pool.query(
+    `SELECT COALESCE(SUM(fri.feedback_amount), 0) AS spent_amount
+     FROM \`FundsRequestItem\` fri
+     INNER JOIN \`FundsRequest\` fr ON fr.id = fri.funds_request_id
+     WHERE fr.project_id = ?
+       AND fr.feedback_action IN ('approved', 'partial_approved')
+       AND fri.feedback_amount IS NOT NULL`,
+    [projectId],
+  );
+  const spentAmount = parseFloat(spentRows[0]?.spent_amount) || 0;
+
+  const [requests] = await pool.query(
+    `SELECT
+       fr.id,
+       fr.application_date,
+       fr.created_at,
+       fr.status,
+       fr.submission_type,
+       fr.feedback_action,
+       fr.feedback_comment,
+       fr.feedback_date,
+       fr.service_requirement,
+       u.name AS applicant_name,
+       (SELECT COALESCE(SUM(fri.amount), 0) FROM \`FundsRequestItem\` fri WHERE fri.funds_request_id = fr.id) AS requested_amount,
+       (SELECT COALESCE(SUM(fri.feedback_amount), 0) FROM \`FundsRequestItem\` fri
+        WHERE fri.funds_request_id = fr.id AND fri.feedback_amount IS NOT NULL) AS approved_amount
+     FROM \`FundsRequest\` fr
+     LEFT JOIN \`User\` u ON fr.applicant_id = u.id
+     WHERE fr.project_id = ?
+     ORDER BY COALESCE(fr.application_date, fr.created_at) DESC`,
+    [projectId],
+  );
+
+  const requestIds = requests.map((r) => r.id);
+  const itemsByRequest = {};
+  if (requestIds.length > 0) {
+    const placeholders = requestIds.map(() => '?').join(',');
+    const [items] = await pool.query(
+      `SELECT id, funds_request_id, category, item_name, description, amount, feedback_amount, sort_order
+       FROM \`FundsRequestItem\`
+       WHERE funds_request_id IN (${placeholders})
+       ORDER BY sort_order ASC, created_at ASC`,
+      requestIds,
+    );
+    for (const item of items) {
+      if (!itemsByRequest[item.funds_request_id]) itemsByRequest[item.funds_request_id] = [];
+      itemsByRequest[item.funds_request_id].push(item);
+    }
+  }
+
+  return {
+    total_budget: totalBudget,
+    spent_amount: spentAmount,
+    remaining_amount: calcProjectFundsRemaining(totalBudget, spentAmount),
+    requests: requests.map((r) => ({
+      ...r,
+      requested_amount: parseFloat(r.requested_amount) || 0,
+      approved_amount: parseFloat(r.approved_amount) || 0,
+      items: itemsByRequest[r.id] || [],
+    })),
+  };
+}
+
 /**
  * 「总计」与分项预算科目互斥：不可同时存在；「总计」至多一行。
  * @param {Array<{ category?: string, item_name?: string }>} budgetItems
@@ -297,9 +581,13 @@ function normalizeRole(role) {
     assistant: 'project_manager',
     project_manager: 'project_manager',
     reviewer: 'reviewer',
+    funds_manager: 'funds_manager',
   };
   return roleMap[r] || r || 'applicant';
 }
+
+/** 自助注册须凭邀请码的角色 */
+const REGISTER_INVITATION_ROLES = ['reviewer', 'project_manager', 'funds_manager'];
 // 辅助函数：验证token
 // Token 验证函数（修复版）
 // Token 验证函数 - 确保返回一致的用户对象
@@ -569,7 +857,7 @@ function generateUUID() {
 /** 自助注册允许的角色（不含 admin） */
 function normalizeRegisterRole(r) {
   const s = String(r || '').toLowerCase().trim();
-  if (['applicant', 'reviewer', 'project_manager', 'admin'].includes(s)) return s;
+  if (['applicant', 'reviewer', 'project_manager', 'funds_manager', 'admin'].includes(s)) return s;
   return 'applicant';
 }
 
@@ -934,7 +1222,10 @@ const server = http.createServer(async (req, res) => {
       WHERE n.status = 'published'
       ORDER BY n.is_top ASC, n.published_at DESC
     `);
-        sendResponse(res, 200, { success: true, data: items });
+        sendResponse(res, 200, {
+          success: true,
+          data: items.map(mapCarouselRow),
+        });
       } catch (error) {
         console.error('获取轮播数据失败:', error);
         sendResponse(res, 500, { success: false, error: '获取轮播数据失败' });
@@ -951,7 +1242,15 @@ const server = http.createServer(async (req, res) => {
         // 增加浏览量
         await pool.query(`UPDATE News SET view_count = view_count + 1 WHERE id = ?`, [newsId]);
         const [media] = await pool.query(`SELECT * FROM NewsMedia WHERE news_id = ? ORDER BY sort_order`, [newsId]);
-        sendResponse(res, 200, { success: true, data: { ...rows[0], media } });
+        const row = rows[0];
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            ...row,
+            content: normalizeNewsContentForDb(row.content),
+            media: media.map(mapNewsMediaRow),
+          },
+        });
       } catch (error) {
         console.error('获取新闻详情失败:', error);
         sendResponse(res, 500, { success: false, error: '获取新闻详情失败' });
@@ -1011,7 +1310,7 @@ const server = http.createServer(async (req, res) => {
         const publishedAt = finalStatus === 'published' ? new Date() : null;
         await pool.query(
           `INSERT INTO News (id, title, summary, content, author_id, status, is_carousel, published_at) VALUES (?, ?, ?, ?, ?, ?, 'no', ?)`,
-          [id, title, summary || '', content, user.id, finalStatus, publishedAt]
+          [id, title, summary || '', normalizeNewsContentForDb(content), user.id, finalStatus, publishedAt]
         );
         const [created] = await pool.query(`SELECT n.*, u.name AS author_name FROM News n LEFT JOIN \`User\` u ON n.author_id = u.id WHERE n.id = ?`, [id]);
         sendResponse(res, 201, { success: true, data: created[0], message: '创建成功' });
@@ -1031,22 +1330,6 @@ const server = http.createServer(async (req, res) => {
           sendResponse(res, 403, { errno: 1, success: false, error: '无权操作' }); return;
         }
 
-        const newsUploadDir = path.join(__dirname, 'uploads', 'news');
-        if (!fs.existsSync(newsUploadDir)) { fs.mkdirSync(newsUploadDir, { recursive: true }); }
-
-        const newsStorage = multer.diskStorage({
-          destination: (req2, file, cb) => cb(null, newsUploadDir),
-          filename: (req2, file, cb) => {
-            const safe = fixMultipartFilename(file.originalname || '');
-            const ext = path.extname(safe) || path.extname(file.originalname || '');
-            cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
-          }
-        });
-        const newsUpload = multer({
-          storage: newsStorage,
-          limits: { fileSize: 50 * 1024 * 1024 }
-        });
-
         newsUpload.single('file')(req, res, async (err) => {
           if (err) {
             sendResponse(res, 500, { errno: 1, success: false, error: '上传失败: ' + err.message });
@@ -1064,13 +1347,14 @@ const server = http.createServer(async (req, res) => {
           if (file.mimetype.startsWith('video/')) fileType = 'video';
           else if (file.mimetype.startsWith('audio/')) fileType = 'audio';
 
-          const fileUrl = `/uploads/news/${file.filename}`;
+          const storedPath = newsMediaStoredPath(file.path);
+          const publicPath = newsMediaPublicPath(storedPath);
 
           // 如果关联了 news_id，写入 NewsMedia 表
           if (newsId) {
             await pool.query(
               `INSERT INTO NewsMedia (id, news_id, file_type, file_url, file_name, file_size, mime_type) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-              [mediaId, newsId, fileType, fileUrl, fixMultipartFilename(file.originalname || ''), file.size, file.mimetype]
+              [mediaId, newsId, fileType, storedPath, fixMultipartFilename(file.originalname || ''), file.size, file.mimetype]
             );
           }
 
@@ -1080,7 +1364,7 @@ const server = http.createServer(async (req, res) => {
             success: true,
             data: {
               id: newsId ? mediaId : '',
-              url: fileUrl,
+              url: publicPath,
               type: fileType,
               name: fixMultipartFilename(file.originalname || '')
             }
@@ -1124,7 +1408,20 @@ const server = http.createServer(async (req, res) => {
             });
           }
         }
-        sendResponse(res, 200, { success: true, data: { ...rows[0], media, contentImages, carousel: carousel[0] || null } });
+        const row = rows[0];
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            ...row,
+            content: normalizeNewsContentForDb(row.content),
+            media: media.map(mapNewsMediaRow),
+            contentImages: contentImages.map((img) => ({
+              ...img,
+              file_url: newsMediaPublicPath(newsMediaPathForDb(img.file_url)),
+            })),
+            carousel: carousel[0] ? mapCarouselRow(carousel[0]) : null,
+          },
+        });
       } catch (error) {
         console.error('获取新闻详情失败:', error);
         sendResponse(res, 500, { success: false, error: '获取新闻详情失败' });
@@ -1151,7 +1448,10 @@ const server = http.createServer(async (req, res) => {
         const values = [];
         if (body.title !== undefined) { fields.push('title = ?'); values.push(body.title); }
         if (body.summary !== undefined) { fields.push('summary = ?'); values.push(body.summary); }
-        if (body.content !== undefined) { fields.push('content = ?'); values.push(body.content); }
+        if (body.content !== undefined) {
+          fields.push('content = ?');
+          values.push(normalizeNewsContentForDb(body.content));
+        }
         if (body.is_top !== undefined) { fields.push('is_top = ?'); values.push(body.is_top); }
         if (body.is_carousel !== undefined && ['yes', 'no'].includes(body.is_carousel)) { fields.push('is_carousel = ?'); values.push(body.is_carousel); }
         if (body.status !== undefined && ['draft', 'published', 'offline'].includes(body.status)) {
@@ -1223,8 +1523,10 @@ const server = http.createServer(async (req, res) => {
         // 删除关联的媒体文件
         const [media] = await pool.query(`SELECT file_url FROM NewsMedia WHERE news_id = ?`, [newsId]);
         for (const m of media) {
-          const filePath = path.join(__dirname, m.file_url.replace(/^\//, ''));
-          if (fs.existsSync(filePath)) { try { fs.unlinkSync(filePath); } catch (e) { /* ignore */ } }
+          const diskPath = resolveNewsMediaDiskPath(m.file_url);
+          if (diskPath && fs.existsSync(diskPath)) {
+            try { fs.unlinkSync(diskPath); } catch (e) { /* ignore */ }
+          }
         }
         await pool.query(`DELETE FROM News WHERE id = ?`, [newsId]);
         sendResponse(res, 200, { success: true, message: '删除成功' });
@@ -1251,7 +1553,7 @@ const server = http.createServer(async (req, res) => {
       LEFT JOIN News n ON n.id = cc.news_id
       ORDER BY cc.display_order ASC
     `);
-        sendResponse(res, 200, { success: true, data: items });
+        sendResponse(res, 200, { success: true, data: items.map(mapCarouselRow) });
       } catch (error) {
         console.error('获取轮播配置失败:', error);
         sendResponse(res, 500, { success: false, error: '获取轮播配置失败' });
@@ -1277,12 +1579,12 @@ const server = http.createServer(async (req, res) => {
         const id = randomUUID();
         await pool.query(
           `INSERT INTO CarouselConfig (id, news_id, image_url, display_order) VALUES (?, ?, ?, ?)`,
-          [id, news_id, image_url, display_order || 0]
+          [id, news_id, newsMediaPathForDb(image_url), display_order || 0]
         );
         // 同步设置 News.is_carousel = 'yes'
         await pool.query(`UPDATE News SET is_carousel = 'yes' WHERE id = ?`, [news_id]);
         const [created] = await pool.query(`SELECT cc.*, n.title AS news_title FROM CarouselConfig cc LEFT JOIN News n ON n.id = cc.news_id WHERE cc.id = ?`, [id]);
-        sendResponse(res, 201, { success: true, data: created[0], message: '添加轮播项成功' });
+        sendResponse(res, 201, { success: true, data: mapCarouselRow(created[0]), message: '添加轮播项成功' });
       } catch (error) {
         console.error('添加轮播项失败:', error);
         sendResponse(res, 500, { success: false, error: '添加轮播项失败' });
@@ -1302,7 +1604,10 @@ const server = http.createServer(async (req, res) => {
         const body = await parseRequestBody(req);
         const fields = [];
         const values = [];
-        if (body.image_url !== undefined) { fields.push('image_url = ?'); values.push(body.image_url); }
+        if (body.image_url !== undefined) {
+          fields.push('image_url = ?');
+          values.push(newsMediaPathForDb(body.image_url));
+        }
         if (body.display_order !== undefined) { fields.push('display_order = ?'); values.push(body.display_order); }
         if (fields.length === 0) { sendResponse(res, 400, { success: false, error: '没有要更新的字段' }); return; }
         values.push(itemId);
@@ -1349,11 +1654,11 @@ const server = http.createServer(async (req, res) => {
       }
 
       try {
-        const allowedRoles = ['applicant', 'reviewer', 'project_manager', 'admin'];
+        const allowedRoles = ['applicant', 'reviewer', 'project_manager', 'funds_manager', 'admin'];
         if (!body.role || !allowedRoles.includes(String(body.role).trim())) {
           sendResponse(res, 400, {
             success: false,
-            error: '请选择有效的身份类型（项目申请人 / 评审专家 / 项目经理 / 系统管理员）',
+            error: '请选择有效的身份类型（项目申请人 / 评审专家 / 项目经理 / 经费管理员 / 系统管理员）',
           });
           return;
         }
@@ -1414,6 +1719,7 @@ const server = http.createServer(async (req, res) => {
             applicant: '项目申请人',
             reviewer: '评审专家',
             project_manager: '项目经理',
+            funds_manager: '经费管理员',
             admin: '系统管理员',
           };
           sendResponse(res, 403, {
@@ -1568,12 +1874,12 @@ const server = http.createServer(async (req, res) => {
           let targetRole = requestedRole;
           let invitationInfo = null;
 
-          if (requestedRole === 'reviewer' || requestedRole === 'project_manager') {
+          if (REGISTER_INVITATION_ROLES.includes(requestedRole)) {
             const code = body.invitationCode ? String(body.invitationCode).trim() : '';
             if (!code) {
               sendResponse(res, 400, {
                 success: false,
-                error: '注册评审专家或项目经理必须填写有效邀请码'
+                error: '注册评审专家、项目经理或经费管理员必须填写有效邀请码'
               });
               return;
             }
@@ -1694,12 +2000,12 @@ const server = http.createServer(async (req, res) => {
         let targetRole = requestedRole;
         let invitationInfo = null;
 
-        if (requestedRole === 'reviewer' || requestedRole === 'project_manager') {
+        if (REGISTER_INVITATION_ROLES.includes(requestedRole)) {
           const code = body.invitationCode ? String(body.invitationCode).trim() : '';
           if (!code) {
             sendResponse(res, 400, {
               success: false,
-              error: '注册评审专家或项目经理必须填写有效邀请码'
+              error: '注册评审专家、项目经理或经费管理员必须填写有效邀请码'
             });
             return;
           }
@@ -1945,10 +2251,10 @@ const server = http.createServer(async (req, res) => {
         body = {};
       }
       const targetRole = String(body.target_role || '').trim();
-      if (targetRole !== 'reviewer' && targetRole !== 'project_manager') {
+      if (targetRole !== 'reviewer' && targetRole !== 'project_manager' && targetRole !== 'funds_manager') {
         sendResponse(res, 400, {
           success: false,
-          error: '邀请角色仅支持：评审专家(reviewer)、项目经理(project_manager)'
+          error: '邀请角色仅支持：评审专家(reviewer)、项目经理(project_manager)、经费管理员(funds_manager)'
         });
         return;
       }
@@ -2092,6 +2398,14 @@ const server = http.createServer(async (req, res) => {
           'review_achievements',
           'view_funding',
           'review_funding_applications'
+        ],
+        'funds_manager': [
+          'view_dashboard',
+          'view_funding',
+          'review_funding_applications',
+          'manage_funding',
+          'view_projects',
+          'view_project_detail'
         ],
         'admin': [
           'view_dashboard',
@@ -4540,7 +4854,7 @@ const server = http.createServer(async (req, res) => {
 
         // 组合统计数据
         const stats = {};
-        const allRoles = ['applicant', 'reviewer', 'project_manager', 'admin'];
+        const allRoles = ['applicant', 'reviewer', 'project_manager', 'funds_manager', 'admin'];
 
         allRoles.forEach(role => {
           const userStat = userStats.find(s => s.role === role) || { user_count: 0, active_users: 0, pending_users: 0 };
@@ -5756,6 +6070,1349 @@ const server = http.createServer(async (req, res) => {
           success: false,
           error: '获取仪表板概览失败'
         });
+      }
+      return;
+    }
+
+    // ==================== 申请人 - 经费申请 API ====================
+
+    if (pathname === '/api/applicant/funds-requests/eligible-projects' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'applicant') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const uid = user.userId || user.id;
+        const [rows] = await pool.query(`
+          SELECT
+            p.id, p.project_code, p.title, p.status, p.approval_date,
+            (SELECT COUNT(*) FROM \`FundsRequest\` fr WHERE fr.project_id = p.id) AS funds_request_count
+          FROM \`Project\` p
+          WHERE p.status IN ('approved', 'incubating')
+            AND (
+              p.applicant_id = ?
+              OR EXISTS (SELECT 1 FROM \`ProjectMember\` pm WHERE pm.project_id = p.id AND pm.user_id = ?)
+            )
+          ORDER BY p.updated_at DESC
+        `, [uid, uid]);
+        sendResponse(res, 200, { success: true, data: rows });
+      } catch (error) {
+        console.error('获取可经费申请项目失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目列表失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/applicant/funds-requests' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'applicant') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const q = url.parse(req.url, true).query;
+        const status = q.status ? String(q.status).trim() : '';
+        const uid = user.userId || user.id;
+
+        let sql = `
+          SELECT
+            fr.id, fr.project_id, fr.application_date, fr.service_requirement,
+            fr.submission_type, fr.feedback_action, fr.feedback_comment, fr.feedback_date,
+            fr.result_description, fr.result_date, fr.status, fr.created_at,
+            p.title AS project_title, p.project_code,
+            fb.name AS feedback_by_name,
+            (SELECT COALESCE(SUM(fri.amount), 0) FROM \`FundsRequestItem\` fri WHERE fri.funds_request_id = fr.id) AS total_amount,
+            (SELECT COALESCE(SUM(fri.feedback_amount), 0) FROM \`FundsRequestItem\` fri
+             WHERE fri.funds_request_id = fr.id AND fri.feedback_amount IS NOT NULL) AS approved_amount
+          FROM \`FundsRequest\` fr
+          INNER JOIN \`Project\` p ON fr.project_id = p.id
+          LEFT JOIN \`User\` fb ON fr.feedback_by = fb.id
+          WHERE (
+            fr.applicant_id = ?
+            OR fr.project_id IN (
+              SELECT p2.id FROM \`Project\` p2
+              WHERE p2.applicant_id = ?
+                OR EXISTS (SELECT 1 FROM \`ProjectMember\` pm WHERE pm.project_id = p2.id AND pm.user_id = ?)
+            )
+          )
+        `;
+        const params = [uid, uid, uid];
+        if (status) {
+          sql += ' AND fr.status = ?';
+          params.push(status);
+        }
+        sql += ' ORDER BY fr.created_at DESC';
+
+        const [rows] = await pool.query(sql, params);
+        for (const row of rows) {
+          const [files] = await pool.query(
+            'SELECT id, attachment_type, file_name, file_path, file_size, mime_type, created_at FROM `FundsRequestFile` WHERE funds_request_id = ?',
+            [row.id],
+          );
+          row.files = files;
+        }
+        sendResponse(res, 200, { success: true, data: rows });
+      } catch (error) {
+        console.error('获取经费申请列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取经费申请列表失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/applicant\/funds-requests\/[^/]+\/result$/) && req.method === 'PUT') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'applicant') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      const requestId = pathname.replace('/api/applicant/funds-requests/', '').replace('/result', '');
+      try {
+        const body = await parseRequestBody(req);
+        const resultDescription = String(body.result_description || '').trim();
+        if (!resultDescription) {
+          sendResponse(res, 400, { success: false, error: '请填写成果描述' });
+          return;
+        }
+        const uid = user.userId || user.id;
+        const [rows] = await pool.query(
+          `SELECT fr.*, p.title AS project_title
+           FROM \`FundsRequest\` fr
+           INNER JOIN \`Project\` p ON fr.project_id = p.id
+           WHERE fr.id = ?
+             AND (
+               fr.applicant_id = ?
+               OR fr.project_id IN (SELECT pm.project_id FROM \`ProjectMember\` pm WHERE pm.user_id = ?)
+             )`,
+          [requestId, uid, uid],
+        );
+        if (rows.length === 0) {
+          sendResponse(res, 404, { success: false, error: '经费申请不存在或无权限' });
+          return;
+        }
+        const fr = rows[0];
+        if (fr.status !== 'feedback_given') {
+          sendResponse(res, 400, { success: false, error: '该经费申请尚未收到反馈或已提交成果' });
+          return;
+        }
+        if (!['approved', 'partial_approved'].includes(fr.feedback_action)) {
+          sendResponse(res, 400, { success: false, error: '经费申请未获批准，无法提交成果反馈' });
+          return;
+        }
+        await pool.query(
+          `UPDATE \`FundsRequest\`
+           SET result_description = ?, result_date = NOW(), status = 'result_submitted', updated_at = NOW()
+           WHERE id = ?`,
+          [resultDescription, requestId],
+        );
+        const [managers] = await pool.query(
+          `SELECT id FROM \`User\` WHERE role = 'funds_manager' AND status = 'active'`,
+        );
+        for (const fm of managers) {
+          await pool.query(
+            `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+             VALUES (?, ?, 'funding', ?, ?, ?, 'FundsRequest', NOW())`,
+            [
+              randomUUID(),
+              fm.id,
+              '经费申请成果已提交',
+              `项目「${fr.project_title}」的经费申请已提交成果反馈。`,
+              requestId,
+            ],
+          );
+        }
+        sendResponse(res, 200, { success: true, message: '成果反馈提交成功' });
+      } catch (error) {
+        console.error('提交经费成果反馈失败:', error);
+        sendResponse(res, 500, { success: false, error: '提交成果反馈失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/applicant\/funds-requests\/[^/]+$/) && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'applicant') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      const requestId = pathname.replace('/api/applicant/funds-requests/', '');
+      try {
+        const uid = user.userId || user.id;
+        const [requests] = await pool.query(`
+          SELECT fr.*, p.title AS project_title, p.project_code, fb.name AS feedback_by_name
+          FROM \`FundsRequest\` fr
+          INNER JOIN \`Project\` p ON fr.project_id = p.id
+          LEFT JOIN \`User\` fb ON fr.feedback_by = fb.id
+          WHERE fr.id = ? AND fr.applicant_id = ?
+        `, [requestId, uid]);
+        if (requests.length === 0) {
+          sendResponse(res, 404, { success: false, error: '经费申请不存在' });
+          return;
+        }
+        const [items] = await pool.query(`
+          SELECT id, category, item_name, description, amount, feedback_amount, feedback_comment, sort_order
+          FROM \`FundsRequestItem\` WHERE funds_request_id = ? ORDER BY sort_order ASC, created_at ASC
+        `, [requestId]);
+        const [files] = await pool.query(`
+          SELECT id, attachment_type, file_name, file_path, file_size, mime_type, created_at
+          FROM \`FundsRequestFile\` WHERE funds_request_id = ? ORDER BY sort_order ASC, created_at ASC
+        `, [requestId]);
+        sendResponse(res, 200, {
+          success: true,
+          data: { ...requests[0], items, files },
+        });
+      } catch (error) {
+        console.error('获取经费申请详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取详情失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/applicant/funds-requests' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'applicant') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const body = await parseRequestBody(req);
+        const projectId = body.project_id;
+        const serviceRequirement = String(body.service_requirement || '').trim();
+        const items = Array.isArray(body.items) ? body.items : [];
+
+        if (!projectId || !serviceRequirement) {
+          sendResponse(res, 400, { success: false, error: '请选择项目并填写经费使用说明' });
+          return;
+        }
+        if (items.length === 0) {
+          sendResponse(res, 400, { success: false, error: '请至少添加一条经费预算明细' });
+          return;
+        }
+
+        const VALID_CATEGORIES = new Set([
+          '设备费', '材料费', '测试费', '差旅费', '会议费', '劳务费',
+          '专家咨询费', '出版费', '管理费', '其他',
+        ]);
+
+        const uid = user.userId || user.id;
+        const [projects] = await pool.query(
+          `SELECT p.* FROM \`Project\` p
+           WHERE p.id = ?
+             AND p.status IN ('approved', 'incubating')
+             AND (
+               p.applicant_id = ?
+               OR EXISTS (SELECT 1 FROM \`ProjectMember\` pm WHERE pm.project_id = p.id AND pm.user_id = ?)
+             )`,
+          [projectId, uid, uid],
+        );
+        if (projects.length === 0) {
+          sendResponse(res, 404, { success: false, error: '项目不存在、无权限或当前状态不可申请经费' });
+          return;
+        }
+
+        const project = projects[0];
+        const requestId = randomUUID();
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          await connection.query(
+            `INSERT INTO \`FundsRequest\`
+             (id, project_id, applicant_id, submission_type, application_date, service_requirement, status)
+             VALUES (?, ?, ?, 'applicant_request', NOW(), ?, 'pending')`,
+            [requestId, projectId, uid, serviceRequirement],
+          );
+
+          let sortOrder = 0;
+          for (const raw of items) {
+            const category = String(raw.category || '').trim();
+            const itemName = String(raw.item_name || '').trim();
+            const description = raw.description ? String(raw.description).trim() : null;
+            const amount = parseFloat(raw.amount);
+            if (!category || !VALID_CATEGORIES.has(category)) {
+              throw new Error(`预算科目无效：${category || '(空)'}`);
+            }
+            if (!itemName) {
+              throw new Error('每条明细须填写项目名称');
+            }
+            if (!Number.isFinite(amount) || amount <= 0) {
+              throw new Error(`「${itemName}」的申请金额须大于 0`);
+            }
+            await connection.query(
+              `INSERT INTO \`FundsRequestItem\`
+               (id, funds_request_id, category, item_name, description, amount, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              [randomUUID(), requestId, category, itemName, description, amount, sortOrder++],
+            );
+          }
+
+          const [managers] = await connection.query(
+            `SELECT id FROM \`User\` WHERE role = 'funds_manager' AND status = 'active'`,
+          );
+          for (const fm of managers) {
+            await connection.query(
+              `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+               VALUES (?, ?, 'funding', ?, ?, ?, 'FundsRequest', NOW())`,
+              [
+                randomUUID(),
+                fm.id,
+                '新的经费申请',
+                `项目「${project.title}」提交了经费申请，请及时审核。`,
+                requestId,
+              ],
+            );
+          }
+
+          await connection.commit();
+          sendResponse(res, 200, {
+            success: true,
+            message: '经费申请提交成功',
+            data: { id: requestId },
+          });
+        } catch (txErr) {
+          await connection.rollback();
+          sendResponse(res, 400, { success: false, error: txErr.message || '提交失败' });
+        } finally {
+          connection.release();
+        }
+      } catch (error) {
+        console.error('提交经费申请失败:', error);
+        sendResponse(res, 500, { success: false, error: '提交经费申请失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/funds-requests\/files\/[a-f0-9-]+$/) && req.method === 'GET') {
+      const token = parsedUrl.query.token || req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const fileId = pathname.split('/')[4];
+        const [files] = await pool.query('SELECT * FROM `FundsRequestFile` WHERE id = ?', [fileId]);
+        if (files.length === 0) {
+          sendResponse(res, 404, { success: false, error: '文件不存在' });
+          return;
+        }
+        const fileInfo = files[0];
+        const [frRows] = await pool.query(
+          'SELECT id, applicant_id, project_id FROM `FundsRequest` WHERE id = ?',
+          [fileInfo.funds_request_id],
+        );
+        if (frRows.length === 0) {
+          sendResponse(res, 404, { success: false, error: '关联的经费申请不存在' });
+          return;
+        }
+        const fr = frRows[0];
+        const userId = user.userId || user.id;
+        let canAccess = user.role === 'funds_manager' || fr.applicant_id === userId;
+        if (!canAccess) {
+          const [pmAllow] = await pool.query(
+            'SELECT 1 FROM `ProjectMember` WHERE project_id = ? AND user_id = ? LIMIT 1',
+            [fr.project_id, userId],
+          );
+          canAccess = pmAllow.length > 0;
+        }
+        if (!canAccess) {
+          const [projAllow] = await pool.query(
+            'SELECT 1 FROM `Project` WHERE id = ? AND applicant_id = ? LIMIT 1',
+            [fr.project_id, userId],
+          );
+          canAccess = projAllow.length > 0;
+        }
+        if (!canAccess && checkPermission(user.role, ['admin', 'project_manager'])) {
+          canAccess = true;
+        }
+        if (!canAccess) {
+          sendResponse(res, 403, { success: false, error: '没有权限下载此文件' });
+          return;
+        }
+
+        const diskPath = resolveFundsRequestFileDiskPath(fileInfo.file_path);
+        if (!diskPath || !fs.existsSync(diskPath)) {
+          console.error('经费申请附件未找到:', {
+            fileId,
+            stored: fileInfo.file_path,
+            tried: diskPath,
+          });
+          sendResponse(res, 404, { success: false, error: '文件已丢失' });
+          return;
+        }
+
+        res.setHeader('Content-Type', fileInfo.mime_type || 'application/octet-stream');
+        res.setHeader(
+          'Content-Disposition',
+          `inline; filename*=UTF-8''${encodeURIComponent(fileInfo.file_name)}`,
+        );
+        res.setHeader('Content-Length', fileInfo.file_size);
+        const fileStream = fs.createReadStream(diskPath);
+        fileStream.pipe(res);
+        fileStream.on('error', (streamErr) => {
+          console.error('经费申请附件读取错误:', streamErr);
+          if (!res.headersSent) {
+            sendResponse(res, 500, { success: false, error: '文件读取失败' });
+          }
+        });
+      } catch (error) {
+        console.error('下载经费申请附件失败:', error);
+        sendResponse(res, 500, { success: false, error: '下载文件失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/applicant/funds-requests/upload' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'applicant') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      if (!fs.existsSync(FUNDS_REQUEST_UPLOADS_DIR)) {
+        fs.mkdirSync(FUNDS_REQUEST_UPLOADS_DIR, { recursive: true });
+      }
+
+      const form = formidable({
+        uploadDir: FUNDS_REQUEST_UPLOADS_DIR,
+        keepExtensions: true,
+        maxFileSize: 10 * 1024 * 1024,
+        filename: (name, ext) => `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`,
+      });
+
+      form.parse(req, async (err, fields, files) => {
+        if (err) {
+          sendResponse(res, 500, { success: false, error: '文件上传失败' });
+          return;
+        }
+        const file = files.file;
+        if (!file) {
+          sendResponse(res, 400, { success: false, error: '未找到上传文件' });
+          return;
+        }
+        try {
+          let fundsRequestId = fields.funds_request_id;
+          let attachmentType = fields.attachment_type;
+          if (Array.isArray(fundsRequestId)) fundsRequestId = fundsRequestId[0];
+          if (Array.isArray(attachmentType)) attachmentType = attachmentType[0];
+          if (!fundsRequestId || !attachmentType) {
+            sendResponse(res, 400, { success: false, error: '缺少必要参数' });
+            return;
+          }
+          const validTypes = ['application', 'feedback', 'result'];
+          if (!validTypes.includes(String(attachmentType))) {
+            sendResponse(res, 400, { success: false, error: '附件类型无效' });
+            return;
+          }
+
+          const uid = user.userId || user.id;
+          const [frRows] = await pool.query(
+            `SELECT fr.* FROM \`FundsRequest\` fr
+             WHERE fr.id = ?
+               AND (
+                 fr.applicant_id = ?
+                 OR fr.project_id IN (SELECT pm.project_id FROM \`ProjectMember\` pm WHERE pm.user_id = ?)
+               )`,
+            [fundsRequestId, uid, uid],
+          );
+          if (frRows.length === 0) {
+            sendResponse(res, 404, { success: false, error: '经费申请不存在或无权限' });
+            return;
+          }
+          const fr = frRows[0];
+          if (attachmentType === 'application' && fr.status !== 'pending') {
+            sendResponse(res, 400, { success: false, error: '仅待审核状态可上传申请附件' });
+            return;
+          }
+          if (attachmentType === 'result' && !['feedback_given', 'result_submitted'].includes(fr.status)) {
+            sendResponse(res, 400, { success: false, error: '仅已批准且未完成成果反馈时可上传成果附件' });
+            return;
+          }
+
+          const fileId = randomUUID();
+          const fileData = Array.isArray(file) ? file[0] : file;
+          const filePath = fileData.filepath || fileData.path;
+          const fileName = fileData.originalFilename || fileData.name;
+          const fileSize = fileData.size;
+          const mimeType = fileData.mimetype || fileData.type || 'application/octet-stream';
+          const absPath = path.resolve(filePath);
+          if (!fs.existsSync(absPath)) {
+            sendResponse(res, 500, { success: false, error: '上传文件保存失败' });
+            return;
+          }
+          const storedPath = fundsRequestFileStoredPath(absPath);
+
+          await pool.query(
+            `INSERT INTO \`FundsRequestFile\`
+             (id, funds_request_id, attachment_type, file_name, file_path, file_size, mime_type, uploaded_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [fileId, fundsRequestId, attachmentType, fileName, storedPath, fileSize, mimeType, uid],
+          );
+
+          sendResponse(res, 200, {
+            success: true,
+            data: { id: fileId, file_name: fileName },
+          });
+        } catch (uploadErr) {
+          console.error('经费申请附件上传失败:', uploadErr);
+          sendResponse(res, 500, { success: false, error: '保存附件失败' });
+        }
+      });
+      return;
+    }
+
+    // ==================== 经费管理员 - 经费申请登记（免审，同步至申请人） ====================
+
+    if (pathname === '/api/funds-manager/funds-request/eligible-projects' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const [rows] = await pool.query(`
+          SELECT
+            p.id, p.project_code, p.title, p.status, p.approval_date, p.applicant_id,
+            u.name AS applicant_name,
+            (SELECT COUNT(*) FROM \`FundsRequest\` fr WHERE fr.project_id = p.id) AS funds_request_count
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          WHERE p.status IN ('approved', 'incubating')
+          ORDER BY p.updated_at DESC
+        `);
+        sendResponse(res, 200, { success: true, data: rows });
+      } catch (error) {
+        console.error('获取可登记经费项目失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目列表失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/funds-manager/funds-requests' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const body = await parseRequestBody(req);
+        const projectId = body.project_id;
+        const serviceRequirement = String(body.service_requirement || '').trim();
+        const items = Array.isArray(body.items) ? body.items : [];
+        const feedbackComment = body.feedback_comment != null ? String(body.feedback_comment).trim() : '';
+
+        if (!projectId || !serviceRequirement) {
+          sendResponse(res, 400, { success: false, error: '请选择项目并填写经费使用说明' });
+          return;
+        }
+        if (items.length === 0) {
+          sendResponse(res, 400, { success: false, error: '请至少添加一条经费预算明细' });
+          return;
+        }
+
+        const VALID_CATEGORIES = new Set([
+          '设备费', '材料费', '测试费', '差旅费', '会议费', '劳务费',
+          '专家咨询费', '出版费', '管理费', '其他',
+        ]);
+
+        const managerId = user.userId || user.id;
+        const [projects] = await pool.query(
+          `SELECT p.*, u.name AS applicant_user_name FROM \`Project\` p
+           LEFT JOIN \`User\` u ON p.applicant_id = u.id
+           WHERE p.id = ? AND p.status IN ('approved', 'incubating')`,
+          [projectId],
+        );
+        if (projects.length === 0) {
+          sendResponse(res, 404, { success: false, error: '项目不存在或当前状态不可登记经费' });
+          return;
+        }
+
+        const project = projects[0];
+        const projectApplicantId = project.applicant_id;
+        if (!projectApplicantId) {
+          sendResponse(res, 400, { success: false, error: '项目缺少申请人信息，无法同步记录' });
+          return;
+        }
+
+        const requestId = randomUUID();
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          await connection.query(
+            `INSERT INTO \`FundsRequest\`
+             (id, project_id, applicant_id, submission_type, application_date, service_requirement,
+              feedback_date, feedback_by, feedback_action, feedback_comment, status)
+             VALUES (?, ?, ?, 'manager_direct', NOW(), ?, NOW(), ?, 'approved', ?, 'feedback_given')`,
+            [
+              requestId,
+              projectId,
+              projectApplicantId,
+              serviceRequirement,
+              managerId,
+              feedbackComment || '经费管理员直接登记，已批准',
+            ],
+          );
+
+          let sortOrder = 0;
+          for (const raw of items) {
+            const category = String(raw.category || '').trim();
+            const itemName = String(raw.item_name || '').trim();
+            const description = raw.description ? String(raw.description).trim() : null;
+            const amount = parseFloat(raw.amount);
+            if (!category || !VALID_CATEGORIES.has(category)) {
+              throw new Error(`预算科目无效：${category || '(空)'}`);
+            }
+            if (!itemName) {
+              throw new Error('每条明细须填写项目名称');
+            }
+            if (!Number.isFinite(amount) || amount <= 0) {
+              throw new Error(`「${itemName}」的金额须大于 0`);
+            }
+            await connection.query(
+              `INSERT INTO \`FundsRequestItem\`
+               (id, funds_request_id, category, item_name, description, amount, feedback_amount, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              [randomUUID(), requestId, category, itemName, description, amount, amount, sortOrder++],
+            );
+          }
+
+          await connection.query(
+            `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+             VALUES (?, ?, 'funding', ?, ?, ?, 'FundsRequest', NOW())`,
+            [
+              randomUUID(),
+              projectApplicantId,
+              '经费已登记',
+              `经费管理员已为项目「${project.title}」登记经费申请（已批准），请在「经费申请」与「成果反馈」中查看。`,
+              requestId,
+            ],
+          );
+
+          await connection.commit();
+          sendResponse(res, 200, {
+            success: true,
+            message: '经费登记成功，已同步至项目申请人',
+            data: { id: requestId },
+          });
+        } catch (txErr) {
+          await connection.rollback();
+          sendResponse(res, 400, { success: false, error: txErr.message || '登记失败' });
+        } finally {
+          connection.release();
+        }
+      } catch (error) {
+        console.error('经费管理员登记经费失败:', error);
+        sendResponse(res, 500, { success: false, error: '登记失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/funds-manager/funds-requests/upload' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      if (!fs.existsSync(FUNDS_REQUEST_UPLOADS_DIR)) {
+        fs.mkdirSync(FUNDS_REQUEST_UPLOADS_DIR, { recursive: true });
+      }
+
+      const form = formidable({
+        uploadDir: FUNDS_REQUEST_UPLOADS_DIR,
+        keepExtensions: true,
+        maxFileSize: 10 * 1024 * 1024,
+        filename: (name, ext) => `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`,
+      });
+
+      form.parse(req, async (err, fields, files) => {
+        if (err) {
+          sendResponse(res, 500, { success: false, error: '文件上传失败' });
+          return;
+        }
+        const file = files.file;
+        if (!file) {
+          sendResponse(res, 400, { success: false, error: '未找到上传文件' });
+          return;
+        }
+        try {
+          let fundsRequestId = fields.funds_request_id;
+          let attachmentType = fields.attachment_type;
+          if (Array.isArray(fundsRequestId)) fundsRequestId = fundsRequestId[0];
+          if (Array.isArray(attachmentType)) attachmentType = attachmentType[0];
+          if (!fundsRequestId || !attachmentType) {
+            sendResponse(res, 400, { success: false, error: '缺少必要参数' });
+            return;
+          }
+          const validTypes = ['application', 'feedback', 'result'];
+          if (!validTypes.includes(String(attachmentType))) {
+            sendResponse(res, 400, { success: false, error: '附件类型无效' });
+            return;
+          }
+
+          const [frRows] = await pool.query('SELECT id, status FROM `FundsRequest` WHERE id = ?', [fundsRequestId]);
+          if (frRows.length === 0) {
+            sendResponse(res, 404, { success: false, error: '经费记录不存在' });
+            return;
+          }
+          const fr = frRows[0];
+          if (attachmentType === 'result' && !['feedback_given', 'result_submitted'].includes(fr.status)) {
+            sendResponse(res, 400, { success: false, error: '仅已批准且未完成成果反馈时可上传成果附件' });
+            return;
+          }
+
+          const fileId = randomUUID();
+          const fileData = Array.isArray(file) ? file[0] : file;
+          const filePath = fileData.filepath || fileData.path;
+          const fileName = fileData.originalFilename || fileData.name;
+          const fileSize = fileData.size;
+          const mimeType = fileData.mimetype || fileData.type || 'application/octet-stream';
+          const absPath = path.resolve(filePath);
+          if (!fs.existsSync(absPath)) {
+            sendResponse(res, 500, { success: false, error: '上传文件保存失败' });
+            return;
+          }
+          const storedPath = fundsRequestFileStoredPath(absPath);
+          const uid = user.userId || user.id;
+
+          await pool.query(
+            `INSERT INTO \`FundsRequestFile\`
+             (id, funds_request_id, attachment_type, file_name, file_path, file_size, mime_type, uploaded_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [fileId, fundsRequestId, attachmentType, fileName, storedPath, fileSize, mimeType, uid],
+          );
+
+          sendResponse(res, 200, { success: true, data: { id: fileId, file_name: fileName } });
+        } catch (uploadErr) {
+          console.error('经费管理员上传附件失败:', uploadErr);
+          sendResponse(res, 500, { success: false, error: '保存附件失败' });
+        }
+      });
+      return;
+    }
+
+    // ==================== 经费管理员工作台 API ====================
+
+    if (pathname === '/api/funds-manager/dashboard/overview' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      try {
+        const [pendingResult] = await pool.query(
+          `SELECT COUNT(*) as count FROM \`FundsRequest\` WHERE status = 'pending'`
+        );
+        const [feedbackResult] = await pool.query(
+          `SELECT COUNT(*) as count FROM \`FundsRequest\` WHERE status = 'feedback_given'`
+        );
+        const [resultResult] = await pool.query(
+          `SELECT COUNT(*) as count FROM \`FundsRequest\` WHERE status = 'result_submitted'`
+        );
+        const [pendingAmountResult] = await pool.query(`
+          SELECT COALESCE(SUM(fri.amount), 0) as total
+          FROM \`FundsRequestItem\` fri
+          INNER JOIN \`FundsRequest\` fr ON fri.funds_request_id = fr.id
+          WHERE fr.status = 'pending'
+        `);
+        const [activeProjectsResult] = await pool.query(`
+          SELECT COUNT(*) as count FROM \`Project\`
+          WHERE status IN ('approved', 'incubating')
+        `);
+        const [totalBudgetResult] = await pool.query(`
+          SELECT COALESCE(SUM(pb.amount), 0) as total
+          FROM \`ProjectBudget\` pb
+          INNER JOIN \`Project\` p ON pb.project_id = p.id
+          WHERE p.status IN ('approved', 'incubating', 'completed')
+        `);
+        const [unreadMessagesResult] = await pool.query(`
+          SELECT COUNT(*) as count FROM \`Notification\` WHERE is_read = false
+        `);
+
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            pendingRequests: pendingResult[0]?.count || 0,
+            feedbackGiven: feedbackResult[0]?.count || 0,
+            resultSubmitted: resultResult[0]?.count || 0,
+            pendingAmount: parseFloat(pendingAmountResult[0]?.total || 0),
+            activeProjects: activeProjectsResult[0]?.count || 0,
+            totalBudget: parseFloat(totalBudgetResult[0]?.total || 0),
+            unreadMessages: unreadMessagesResult[0]?.count || 0,
+          }
+        });
+      } catch (error) {
+        console.error('获取经费管理员仪表板概览失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取仪表板概览失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/funds-manager/requests' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      try {
+        const q = url.parse(req.url, true).query;
+        const status = q.status ? String(q.status).trim() : '';
+        const search = q.search ? String(q.search).trim() : '';
+        const limit = Math.min(parseInt(q.limit, 10) || 20, 100);
+        const page = Math.max(parseInt(q.page, 10) || 1, 1);
+        const offset = (page - 1) * limit;
+
+        let where = 'WHERE 1=1';
+        const params = [];
+        const countParams = [];
+
+        if (status && status !== 'all') {
+          where += ' AND fr.status = ?';
+          params.push(status);
+          countParams.push(status);
+        }
+        if (search) {
+          where += ' AND (p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)';
+          const like = `%${search}%`;
+          params.push(like, like, like);
+          countParams.push(like, like, like);
+        }
+
+        const [countRows] = await pool.query(`
+          SELECT COUNT(*) as total
+          FROM \`FundsRequest\` fr
+          LEFT JOIN \`Project\` p ON fr.project_id = p.id
+          LEFT JOIN \`User\` u ON fr.applicant_id = u.id
+          ${where}
+        `, countParams);
+
+        const [rows] = await pool.query(`
+          SELECT
+            fr.id,
+            fr.project_id,
+            fr.applicant_id,
+            fr.submission_type,
+            fr.application_date,
+            fr.service_requirement,
+            fr.feedback_date,
+            fr.feedback_by,
+            fr.feedback_action,
+            fr.feedback_comment,
+            fr.status,
+            fr.created_at,
+            fr.updated_at,
+            p.title as project_title,
+            p.project_code,
+            p.status as project_status,
+            u.name as applicant_name,
+            u.department as applicant_department,
+            (SELECT COALESCE(SUM(fri.amount), 0) FROM \`FundsRequestItem\` fri WHERE fri.funds_request_id = fr.id) as total_amount,
+            (SELECT COALESCE(SUM(fri.feedback_amount), 0) FROM \`FundsRequestItem\` fri WHERE fri.funds_request_id = fr.id AND fri.feedback_amount IS NOT NULL) as approved_amount
+          FROM \`FundsRequest\` fr
+          LEFT JOIN \`Project\` p ON fr.project_id = p.id
+          LEFT JOIN \`User\` u ON fr.applicant_id = u.id
+          ${where}
+          ORDER BY fr.created_at DESC
+          LIMIT ? OFFSET ?
+        `, [...params, limit, offset]);
+
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            requests: rows,
+            total: countRows[0]?.total || 0,
+            page,
+            limit,
+          }
+        });
+      } catch (error) {
+        console.error('获取经费申请列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取经费申请列表失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/funds-manager\/requests\/[^/]+$/) && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      const requestId = pathname.replace('/api/funds-manager/requests/', '');
+
+      try {
+        const [requests] = await pool.query(`
+          SELECT
+            fr.*,
+            p.title as project_title,
+            p.project_code,
+            p.status as project_status,
+            u.name as applicant_name,
+            u.email as applicant_email,
+            u.department as applicant_department,
+            fb.name as feedback_by_name
+          FROM \`FundsRequest\` fr
+          LEFT JOIN \`Project\` p ON fr.project_id = p.id
+          LEFT JOIN \`User\` u ON fr.applicant_id = u.id
+          LEFT JOIN \`User\` fb ON fr.feedback_by = fb.id
+          WHERE fr.id = ?
+        `, [requestId]);
+
+        if (requests.length === 0) {
+          sendResponse(res, 404, { success: false, error: '经费申请不存在' });
+          return;
+        }
+
+        const [items] = await pool.query(`
+          SELECT id, category, item_name, description, amount, feedback_amount, feedback_comment, sort_order
+          FROM \`FundsRequestItem\`
+          WHERE funds_request_id = ?
+          ORDER BY sort_order ASC, created_at ASC
+        `, [requestId]);
+
+        const [files] = await pool.query(`
+          SELECT id, attachment_type, file_name, file_path, file_size, mime_type, created_at
+          FROM \`FundsRequestFile\`
+          WHERE funds_request_id = ?
+          ORDER BY sort_order ASC, created_at ASC
+        `, [requestId]);
+
+        sendResponse(res, 200, {
+          success: true,
+          data: { ...requests[0], items, files }
+        });
+      } catch (error) {
+        console.error('获取经费申请详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取经费申请详情失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/funds-manager\/requests\/[^/]+\/result$/) && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      const requestId = pathname.replace('/api/funds-manager/requests/', '').replace('/result', '');
+
+      try {
+        const body = await parseRequestBody(req);
+        const resultDescription = String(body.result_description || '').trim();
+
+        const [existing] = await pool.query(
+          `SELECT id, status, feedback_action, applicant_id, project_id FROM \`FundsRequest\` WHERE id = ? LIMIT 1`,
+          [requestId],
+        );
+        if (existing.length === 0) {
+          sendResponse(res, 404, { success: false, error: '经费申请不存在' });
+          return;
+        }
+        const row = existing[0];
+        if (row.status !== 'feedback_given') {
+          sendResponse(res, 400, { success: false, error: '仅可对已反馈且未提交成果的申请填写成果反馈' });
+          return;
+        }
+        if (!['approved', 'partial_approved'].includes(row.feedback_action)) {
+          sendResponse(res, 400, { success: false, error: '仅批准或部分批准的申请可填写成果反馈' });
+          return;
+        }
+        if (!resultDescription) {
+          sendResponse(res, 400, { success: false, error: '请填写成果描述' });
+          return;
+        }
+
+        await pool.query(
+          `UPDATE \`FundsRequest\`
+           SET result_description = ?, result_date = NOW(), status = 'result_submitted', updated_at = NOW()
+           WHERE id = ?`,
+          [resultDescription, requestId],
+        );
+
+        await pool.query(
+          `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+           VALUES (?, ?, 'funding', ?, ?, ?, 'FundsRequest', NOW())`,
+          [
+            randomUUID(),
+            row.applicant_id,
+            '经费成果反馈已登记',
+            '经费管理员已提交经费成果反馈，请在「经费申请」与「成果反馈」中查看。',
+            requestId,
+          ],
+        );
+
+        sendResponse(res, 200, { success: true, message: '成果反馈已保存' });
+      } catch (error) {
+        console.error('提交经费成果反馈失败:', error);
+        sendResponse(res, 500, { success: false, error: '提交成果反馈失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/funds-manager\/requests\/[^/]+\/feedback$/) && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      const requestId = pathname.replace('/api/funds-manager/requests/', '').replace('/feedback', '');
+
+      try {
+        const body = await parseRequestBody(req);
+        const feedbackAction = String(body.feedback_action || '').trim();
+        const validActions = ['approved', 'rejected', 'partial_approved'];
+        if (!validActions.includes(feedbackAction)) {
+          sendResponse(res, 400, { success: false, error: '反馈动作无效，须为 approved / rejected / partial_approved' });
+          return;
+        }
+
+        const [existing] = await pool.query(
+          'SELECT id, status FROM `FundsRequest` WHERE id = ? LIMIT 1',
+          [requestId]
+        );
+        if (existing.length === 0) {
+          sendResponse(res, 404, { success: false, error: '经费申请不存在' });
+          return;
+        }
+        if (existing[0].status !== 'pending') {
+          sendResponse(res, 400, { success: false, error: '该申请已处理，无法重复反馈' });
+          return;
+        }
+
+        const [reqRow] = await pool.query(
+          'SELECT applicant_id, project_id FROM `FundsRequest` WHERE id = ?',
+          [requestId],
+        );
+        const applicantId = reqRow[0]?.applicant_id;
+
+        const itemUpdates = Array.isArray(body.items) ? body.items : [];
+        for (const item of itemUpdates) {
+          if (!item.id) continue;
+          let fbAmount = item.feedback_amount != null ? parseFloat(item.feedback_amount) : null;
+          if (feedbackAction === 'approved' && fbAmount == null) {
+            const [amtRow] = await pool.query(
+              'SELECT amount FROM `FundsRequestItem` WHERE id = ? AND funds_request_id = ?',
+              [item.id, requestId],
+            );
+            fbAmount = amtRow[0] ? parseFloat(amtRow[0].amount) : null;
+          }
+          if (feedbackAction === 'rejected') {
+            fbAmount = 0;
+          }
+          await pool.query(
+            `UPDATE \`FundsRequestItem\`
+             SET feedback_amount = ?, feedback_comment = ?
+             WHERE id = ? AND funds_request_id = ?`,
+            [fbAmount, item.feedback_comment || null, item.id, requestId],
+          );
+        }
+
+        let resultDescription = String(body.result_description || '').trim();
+        if (!['approved', 'partial_approved'].includes(feedbackAction)) {
+          resultDescription = '';
+        }
+        const newStatus = resultDescription ? 'result_submitted' : 'feedback_given';
+
+        await pool.query(
+          `UPDATE \`FundsRequest\`
+           SET feedback_date = NOW(),
+               feedback_by = ?,
+               feedback_action = ?,
+               feedback_comment = ?,
+               result_description = ?,
+               result_date = ${resultDescription ? 'NOW()' : 'NULL'},
+               status = ?,
+               updated_at = NOW()
+           WHERE id = ?`,
+          [
+            user.id,
+            feedbackAction,
+            body.feedback_comment || null,
+            resultDescription || null,
+            newStatus,
+            requestId,
+          ],
+        );
+
+        if (applicantId) {
+          const actionText = {
+            approved: '已全部批准',
+            rejected: '已全部拒绝',
+            partial_approved: '已部分批准',
+          }[feedbackAction] || '已处理';
+          await pool.query(
+            `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+             VALUES (?, ?, 'funding', ?, ?, ?, 'FundsRequest', NOW())`,
+            [
+              randomUUID(),
+              applicantId,
+              '经费申请审核结果',
+              `您的经费申请${actionText}，请登录查看详情。`,
+              requestId,
+            ],
+          );
+        }
+
+        sendResponse(res, 200, {
+          success: true,
+          message: '反馈已提交',
+        });
+      } catch (error) {
+        console.error('提交经费反馈失败:', error);
+        sendResponse(res, 500, { success: false, error: '提交反馈失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/funds-manager/stats/status' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      try {
+        const [stats] = await pool.query(`
+          SELECT status, COUNT(*) as count
+          FROM \`FundsRequest\`
+          GROUP BY status
+        `);
+
+        const statusLabels = {
+          pending: '待反馈',
+          feedback_given: '已反馈',
+          result_submitted: '已提交成果',
+        };
+        const colors = {
+          pending: '#faad14',
+          feedback_given: '#1890ff',
+          result_submitted: '#52c41a',
+        };
+
+        const total = stats.reduce((sum, s) => sum + (s.count || 0), 0);
+        const formatted = stats.map(s => ({
+          status: s.status,
+          label: statusLabels[s.status] || s.status,
+          count: s.count || 0,
+          percentage: total > 0 ? Math.round((s.count / total) * 100) : 0,
+          color: colors[s.status] || '#b31b1b',
+        }));
+
+        sendResponse(res, 200, { success: true, data: formatted });
+      } catch (error) {
+        console.error('获取经费申请状态统计失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取统计失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/funds-manager/projects' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      try {
+        const q = url.parse(req.url, true).query;
+        const page = Math.max(parseInt(q.page, 10) || 1, 1);
+        const pageSize = Math.min(parseInt(q.pageSize, 10) || 20, 100);
+        const offset = (page - 1) * pageSize;
+        const search = q.search ? String(q.search).trim() : '';
+        const status = q.status ? String(q.status).trim() : '';
+
+        const whereParts = [`p.status IN ('approved', 'incubating')`];
+        const params = [];
+        const countParams = [];
+
+        if (status === 'approved' || status === 'incubating') {
+          whereParts.push('p.status = ?');
+          params.push(status);
+          countParams.push(status);
+        }
+        if (search) {
+          whereParts.push('(p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)');
+          const like = `%${search}%`;
+          params.push(like, like, like);
+          countParams.push(like, like, like);
+        }
+
+        const whereClause = 'WHERE ' + whereParts.join(' AND ');
+
+        const [countRows] = await pool.query(`
+          SELECT COUNT(*) as total
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          ${whereClause}
+        `, countParams);
+
+        const [rows] = await pool.query(`
+          SELECT
+            p.id,
+            p.project_code,
+            p.title,
+            p.status,
+            p.submit_date,
+            p.approval_date,
+            p.created_at,
+            p.updated_at,
+            u.name AS applicant_name,
+            u.department AS applicant_department,
+            mgr.name AS manager_name,
+            ${sqlProjectBudgetTotal('p')} AS budget_total,
+            ${sqlProjectFundsSpent('p')} AS spent_amount,
+            (SELECT COUNT(*) FROM \`ExpertAssignment\` ea WHERE ea.project_id = p.id) AS expert_count,
+            (SELECT GROUP_CONCAT(rd.name ORDER BY rd.sort_order ASC SEPARATOR '、')
+             FROM \`ProjectResearchDomain\` prd
+             INNER JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+             WHERE prd.project_id = p.id) AS research_field
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          LEFT JOIN \`User\` mgr ON p.manager_id = mgr.id
+          ${whereClause}
+          ORDER BY p.updated_at DESC, p.created_at DESC
+          LIMIT ? OFFSET ?
+        `, [...params, pageSize, offset]);
+
+        const projects = rows.map((row) => ({
+          ...row,
+          budget_total: parseFloat(row.budget_total) || 0,
+          spent_amount: parseFloat(row.spent_amount) || 0,
+          remaining_amount: calcProjectFundsRemaining(row.budget_total, row.spent_amount),
+        }));
+
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            projects,
+            total: countRows[0]?.total || 0,
+            page,
+            pageSize,
+          },
+        });
+      } catch (error) {
+        console.error('获取在研项目列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目列表失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/funds-manager\/projects\/[^/]+$/) && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      const projectId = pathname.replace('/api/funds-manager/projects/', '');
+
+      try {
+        const [projects] = await pool.query(`
+          SELECT
+            p.*,
+            ${sqlProjectBudgetTotal('p')} AS budget_total,
+            u.name AS applicant_name,
+            u.department AS applicant_department,
+            u.email AS applicant_email,
+            u.phone AS applicant_phone,
+            mgr.name AS manager_name
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          LEFT JOIN \`User\` mgr ON p.manager_id = mgr.id
+          WHERE p.id = ?
+        `, [projectId]);
+
+        if (projects.length === 0) {
+          sendResponse(res, 404, { success: false, error: '项目不存在' });
+          return;
+        }
+
+        const project = projects[0];
+        if (project.status !== 'approved' && project.status !== 'incubating') {
+          sendResponse(res, 403, { success: false, error: '仅可查看已立项或孵化中的项目' });
+          return;
+        }
+
+        const [domains] = await pool.query(`
+          SELECT rd.id, rd.name, rd.code
+          FROM \`ProjectResearchDomain\` prd
+          JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+          WHERE prd.project_id = ?
+          ORDER BY rd.sort_order ASC
+        `, [projectId]);
+
+        const [budgetItems] = await pool.query(`
+          SELECT id, category, item_name, description, amount, sort_order
+          FROM \`ProjectBudget\`
+          WHERE project_id = ?
+          ORDER BY sort_order ASC, created_at ASC
+        `, [projectId]);
+
+        const [members] = await pool.query(`
+          SELECT pm.id, pm.role, pm.name, pm.title, pm.organization, pm.email, pm.phone, pm.member_introduction, pm.sort_order
+          FROM \`ProjectMember\` pm
+          WHERE pm.project_id = ?
+          ORDER BY pm.sort_order ASC
+        `, [projectId]);
+
+        const [expertReviews] = await pool.query(`
+          SELECT
+            ea.id,
+            ea.status,
+            ea.comment,
+            ea.deadline,
+            ea.assigned_at,
+            u.name AS expert_name,
+            u.department AS expert_department,
+            u.title AS expert_title
+          FROM \`ExpertAssignment\` ea
+          JOIN \`User\` u ON ea.expert_id = u.id
+          WHERE ea.project_id = ?
+          ORDER BY ea.assigned_at ASC
+        `, [projectId]);
+
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            project,
+            research_domains: domains,
+            budget_items: budgetItems,
+            members,
+            expert_reviews: expertReviews,
+          },
+        });
+      } catch (error) {
+        console.error('获取项目详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目详情失败', message: error.message });
       }
       return;
     }
@@ -7206,6 +8863,7 @@ const server = http.createServer(async (req, res) => {
         pm.organization,
         pm.email,
         pm.phone,
+        pm.member_introduction,
         pm.sort_order,
         u.name AS linked_user_name,
         u.department,
@@ -7318,13 +8976,14 @@ const server = http.createServer(async (req, res) => {
               join_date: null,
               name: member.name,
               department: member.organization,
-              title: member.title
+              title: member.title,
+              member_introduction: member.member_introduction || null,
             })),
             attachments: attachments.map((file) => ({
               id: file.id,
               name: file.name,
               stored_name: file.stored_name,
-              path: file.path,
+              path: projectAttachmentPublicPath(file.path),
               size: parseInt(file.size, 10),
               type: file.type,
               category: file.attachment_category,
@@ -11932,15 +13591,15 @@ const server = http.createServer(async (req, res) => {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
 
-      if (!user || (user.role !== 'project_manager' && user.role !== 'admin')) {
+      if (!user || !['project_manager', 'admin', 'funds_manager'].includes(user.role)) {
         sendResponse(res, 403, { success: false, error: '没有权限' });
         return;
       }
 
       try {
-        // 验证项目经理是否有权限查看该项目
+        // 验证是否有权限查看该项目
         const [projects] = await pool.query(
-          'SELECT manager_id FROM \`Project\` WHERE id = ?',
+          'SELECT manager_id, status FROM \`Project\` WHERE id = ?',
           [projectId]
         );
 
@@ -11949,8 +13608,14 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // 项目经理只能查看自己负责的项目的评审意见，管理员可以查看所有
-        if (user.role !== 'admin' && projects[0].manager_id !== user.id) {
+        const projectRow = projects[0];
+        if (user.role === 'funds_manager') {
+          if (projectRow.status !== 'approved' && projectRow.status !== 'incubating') {
+            sendResponse(res, 403, { success: false, error: '仅可查看已立项或孵化中的项目评审意见' });
+            return;
+          }
+        } else if (user.role !== 'admin' && projectRow.manager_id !== user.id) {
+          // 项目经理只能查看自己负责的项目的评审意见，管理员可以查看所有
           sendResponse(res, 403, { success: false, error: '您没有权限查看该项目的评审意见' });
           return;
         }
@@ -13070,8 +14735,8 @@ const server = http.createServer(async (req, res) => {
               await pool.query(`
                 INSERT INTO \`ProjectMember\` (
                   id, project_id, name, user_id, role, title, 
-                  organization, email, phone, sort_order, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                  organization, email, phone, member_introduction, sort_order, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
               `, [
                 randomUUID(),
                 projectId,
@@ -13082,6 +14747,7 @@ const server = http.createServer(async (req, res) => {
                 member.organization || null,
                 member.email || '',
                 member.phone || null,
+                member.member_introduction || null,
                 i
               ]);
             }
@@ -13129,13 +14795,20 @@ const server = http.createServer(async (req, res) => {
           console.log(`✅ 预算更新成功，共保存 ${savedCount} 条记录`);
         }
 
-        // 更新图片（如果提供了images）
+        // 更新图片与视频展示（如果提供了 images）
         if (body.images && Array.isArray(body.images)) {
-          console.log('🖼️ 更新图片:', body.images.length);
-          await pool.query('DELETE FROM `ProjectAttachment` WHERE project_id = ? AND type = ?', [projectId, 'image']);
+          console.log('🖼️ 更新展示媒体:', body.images.length);
+          await pool.query(
+            'DELETE FROM `ProjectAttachment` WHERE project_id = ? AND type IN (?, ?)',
+            [projectId, 'image', 'video']
+          );
           for (let i = 0; i < body.images.length; i++) {
             const img = body.images[i];
             if (img.file_path) {
+              const mediaType = ['image', 'video'].includes(img.type)
+                ? img.type
+                : projectAttachmentTypeFromMime(img.mime_type);
+              if (mediaType !== 'image' && mediaType !== 'video') continue;
               await pool.query(`
                 INSERT INTO \`ProjectAttachment\` (
                   id, project_id, file_name, file_path, file_size, mime_type, type, description, sort_order, created_at
@@ -13144,16 +14817,16 @@ const server = http.createServer(async (req, res) => {
                 randomUUID(),
                 projectId,
                 img.file_name,
-                img.file_path,
+                projectAttachmentPathForDb(img.file_path),
                 img.file_size,
                 img.mime_type,
-                'image',
+                mediaType,
                 img.description || '',
                 i
               ]);
             }
           }
-          console.log('✅ 图片更新成功');
+          console.log('✅ 展示媒体更新成功');
         }
 
         // 更新附件（如果提供了attachments）
@@ -13171,7 +14844,7 @@ const server = http.createServer(async (req, res) => {
                 randomUUID(),
                 projectId,
                 att.file_name,
-                att.file_path,
+                projectAttachmentPathForDb(att.file_path),
                 att.file_size,
                 att.mime_type,
                 'attachment',
@@ -13927,6 +15600,65 @@ const server = http.createServer(async (req, res) => {
       const d = new Date(date);
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     }
+    // ==================== 项目经费使用情况 API ====================
+    if (pathname.match(/^\/api\/projects\/[^\/]+\/funds-usage$/) && req.method === 'GET') {
+      const match = pathname.match(/^\/api\/projects\/([^\/]+)\/funds-usage$/);
+      const projectId = match[1];
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+
+      try {
+        const [projects] = await pool.query(
+          'SELECT id, applicant_id, manager_id, status FROM `Project` WHERE id = ?',
+          [projectId],
+        );
+        if (projects.length === 0) {
+          sendResponse(res, 404, { success: false, error: '项目未找到' });
+          return;
+        }
+
+        const project = projects[0];
+        const userId = user.userId || user.id;
+        const isApplicant = project.applicant_id === userId;
+        const isAdmin = checkPermission(user.role, 'admin');
+        const isProjectManager = checkPermission(user.role, 'project_manager');
+        const isReviewer = checkPermission(user.role, 'reviewer');
+        const isFundsManager = user.role === 'funds_manager';
+
+        let canView = isApplicant || isProjectManager || isAdmin || isReviewer;
+        if (isFundsManager) {
+          canView = project.status === 'approved' || project.status === 'incubating';
+        }
+        if (!canView) {
+          const [pmAllow] = await pool.query(
+            'SELECT 1 FROM `ProjectMember` WHERE project_id = ? AND user_id = ? LIMIT 1',
+            [projectId, userId],
+          );
+          canView = pmAllow.length > 0;
+        }
+        if (!canView) {
+          sendResponse(res, 403, { success: false, error: '没有权限查看此项目的经费使用情况' });
+          return;
+        }
+
+        const data = await getProjectFundsUsageData(pool, projectId);
+        sendResponse(res, 200, { success: true, data });
+      } catch (error) {
+        console.error('获取项目经费使用情况失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取项目经费使用情况失败',
+          message: error.message,
+        });
+      }
+      return;
+    }
+
     // ==================== 获取项目预算明细API ====================
     if (pathname.match(/^\/api\/projects\/[^\/]+\/budgets$/) && req.method === 'GET') {
       console.log('🎯 进入项目预算明细API');
@@ -14279,13 +16011,13 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // 构建文件路径（与删除附件一致，避免 Windows 下以 / 开头的路径拼接异常）
-        const relGet = String(attachment.file_path || '').replace(/^[/\\]+/, '');
-        const filePath = path.join(__dirname, relGet);
-
-        // 检查文件是否存在
-        if (!fs.existsSync(filePath)) {
-          console.error('文件不存在:', filePath);
+        const diskPath = resolveProjectAttachmentDiskPath(attachment.file_path);
+        if (!diskPath || !fs.existsSync(diskPath)) {
+          console.error('项目附件未找到:', {
+            attachmentId,
+            stored: attachment.file_path,
+            tried: diskPath,
+          });
           sendResponse(res, 404, {
             success: false,
             error: '文件不存在'
@@ -14293,8 +16025,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // 读取文件并返回
-        const fileStream = fs.createReadStream(filePath);
+        const fileStream = fs.createReadStream(diskPath);
         res.writeHead(200, {
           'Content-Type': attachment.mime_type || 'application/octet-stream',
           'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(attachment.file_name)}`,
@@ -14357,8 +16088,9 @@ const server = http.createServer(async (req, res) => {
         }
 
         const projectId = (req.body && req.body.project_id) ? String(req.body.project_id).trim() : '';
-        const relativePath = `/uploads/projects/${req.file.filename}`;
-        const type = req.file.mimetype.startsWith('image/') ? 'image' : 'attachment';
+        const storedPath = projectAttachmentStoredPath(req.file.path);
+        const publicPath = projectAttachmentPublicPath(storedPath);
+        const type = projectAttachmentTypeFromMime(req.file.mimetype);
         const safeOriginalName = fixMultipartFilename(req.file.originalname);
 
         try {
@@ -14406,7 +16138,7 @@ const server = http.createServer(async (req, res) => {
               attachmentId,
               projectId,
               safeOriginalName,
-              relativePath,
+              storedPath,
               req.file.size,
               req.file.mimetype,
               type
@@ -14418,7 +16150,7 @@ const server = http.createServer(async (req, res) => {
               data: {
                 id: attachmentId,
                 file_name: safeOriginalName,
-                file_path: relativePath,
+                file_path: publicPath,
                 file_size: req.file.size,
                 mime_type: req.file.mimetype,
                 type,
@@ -14436,7 +16168,7 @@ const server = http.createServer(async (req, res) => {
             data: {
               id: attachmentId,
               file_name: safeOriginalName,
-              file_path: relativePath,
+              file_path: publicPath,
               file_size: req.file.size,
               mime_type: req.file.mimetype,
               type,
@@ -14516,11 +16248,9 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // 删除物理文件（file_path 存为 /uploads/... 时避免 path.join 吞掉 __dirname）
-        const rel = String(attachment.file_path || '').replace(/^[/\\]+/, '');
-        const filePath = path.join(__dirname, rel);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
+        const diskPath = resolveProjectAttachmentDiskPath(attachment.file_path);
+        if (diskPath && fs.existsSync(diskPath)) {
+          fs.unlinkSync(diskPath);
         }
 
         // 删除数据库记录
@@ -14575,7 +16305,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       // 检查是否包含特殊路径
-      if (projectId.includes('/progress') || projectId.includes('/attachments')) {
+      if (projectId.includes('/progress') || projectId.includes('/attachments') || projectId.includes('/funds-usage')) {
         sendResponse(res, 404, {
           success: false,
           error: 'API路径错误'
@@ -14629,15 +16359,19 @@ const server = http.createServer(async (req, res) => {
 
         const project = projects[0];
 
-        // 检查权限：申请人本人、项目经理、管理员、评审专家、项目团队成员可查看
+        // 检查权限：申请人本人、项目经理、管理员、评审专家、项目团队成员、经费管理员（仅已立项/孵化中）可查看
         const userId = user.userId || user.id;
         const isApplicant = project.applicant_id === userId;
         const isAdmin = checkPermission(user.role, 'admin');
         const isProjectManager = checkPermission(user.role, 'project_manager');
         const isReviewer = checkPermission(user.role, 'reviewer');
+        const isFundsManager = user.role === 'funds_manager';
 
         let canViewProject =
           isApplicant || isProjectManager || isAdmin || isReviewer;
+        if (isFundsManager) {
+          canViewProject = project.status === 'approved' || project.status === 'incubating';
+        }
         if (!canViewProject) {
           const [pmAllow] = await pool.query(
             'SELECT 1 FROM `ProjectMember` WHERE project_id = ? AND user_id = ? LIMIT 1',
@@ -14688,6 +16422,7 @@ const server = http.createServer(async (req, res) => {
         pm.organization,
         pm.email,
         pm.phone,
+        pm.member_introduction,
         pm.sort_order
       FROM \`ProjectMember\` pm
       WHERE pm.project_id = ?
@@ -14760,7 +16495,10 @@ const server = http.createServer(async (req, res) => {
             total_budget: totalBudget,
             team_members: members,
             budget_items: budgets,
-            attachments: attachments
+            attachments: attachments.map((a) => ({
+              ...a,
+              file_path: projectAttachmentPublicPath(a.file_path),
+            }))
           }
         });
 
@@ -14912,7 +16650,7 @@ const server = http.createServer(async (req, res) => {
 
         // 获取团队成员
         const [members] = await pool.query(`
-      SELECT id, name, user_id, role, title, organization, email, phone, sort_order
+      SELECT id, name, user_id, role, title, organization, email, phone, member_introduction, sort_order
       FROM \`ProjectMember\`
       WHERE project_id = ?
       ORDER BY sort_order ASC
@@ -14943,7 +16681,10 @@ const server = http.createServer(async (req, res) => {
             research_domains: researchDomains,
             team_members: members,
             budget_items: budgets,
-            attachments: attachments
+            attachments: attachments.map((a) => ({
+              ...a,
+              file_path: projectAttachmentPublicPath(a.file_path),
+            }))
           }
         });
 
@@ -15273,8 +17014,8 @@ const server = http.createServer(async (req, res) => {
               await pool.query(`
             INSERT INTO \`ProjectMember\` (
               id, project_id, name, user_id, role, title, 
-              organization, email, phone, sort_order, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+              organization, email, phone, member_introduction, sort_order, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
           `, [
                 randomUUID(),
                 projectId,
@@ -15285,6 +17026,7 @@ const server = http.createServer(async (req, res) => {
                 member.organization || null,
                 member.email || '',
                 member.phone || null,
+                member.member_introduction || null,
                 i
               ]);
             }
@@ -15301,8 +17043,8 @@ const server = http.createServer(async (req, res) => {
           await pool.query(`
         INSERT INTO \`ProjectMember\` (
           id, project_id, name, user_id, role, title, 
-          organization, email, phone, sort_order, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+          organization, email, phone, member_introduction, sort_order, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `, [
             randomUUID(),
             projectId,
@@ -15313,6 +17055,7 @@ const server = http.createServer(async (req, res) => {
             currentUser.department || null,
             currentUser.email || '',
             currentUser.phone || null,
+            null,
             0
           ]);
           console.log('✅ 默认负责人添加成功');
@@ -15351,11 +17094,15 @@ const server = http.createServer(async (req, res) => {
           console.log(`✅ 预算明细插入成功，共保存 ${savedCount} 条记录`);
         }
 
-        // 5. 保存项目图片
+        // 5. 保存项目图片与视频展示
         if (body.images && body.images.length > 0) {
-          console.log('🖼️ 保存项目图片:', body.images.length);
+          console.log('🖼️ 保存展示媒体:', body.images.length);
           for (let i = 0; i < body.images.length; i++) {
             const img = body.images[i];
+            const mediaType = ['image', 'video'].includes(img.type)
+              ? img.type
+              : projectAttachmentTypeFromMime(img.mime_type);
+            if (mediaType !== 'image' && mediaType !== 'video') continue;
             await pool.query(`
           INSERT INTO \`ProjectAttachment\` (
             id, project_id, file_name, file_path, file_size, 
@@ -15365,15 +17112,15 @@ const server = http.createServer(async (req, res) => {
               randomUUID(),
               projectId,
               img.file_name,
-              img.file_path,
+              projectAttachmentPathForDb(img.file_path),
               img.file_size,
               img.mime_type,
-              'image',
+              mediaType,
               img.description || '',
               i
             ]);
           }
-          console.log('✅ 项目图片保存成功');
+          console.log('✅ 展示媒体保存成功');
         }
 
         // 6. 保存项目附件
@@ -15390,7 +17137,7 @@ const server = http.createServer(async (req, res) => {
               randomUUID(),
               projectId,
               att.file_name,
-              att.file_path,
+              projectAttachmentPathForDb(att.file_path),
               att.file_size,
               att.mime_type,
               'attachment',
@@ -15424,7 +17171,7 @@ const server = http.createServer(async (req, res) => {
     }
     // 如果没有 express，添加手动处理
     if (pathname.startsWith('/uploads/') && req.method === 'GET') {
-      const filePath = path.join(__dirname, pathname);
+      const filePath = path.join(__dirname, pathname.replace(/^[/\\]+/, ''));
       fs.readFile(filePath, (err, data) => {
         if (err) {
           sendResponse(res, 404, { error: '文件不存在' });
@@ -15864,370 +17611,6 @@ const server = http.createServer(async (req, res) => {
           message: error.message
         });
       }
-      return;
-    }
-    // ==================== 附件API ====================
-
-    // ==================== 附件API（独立路径） ====================
-
-    // 1. 下载附件 - GET /api/attachments/:id
-    if (pathname.startsWith('/api/attachments/') && req.method === 'GET') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-
-      // 提取附件ID
-      const attachmentId = pathname.split('/')[3];
-      console.log('📥 下载附件请求:', { attachmentId, userId: user.id });
-
-      try {
-        // 获取附件信息
-        const [attachments] = await pool.query(`
-          SELECT a.*, p.applicant_id, p.manager_id
-          FROM \`ProjectAttachment\` a
-          JOIN \`Project\` p ON a.project_id = p.id
-          WHERE a.id = ?
-        `, [attachmentId]);
-
-        if (attachments.length === 0) {
-          sendResponse(res, 404, {
-            success: false,
-            error: '附件未找到'
-          });
-          return;
-        }
-
-        const attachment = attachments[0];
-
-        // 检查权限
-        const isApplicant = attachment.applicant_id === user.id;
-        const isManager = attachment.manager_id === user.id;
-        const isAdmin = checkPermission(user.role, 'admin');
-        const isAssistant = checkPermission(user.role, 'project_manager');
-
-        if (!isApplicant && !isManager && !isAdmin && !isAssistant) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限下载此附件'
-          });
-          return;
-        }
-
-        // 检查文件是否存在
-        const fs = require('fs');
-        if (!fs.existsSync(attachment.file_path)) {
-          console.error('文件不存在:', attachment.file_path);
-          sendResponse(res, 404, {
-            success: false,
-            error: '文件不存在'
-          });
-          return;
-        }
-
-        // 获取文件大小
-        const stats = fs.statSync(attachment.file_path);
-
-        // 设置响应头
-        const fileName = encodeURIComponent(attachment.file_name);
-        res.setHeader('Content-Type', attachment.mime_type);
-        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
-        res.setHeader('Content-Length', stats.size);
-
-        // 发送文件
-        const fileStream = fs.createReadStream(attachment.file_path);
-        fileStream.pipe(res);
-
-        fileStream.on('error', (error) => {
-          console.error('文件流错误:', error);
-          if (!res.headersSent) {
-            sendResponse(res, 500, {
-              success: false,
-              error: '文件读取失败'
-            });
-          }
-        });
-
-
-        console.log('✅ 文件下载成功:', attachment.file_name);
-
-      } catch (error) {
-        console.error('❌ 下载附件失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '下载附件失败',
-          message: error.message
-        });
-      }
-      return;
-    }
-
-    // 2. 删除附件 - DELETE /api/attachments/:id
-    if (pathname.startsWith('/api/attachments/') && req.method === 'DELETE') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-
-      // 提取附件ID
-      const attachmentId = pathname.split('/')[3];
-      console.log('🗑️ 删除附件请求:', { attachmentId, userId: user.id });
-
-      try {
-        // 获取附件信息
-        const [attachments] = await pool.query(`
-          SELECT a.*, p.applicant_id, p.status
-          FROM \`ProjectAttachment\` a
-          JOIN \`Project\` p ON a.project_id = p.id
-          WHERE a.id = ?
-        `, [attachmentId]);
-
-        if (attachments.length === 0) {
-          sendResponse(res, 404, {
-            success: false,
-            error: '附件未找到'
-          });
-          return;
-        }
-
-        const attachment = attachments[0];
-
-        // 检查权限
-        const isOwner = attachment.applicant_id === user.id;
-        const isAdmin = checkPermission(user.role, 'admin');
-
-        if (!isOwner && !isAdmin) {
-          sendResponse(res, 403, {
-            success: false,
-            error: '没有权限删除此附件'
-          });
-          return;
-        }
-
-        // 删除物理文件
-        const fs = require('fs');
-        if (fs.existsSync(attachment.file_path)) {
-          fs.unlinkSync(attachment.file_path);
-          console.log('✅ 删除物理文件:', attachment.file_path);
-        }
-
-        // 从数据库删除
-        await pool.query('DELETE FROM \`ProjectAttachment\` WHERE id = ?', [attachmentId]);
-
-        sendResponse(res, 200, {
-          success: true,
-          message: '附件删除成功'
-        });
-
-      } catch (error) {
-        console.error('删除附件失败:', error);
-        sendResponse(res, 500, {
-          success: false,
-          error: '删除附件失败',
-          message: error.message
-        });
-      }
-      return;
-    }
-
-    // 3. 上传附件 - POST /api/attachments
-    // 上传附件 - POST /api/attachments
-    if (pathname === '/api/attachments' && req.method === 'POST') {
-      console.log('📤 收到上传请求');
-
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-
-      if (!user) {
-        sendResponse(res, 401, {
-          success: false,
-          error: '认证失败'
-        });
-        return;
-      }
-
-      const fs = require('fs');
-      const path = require('path');
-
-      // 创建上传目录
-      const uploadDir = path.join(__dirname, 'uploads/temp');
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-
-      // 正确使用 formidable - 注意：不要用 new
-      const form = formidable({
-        uploadDir: uploadDir,
-        keepExtensions: true,
-        maxFileSize: 50 * 1024 * 1024,
-        multiples: true,
-      });
-
-      form.parse(req, async (err, fields, files) => {
-        if (err) {
-          console.error('文件解析失败:', err);
-          sendResponse(res, 400, {
-            success: false,
-            error: '文件上传失败',
-            message: err.message
-          });
-          return;
-        }
-
-        try {
-          // 获取文件
-          let file = files.file;
-          if (Array.isArray(file)) {
-            file = file[0];
-          }
-
-          // 获取项目ID
-          let projectId = fields.project_id;
-          if (Array.isArray(projectId)) {
-            projectId = projectId[0];
-          }
-
-          let section = fields.section || 'attachment';
-          if (Array.isArray(section)) {
-            section = section[0];
-          }
-
-          let mediaType = fields.media_type || 'other';
-          if (Array.isArray(mediaType)) {
-            mediaType = mediaType[0];
-          }
-
-          console.log('📤 上传附件请求:', {
-            projectId,
-            fileName: file?.originalFilename,
-            fileSize: file?.size,
-            userId: user.id
-          });
-
-          if (!file) {
-            sendResponse(res, 400, { success: false, error: '未提供文件' });
-            return;
-          }
-
-          if (!projectId) {
-            if (file.filepath && fs.existsSync(file.filepath)) {
-              fs.unlinkSync(file.filepath);
-            }
-            sendResponse(res, 400, { success: false, error: '未提供项目ID' });
-            return;
-          }
-
-          // 检查项目是否存在
-          const [projects] = await pool.query(
-            'SELECT applicant_id FROM `Project` WHERE id = ?',
-            [projectId]
-          );
-
-          if (projects.length === 0) {
-            if (file.filepath && fs.existsSync(file.filepath)) {
-              fs.unlinkSync(file.filepath);
-            }
-            sendResponse(res, 404, { success: false, error: '项目未找到' });
-            return;
-          }
-
-          const project = projects[0];
-          const isOwner = project.applicant_id === user.id;
-          const isAdmin = checkPermission(user.role, 'admin');
-
-          if (!isOwner && !isAdmin) {
-            if (file.filepath && fs.existsSync(file.filepath)) {
-              fs.unlinkSync(file.filepath);
-            }
-            sendResponse(res, 403, { success: false, error: '没有权限上传附件' });
-            return;
-          }
-
-          // 创建项目专属文件夹
-          const projectUploadDir = path.join(__dirname, 'uploads/projects', projectId);
-          if (!fs.existsSync(projectUploadDir)) {
-            fs.mkdirSync(projectUploadDir, { recursive: true });
-            console.log('✅ 创建项目文件夹:', projectUploadDir);
-          }
-
-          // 生成唯一文件名（修复 multipart 中文名乱码）
-          const originalName = fixMultipartFilename(file.originalFilename || file.name || '');
-          const ext = path.extname(originalName);
-          const storedName = `${Date.now()}_${Math.random().toString(36).substring(7)}${ext}`;
-          const storedPath = path.join(projectUploadDir, storedName);
-
-          // 移动文件到项目文件夹
-          fs.renameSync(file.filepath, storedPath);
-          console.log('✅ 文件已移动到:', storedPath);
-
-          // 确定媒体类型
-          const mimeType = file.mimetype || file.type;
-          let finalMediaType = mediaType;
-          if (finalMediaType === 'other') {
-            if (mimeType?.startsWith('image/')) finalMediaType = 'image';
-            else if (mimeType?.startsWith('audio/')) finalMediaType = 'audio';
-            else if (mimeType?.startsWith('video/')) finalMediaType = 'video';
-            else if (mimeType?.includes('pdf')) finalMediaType = 'document';
-          }
-
-          // 保存到数据库
-          const attachmentId = randomUUID();
-          await pool.query(`
-            INSERT INTO \`ProjectAttachment\` (
-              id, project_id, file_name, file_path, file_size,
-              mime_type, media_type, section, uploaded_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-          `, [
-            attachmentId, projectId, originalName, storedPath, file.size,
-            mimeType, finalMediaType, section, user.id
-          ]);
-
-          console.log('✅ 附件记录已保存到数据库');
-
-          sendResponse(res, 201, {
-            success: true,
-            message: '文件上传成功',
-            data: {
-              id: attachmentId,
-              name: originalName,
-              size: file.size,
-              type: mimeType,
-              media_type: finalMediaType,
-              created_at: new Date().toISOString()
-            }
-          });
-
-        } catch (error) {
-          console.error('❌ 上传失败:', error);
-          // 清理临时文件
-          if (files && files.file) {
-            let file = files.file;
-            if (Array.isArray(file)) file = file[0];
-            if (file && file.filepath && fs.existsSync(file.filepath)) {
-              try {
-                fs.unlinkSync(file.filepath);
-              } catch (e) { }
-            }
-          }
-          sendResponse(res, 500, {
-            success: false,
-            error: '上传失败',
-            message: error.message
-          });
-        }
-      });
       return;
     }
     // ==================== 获取项目附件列表API（已包含在项目详情中，但也可以单独提供） ====================
@@ -21536,7 +22919,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         // 验证角色
-        const validRoles = ['applicant', 'reviewer', 'project_manager', 'admin'];
+        const validRoles = ['applicant', 'reviewer', 'project_manager', 'funds_manager', 'admin'];
         if (!validRoles.includes(body.role)) {
           sendResponse(res, 400, {
             success: false,
@@ -23187,9 +24570,8 @@ const server = http.createServer(async (req, res) => {
     // ==================== 孵化服务API ====================
 
     // 孵化服务附件上传目录
-    const incubationUploadsDir = path.join(__dirname, 'uploads', 'incubation');
-    if (!fs.existsSync(incubationUploadsDir)) {
-      fs.mkdirSync(incubationUploadsDir, { recursive: true });
+    if (!fs.existsSync(INCUBATION_UPLOADS_DIR)) {
+      fs.mkdirSync(INCUBATION_UPLOADS_DIR, { recursive: true });
     }
 
     // 申请人：获取可发起服务申请的项目列表（状态为approved的项目）
@@ -23701,8 +25083,12 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      if (!fs.existsSync(INCUBATION_UPLOADS_DIR)) {
+        fs.mkdirSync(INCUBATION_UPLOADS_DIR, { recursive: true });
+      }
+
       const form = formidable({
-        uploadDir: incubationUploadsDir,
+        uploadDir: INCUBATION_UPLOADS_DIR,
         keepExtensions: true,
         maxFileSize: 10 * 1024 * 1024,
         filename: (name, ext, part) => {
@@ -23744,8 +25130,14 @@ const server = http.createServer(async (req, res) => {
           const fileName = fileData.originalFilename || fileData.name;
           const fileSize = fileData.size;
           const mimeType = fileData.mimetype || fileData.type;
+          const absPath = path.resolve(filePath);
+          if (!fs.existsSync(absPath)) {
+            sendResponse(res, 500, { success: false, error: '上传文件保存失败' });
+            return;
+          }
+          const storedPath = incubationFileStoredPath(absPath);
 
-          console.log('孵化服务附件上传:', { progressId, attachmentType, fileName, fileSize });
+          console.log('孵化服务附件上传:', { progressId, attachmentType, fileName, fileSize, storedPath });
 
           const uid = user.userId || user.id;
           const [ipRows] = await pool.query(
@@ -23781,7 +25173,7 @@ const server = http.createServer(async (req, res) => {
             `INSERT INTO \`IncubationProgressFile\` 
              (id, progress_id, attachment_type, file_name, file_path, file_size, mime_type, uploaded_by, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-            [fileId, progressId, attachmentType, fileName, filePath, fileSize, mimeType, user.id]
+            [fileId, progressId, attachmentType, fileName, storedPath, fileSize, mimeType, uid]
           );
 
           sendResponse(res, 200, {
@@ -23840,8 +25232,13 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // 检查文件是否存在
-        if (!fs.existsSync(fileInfo.file_path)) {
+        const diskPath = resolveIncubationFileDiskPath(fileInfo.file_path);
+        if (!diskPath || !fs.existsSync(diskPath)) {
+          console.error('孵化服务附件未找到:', {
+            fileId,
+            stored: fileInfo.file_path,
+            tried: diskPath,
+          });
           sendResponse(res, 404, { success: false, error: '文件已丢失' });
           return;
         }
@@ -23852,7 +25249,7 @@ const server = http.createServer(async (req, res) => {
         res.setHeader('Content-Length', fileInfo.file_size);
 
         // 发送文件
-        const fileStream = fs.createReadStream(fileInfo.file_path);
+        const fileStream = fs.createReadStream(diskPath);
         fileStream.pipe(res);
         fileStream.on('error', (err) => {
           console.error('文件读取错误:', err);

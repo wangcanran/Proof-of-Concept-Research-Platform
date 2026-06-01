@@ -32,7 +32,7 @@
         >
           分配专家
         </button>
-        <button class="action-btn secondary" @click="exportProject">📄 导出</button>
+        <button class="action-btn secondary" @click="exportProject" v-if="!isFundsManagerMode">📄 导出</button>
       </div>
     </div>
 
@@ -177,6 +177,7 @@
                   <th>职称</th>
                   <th>角色</th>
                   <th>邮箱</th>
+                  <th class="col-intro">成员介绍</th>
                 </tr>
               </thead>
               <tbody>
@@ -191,11 +192,17 @@
                     </span>
                   </td>
                   <td>{{ member.email || '未提供' }}</td>
+                  <td class="member-intro-cell">{{ member.member_introduction || '—' }}</td>
                 </tr>
               </tbody>
             </table>
           </div>
         </div>
+      </div>
+
+      <!-- 经费使用 -->
+      <div v-if="activeTab === 'fundsUsage'" class="tab-panel">
+        <ProjectFundsUsagePanel v-if="project" :project-id="project.id" />
       </div>
 
       <!-- 经费预算 -->
@@ -264,17 +271,34 @@
         </div>
       </div>
 
-      <!-- 图片展示 -->
+      <!-- 图片与视频展示 -->
       <div v-if="activeTab === 'images'" class="tab-panel">
         <div class="section">
-          <h3>项目图片</h3>
+          <h3>图片与视频</h3>
           <div v-if="images.length === 0" class="empty-state">
-            <p>暂无项目图片</p>
+            <p>暂无图片或视频</p>
           </div>
           <div v-else class="images-grid">
             <div v-for="image in images" :key="image.id" class="image-card">
-              <div class="image-preview">
-                <img :src="`${getApiOrigin()}${image.file_path}`" :alt="image.file_name" />
+              <div
+                class="image-preview showcase-preview-trigger"
+                title="点击预览"
+                @click="openShowcasePreview(image)"
+              >
+                <video
+                  v-if="isProjectVideoMedia(image)"
+                  :src="getShowcaseMediaSrc(image, apiOrigin)"
+                  muted
+                  playsinline
+                  preload="metadata"
+                  class="preview-video"
+                />
+                <img
+                  v-else
+                  :src="getShowcaseMediaSrc(image, apiOrigin)"
+                  :alt="image.file_name"
+                />
+                <span class="preview-badge">预览</span>
               </div>
               <div class="image-info">
                 <div class="image-name">{{ image.file_name }}</div>
@@ -285,7 +309,7 @@
                 </div>
               </div>
               <div class="image-actions">
-                <button class="download-btn" @click="downloadAttachment(image)">下载</button>
+                <button class="download-btn" @click.stop="downloadAttachment(image)">下载</button>
               </div>
             </div>
           </div>
@@ -327,7 +351,7 @@
           <h3>评审专家意见</h3>
           <div v-if="reviewFeedback.length === 0" class="empty-state">
             <p>暂无评审意见</p>
-            <p v-if="canAssignReviewers" class="hint">您可以分配评审专家来获取评审意见</p>
+            <p v-if="canAssignReviewers && !isFundsManagerMode" class="hint">您可以分配评审专家来获取评审意见</p>
           </div>
           <div v-else class="reviews-list">
             <div v-for="(review, index) in reviewFeedback" :key="index" class="review-card-modern">
@@ -396,19 +420,35 @@
         </button>
       </div>
     </div>
+
+    <ShowcaseMediaPreviewDialog
+      v-model="showcasePreviewVisible"
+      :item="showcasePreviewItem"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
+import ShowcaseMediaPreviewDialog from '@/components/ShowcaseMediaPreviewDialog.vue'
+import {
+  getShowcaseMediaSrc,
+  isProjectShowcaseMedia,
+  isProjectVideoMedia,
+} from '@/utils/projectMedia'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
+import ProjectFundsUsagePanel from '@/components/ProjectFundsUsagePanel.vue'
 
 const router = useRouter()
 const route = useRoute()
+
+const isFundsManagerMode = computed(() =>
+  route.meta.fundsManagerMode === true || route.path.startsWith('/funds-manager/projects')
+)
 
 // API配置
 const API_BASE_URL = getApiBaseUrl()
@@ -452,17 +492,30 @@ const reviewFeedback = ref<any[]>([])
 // UI状态
 const activeTab = ref('basicInfo')
 
+const showFundsUsageTab = computed(() => {
+  const s = project.value?.status
+  return s === 'approved' || s === 'incubating' || s === 'completed'
+})
+
 // 标签页
-const tabs = [
-  { key: 'basicInfo', label: '基本信息' },
-  { key: 'detail', label: '项目详情' },
-  { key: 'team', label: '研究团队' },
-  { key: 'budget', label: '经费预算' },
-  { key: 'images', label: '图片展示' },
-  { key: 'attachments', label: '附件材料' },
-  { key: 'reviews', label: '评审意见' },
-  { key: 'progress', label: '项目进展' },
-]
+const tabs = computed(() => {
+  const list = [
+    { key: 'basicInfo', label: '基本信息' },
+    { key: 'detail', label: '项目详情' },
+    { key: 'team', label: '研究团队' },
+    { key: 'budget', label: '经费预算' },
+  ]
+  if (showFundsUsageTab.value) {
+    list.push({ key: 'fundsUsage', label: '经费使用' })
+  }
+  list.push(
+    { key: 'images', label: '图片与视频' },
+    { key: 'attachments', label: '附件材料' },
+    { key: 'reviews', label: '评审意见' },
+    { key: 'progress', label: '项目进展' },
+  )
+  return list
+})
 
 // 计算属性
 const keywordsArray = computed(() => {
@@ -478,16 +531,22 @@ const totalBudget = computed(() => {
 })
 
 const images = computed(() => {
-  return attachments.value.filter((a: any) => 
-    a.type === 'image' || (a.mime_type && a.mime_type.startsWith('image/'))
-  )
+  return attachments.value.filter((a: any) => isProjectShowcaseMedia(a))
 })
 
 const documents = computed(() => {
-  return attachments.value.filter((a: any) => 
-    a.type !== 'image' && !(a.mime_type && a.mime_type.startsWith('image/'))
-  )
+  return attachments.value.filter((a: any) => !isProjectShowcaseMedia(a))
 })
+
+const apiOrigin = getApiOrigin()
+const showcasePreviewVisible = ref(false)
+const showcasePreviewItem = ref<Record<string, unknown> | null>(null)
+
+const openShowcasePreview = (item: Record<string, unknown>) => {
+  if (!item.file_path) return
+  showcasePreviewItem.value = item
+  showcasePreviewVisible.value = true
+}
 
 const canClaimProject = computed(() => {
   if (!project.value || !currentUser.value) return false
@@ -581,6 +640,10 @@ const loadReviewFeedback = async (projectId: string) => {
 }
 
 const goBack = () => {
+  if (isFundsManagerMode.value) {
+    router.push('/funds-manager/projects')
+    return
+  }
   // 根据来源参数返回正确的页面
   const from = route.query.from as string
   if (from === 'my') {
@@ -1296,6 +1359,20 @@ onMounted(async () => {
   vertical-align: top;
 }
 
+.team-table th.col-intro,
+.team-table td.member-intro-cell {
+  min-width: 160px;
+  max-width: 280px;
+}
+
+.team-table td.member-intro-cell {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #555;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .text-right {
   text-align: right;
 }
@@ -1478,11 +1555,17 @@ onMounted(async () => {
   justify-content: center;
 }
 
-.image-preview img {
+.image-preview img,
+.image-preview .preview-video {
   width: 100%;
   height: 100%;
   object-fit: cover;
   transition: transform 0.3s;
+}
+
+.image-preview .preview-video {
+  object-fit: contain;
+  background: #000;
 }
 
 .image-card:hover .image-preview img {

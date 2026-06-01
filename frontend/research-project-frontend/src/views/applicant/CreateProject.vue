@@ -412,6 +412,16 @@
                   <option value="other">其他成员</option>
                 </select>
               </div>
+
+              <div class="form-group">
+                <label>成员介绍</label>
+                <textarea
+                  v-model="member.member_introduction"
+                  rows="3"
+                  placeholder="可填写成员在本项目中的分工、研究背景等（选填）"
+                  :disabled="loading"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -521,13 +531,13 @@
       </div>
     </div>
 
-    <!-- 步骤5：图片展示 -->
+    <!-- 步骤5：图片与视频展示 -->
     <div v-show="currentStep === 5" class="step-content">
       <div class="section-card">
-        <h3 class="section-title">五、图片展示</h3>
-        <p class="section-subtitle">请上传项目相关图片，至少上传1张图片，每张图片可添加文字说明</p>
+        <h3 class="section-title">五、图片与视频展示</h3>
+        <p class="section-subtitle">请上传项目相关图片或视频，至少上传 1 个文件；图片不超过 10MB，视频不超过 50MB（支持 MP4、WebM 等）</p>
 
-        <!-- 图片上传区域 -->
+        <!-- 媒体上传区域 -->
         <div class="images-section">
           <div
             class="upload-area"
@@ -535,45 +545,66 @@
             @drop.prevent="handleImageDrop"
             @click="triggerImageInput"
           >
-            <div class="upload-icon">🖼️</div>
+            <div class="upload-icon">🎬</div>
             <div class="upload-text">
-              <span>点击或拖拽图片到此区域上传</span>
-              <span class="upload-hint">支持 JPG、PNG 格式，单个文件不超过10MB</span>
+              <span>点击或拖拽图片、视频到此区域上传</span>
+              <span class="upload-hint">图片：JPG、PNG 等；视频：MP4、WebM、MOV 等</span>
             </div>
             <input
               type="file"
               ref="imageInput"
               multiple
-              accept="image/*"
+              accept="image/*,video/mp4,video/webm,video/quicktime,video/*"
               style="display: none"
               @change="handleImageSelect"
             />
           </div>
 
-          <!-- 图片列表 -->
+          <!-- 媒体列表 -->
           <div v-if="images.length > 0" class="images-list">
             <div
               v-for="(image, index) in images"
               :key="image.id || index"
               class="image-item"
             >
-              <div class="image-preview">
-                <img 
-                  v-if="image.file_path || image.preview" 
-                  :src="image.preview || `${getApiOrigin()}${image.file_path}`" 
-                  alt="项目图片"
-                  @click="previewImage(image)"
+              <div
+                class="image-preview showcase-preview-trigger"
+                title="点击预览"
+                @click="openShowcasePreview(image)"
+              >
+                <video
+                  v-if="isProjectVideoMedia(image) && (image.preview || image.file_path)"
+                  :src="getShowcaseMediaSrc(image)"
+                  muted
+                  playsinline
+                  preload="metadata"
+                  class="preview-thumb preview-video"
+                />
+                <img
+                  v-else-if="image.file_path || image.preview"
+                  :src="getShowcaseMediaSrc(image)"
+                  alt="项目展示图"
+                  class="preview-thumb"
+                  @error="onShowcaseThumbError(image, $event)"
                 />
                 <div v-else class="image-placeholder">上传中...</div>
+                <span
+                  v-if="(image.preview || image.file_path) && !image.uploading"
+                  class="preview-badge"
+                >预览</span>
               </div>
               <div class="image-info">
-                <div class="image-name">{{ image.originalName || image.file_name }}</div>
+                <div class="image-name">
+                  <span v-if="isProjectVideoMedia(image)" class="media-type-tag">视频</span>
+                  <span v-else class="media-type-tag">图片</span>
+                  {{ image.originalName || image.file_name }}
+                </div>
                 <div class="image-size">{{ formatFileSize(image.file_size) }}</div>
                 <div class="image-description">
                   <input
                     type="text"
                     v-model="image.description"
-                    placeholder="请输入图片说明"
+                    placeholder="请输入说明文字"
                     :disabled="image.uploading || loading"
                   />
                 </div>
@@ -595,7 +626,7 @@
           </div>
           
           <div v-else class="no-images-hint">
-            <p>暂无图片，请至少上传1张项目相关图片</p>
+            <p>暂无文件，请至少上传 1 张图片或 1 个视频</p>
           </div>
         </div>
       </div>
@@ -713,6 +744,11 @@
       </div>
     </div>
 
+    <ShowcaseMediaPreviewDialog
+      v-model="showcasePreviewVisible"
+      :item="showcasePreviewItem"
+    />
+
     <!-- 提交确认对话框 -->
     <div v-if="showConfirmDialog" class="modal-overlay">
       <div class="modal-content">
@@ -731,7 +767,15 @@
 </template>
 
 <script setup lang="ts">
-import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
+import { getApiBaseUrl } from '@/utils/request'
+import ShowcaseMediaPreviewDialog from '@/components/ShowcaseMediaPreviewDialog.vue'
+import {
+  getShowcaseMediaSrc,
+  isProjectVideoMedia,
+  isShowcaseUploadFile,
+  showcaseFileMaxBytes,
+  showcaseMediaTypeFromMime,
+} from '@/utils/projectMedia'
 import {
   getWordImportTemplateHint,
   parseProjectWordDocx,
@@ -799,7 +843,7 @@ const steps = [
   { key: 'detail', label: '项目详情' },
   { key: 'team', label: '研究团队' },
   { key: 'budget', label: '经费预算' },
-  { key: 'images', label: '图片展示' },
+  { key: 'images', label: '图片与视频' },
   { key: 'attachments', label: '附件材料' },
 ]
 
@@ -810,6 +854,8 @@ const pocStageRequirement = ref<string[]>([])
 
 // 图片列表
 const images = ref<any[]>([])
+const showcasePreviewVisible = ref(false)
+const showcasePreviewItem = ref<Record<string, unknown> | null>(null)
 // 附件列表
 const attachments = ref<any[]>([])
 
@@ -832,7 +878,19 @@ const formData = reactive({
 })
 
 // 团队成员
-const teamMembers = ref([{ name: '', email: '', organization: '', title: '', phone: '', role: 'other', isExistingUser: false, isChecking: false, emailConfirmed: false }])
+const emptyTeamMember = () => ({
+  name: '',
+  email: '',
+  organization: '',
+  title: '',
+  phone: '',
+  member_introduction: '',
+  role: 'other',
+  isExistingUser: false,
+  isChecking: false,
+  emailConfirmed: false,
+})
+const teamMembers = ref([emptyTeamMember()])
 
 /** 预算金额：表单内为「万元」，入库前 ×10000 转为「元」 */
 const WAN_YUAN_RATIO = 10000
@@ -1048,7 +1106,7 @@ const getMissingForStep = (step: number): string[] => {
       break
     }
     case 5: {
-      if (images.value.length === 0) missing.push('至少上传1张项目图片')
+      if (images.value.length === 0) missing.push('至少上传1张图片或1个视频')
       break
     }
     default:
@@ -1198,7 +1256,7 @@ const onWordFileChange = async (e: Event) => {
 }
 
 const addTeamMember = () => {
-  teamMembers.value.push({ name: '', email: '', organization: '', title: '', phone: '', role: 'other', isExistingUser: false, isChecking: false, emailConfirmed: false })
+  teamMembers.value.push(emptyTeamMember())
 }
 
 // 根据邮箱搜索用户
@@ -1326,23 +1384,24 @@ const handleImageSelect = async (event: Event) => {
 
 const handleImageDrop = async (event: DragEvent) => {
   const files = Array.from(event.dataTransfer?.files || [])
-  const imageFiles = files.filter(f => f.type.startsWith('image/'))
-  await uploadImages(imageFiles)
+  const mediaFiles = files.filter((f) => isShowcaseUploadFile(f))
+  await uploadImages(mediaFiles)
 }
 
 const uploadImages = async (files: File[]) => {
   for (const file of files) {
-    if (!file.type.startsWith('image/')) {
-      ElMessage.warning(`文件 ${file.name} 不是图片格式`)
+    if (!isShowcaseUploadFile(file)) {
+      ElMessage.warning(`文件 ${file.name} 不是支持的图片或视频格式`)
       continue
     }
-    if (file.size > 10 * 1024 * 1024) {
-      ElMessage.warning(`图片 ${file.name} 超过10MB限制`)
+    const maxBytes = showcaseFileMaxBytes(file)
+    if (file.size > maxBytes) {
+      const limitMb = maxBytes / (1024 * 1024)
+      ElMessage.warning(`文件 ${file.name} 超过 ${limitMb}MB 限制`)
       continue
     }
 
     const tempId = Date.now() + Math.random()
-    // 创建本地预览URL
     const preview = URL.createObjectURL(file)
     const tempImage = {
       id: tempId,
@@ -1350,6 +1409,7 @@ const uploadImages = async (files: File[]) => {
       file_name: file.name,
       file_size: file.size,
       mime_type: file.type,
+      type: showcaseMediaTypeFromMime(file.type),
       uploading: true,
       progress: 0,
       description: '',
@@ -1372,26 +1432,23 @@ const uploadImages = async (files: File[]) => {
       })) as { success?: boolean; data?: Record<string, unknown>; error?: string }
 
       if (response.success && response.data) {
-        // 释放本地预览URL
-        URL.revokeObjectURL(images.value[index].preview)
         images.value[index] = {
           ...images.value[index],
           ...response.data,
           uploading: false,
           progress: 100,
-          preview: null,
         }
-        ElMessage.success(`图片 ${file.name} 上传成功`)
+        ElMessage.success(`文件 ${file.name} 上传成功`)
       } else {
         URL.revokeObjectURL(images.value[index].preview)
         images.value.splice(index, 1)
-        ElMessage.error(`图片 ${file.name} 上传失败`)
+        ElMessage.error(`文件 ${file.name} 上传失败`)
       }
     } catch (error) {
       URL.revokeObjectURL(images.value[index].preview)
       images.value.splice(index, 1)
       console.error('上传失败:', error)
-      ElMessage.error(`图片 ${file.name} 上传失败`)
+      ElMessage.error(`文件 ${file.name} 上传失败`)
     }
   }
 }
@@ -1404,9 +1461,17 @@ const removeImage = (index: number) => {
   images.value.splice(index, 1)
 }
 
-const previewImage = (image: any) => {
-  if (image.file_path) {
-    window.open(`${getApiOrigin()}${image.file_path}`, '_blank')
+const openShowcasePreview = (image: Record<string, unknown>) => {
+  if (!image.preview && !image.file_path) return
+  showcasePreviewItem.value = image
+  showcasePreviewVisible.value = true
+}
+
+const onShowcaseThumbError = (image: Record<string, unknown>, e: Event) => {
+  const el = e.target as HTMLImageElement | null
+  const fallback = image.preview as string | undefined
+  if (el && fallback && el.src !== fallback) {
+    el.src = fallback
   }
 }
 
@@ -1578,6 +1643,7 @@ const saveDraft = async (options?: { silent?: boolean }): Promise<boolean> => {
         title: m.title,
         phone: m.phone,
         role: m.role,
+        member_introduction: m.member_introduction?.trim() || '',
       })),
       budget_items: normalizedBudgetItemsForPayload(),
       images: images.value.map((img) => ({
@@ -1585,7 +1651,7 @@ const saveDraft = async (options?: { silent?: boolean }): Promise<boolean> => {
         file_path: img.file_path,
         file_size: img.file_size,
         mime_type: img.mime_type,
-        type: 'image',
+        type: img.type || showcaseMediaTypeFromMime(img.mime_type),
         description: img.description || '',
       })),
       attachments: attachments.value.map((att) => ({
@@ -1663,6 +1729,7 @@ const confirmSubmit = async () => {
         title: m.title,
         phone: m.phone,
         role: m.role,
+        member_introduction: m.member_introduction?.trim() || '',
       })),
       attachments: attachments.value.map((att) => ({
         file_name: att.originalName || att.file_name,
@@ -1783,6 +1850,7 @@ const loadProjectForEdit = async (projectId: string) => {
         organization: (m.organization as string) || '',
         title: (m.title as string) || '',
         phone: (m.phone as string) || '',
+        member_introduction: (m.member_introduction as string) || '',
         role: (m.role as string) || 'other',
         isExistingUser: !!(m.user_id),
         isChecking: false,
@@ -1815,7 +1883,12 @@ const loadProjectForEdit = async (projectId: string) => {
           uploading: false,
           progress: 100,
         }
-        if (a.type === 'image' || (a.mime_type as string)?.startsWith('image/')) {
+        if (
+          a.type === 'image' ||
+          a.type === 'video' ||
+          (a.mime_type as string)?.startsWith('image/') ||
+          (a.mime_type as string)?.startsWith('video/')
+        ) {
           images.value.push(item)
         } else {
           attachments.value.push(item)
@@ -2588,15 +2661,36 @@ watch(
   overflow: hidden;
 }
 
-.image-preview img {
+.image-preview img,
+.image-preview .preview-video {
+  display: block;
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   object-fit: cover;
   transition: transform 0.3s;
 }
 
 .image-preview img:hover {
   transform: scale(1.05);
+}
+
+.image-preview .preview-video {
+  object-fit: contain;
+  background: #000;
+}
+
+.media-type-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 18px;
+  color: #b31b1b;
+  background: #fff2f0;
+  border-radius: 3px;
+  vertical-align: middle;
 }
 
 .image-placeholder {

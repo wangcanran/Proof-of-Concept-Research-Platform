@@ -175,7 +175,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, CircleCheck, ArrowLeft, View } from '@element-plus/icons-vue'
 import request from '@/utils/request'
-import { getApiOrigin } from '@/utils/request'
+import { getUploadUrl } from '@/utils/request'
 
 const router = useRouter()
 const loading = ref(false)
@@ -206,9 +206,7 @@ function formatDate(d: string) {
   return new Date(d).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 function getImageFullUrl(url: string) {
-  if (!url) return ''
-  if (url.startsWith('http')) return url
-  return getApiOrigin() + url
+  return getUploadUrl(url)
 }
 
 async function loadList() {

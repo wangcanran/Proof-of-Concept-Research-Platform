@@ -55,6 +55,7 @@
                   <option value="applicant">项目申请人</option>
                   <option value="reviewer">评审专家</option>
                   <option value="project_manager">科研助理</option>
+                  <option value="funds_manager">经费管理员</option>
                   <option value="admin">系统管理员</option>
                 </select>
               </div>
