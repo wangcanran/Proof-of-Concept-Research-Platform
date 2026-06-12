@@ -1090,6 +1090,20 @@ router.beforeEach(async (to, from, next) => {
     }
   }
 
+  // 申请人暂不开放经费申请入口
+  const userRoleForHide = (
+    localStorage.getItem('userRole') ||
+    authStore.userRole ||
+    ''
+  ).toUpperCase()
+  if (
+    userRoleForHide === 'APPLICANT' &&
+    (to.path === '/funds-request/apply' || to.path.startsWith('/funds-request/'))
+  ) {
+    next('/applicant/dashboard')
+    return
+  }
+
   // 5. 特殊处理：如果访问通用仪表板，重定向到角色专属仪表板
   if (to.path === '/dashboard') {
     const userRole = localStorage.getItem('userRole') || authStore.userRole || ''
