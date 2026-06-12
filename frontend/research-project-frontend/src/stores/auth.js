@@ -78,7 +78,8 @@ export const useAuthStore = defineStore('auth', () => {
     if (!token.value) return
 
     try {
-      const profile = await getProfile()
+      const res = await getProfile()
+      const profile = res?.user ?? res?.data ?? res
       user.value = profile
       localStorage.setItem('user', JSON.stringify(profile))
       return profile

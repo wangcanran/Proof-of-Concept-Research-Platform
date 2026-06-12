@@ -193,6 +193,39 @@
             <h3 class="section-title">反馈时间</h3>
             <div class="content-box">{{ formatDateTime(request.feedback_date) }}</div>
           </div>
+
+          <div
+            class="section"
+            v-if="request.feedback_action === 'approved' && (assignedExperts.length || canManageExperts)"
+          >
+            <div class="section-title-row">
+              <h3 class="section-title">服务专家</h3>
+              <button
+                v-if="canManageExperts"
+                type="button"
+                class="btn-edit-experts"
+                @click="showExpertEditor = !showExpertEditor"
+              >
+                {{ showExpertEditor ? '收起分配' : '调整专家分配' }}
+              </button>
+            </div>
+            <div class="content-box">
+              <IncubationAssignedExpertsDisplay
+                :experts="assignedExperts"
+                :editable="canManageExperts"
+                :progress-id="request.id"
+                @changed="loadRequest"
+              />
+            </div>
+            <div v-if="canManageExperts && showExpertEditor" class="content-box expert-editor-box">
+              <IncubationExpertAssignPanel
+                :progress-id="request.id"
+                manage-mode
+                :assigned-experts="assignedExperts"
+                @changed="onExpertsChanged"
+              />
+            </div>
+          </div>
         </template>
         <template v-else>
           <div class="empty-section">
@@ -324,6 +357,8 @@ import {
   SERVICE_CATEGORY_LABELS,
   formatServiceCategoriesDisplay,
 } from '@/constants/incubationCategories'
+import IncubationExpertAssignPanel from '@/components/IncubationExpertAssignPanel.vue'
+import IncubationAssignedExpertsDisplay from '@/components/IncubationAssignedExpertsDisplay.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -354,6 +389,7 @@ const feedbackAction = ref<'approved' | 'rejected'>('approved')
 const feedbackComment = ref('')
 const uploadedFiles = ref<File[]>([])
 const fileInputRef = ref<HTMLInputElement>()
+const showExpertEditor = ref(false)
 
 // 用户角色
 const userRole = computed(() => {
@@ -395,6 +431,19 @@ const categoryLabelList = computed(() => {
 const categoryDisplayLine = computed(() =>
   formatServiceCategoriesDisplay(request.value?.service_categories),
 )
+
+const assignedExperts = computed(() => request.value?.assigned_experts || [])
+
+const canManageExperts = computed(
+  () =>
+    userRole.value === 'project_manager' &&
+    request.value?.feedback_action === 'approved' &&
+    request.value?.status === 'feedback_given',
+)
+
+const onExpertsChanged = () => {
+  loadRequest()
+}
 
 // 加载详情
 const loadRequest = async () => {
@@ -830,6 +879,18 @@ onMounted(() => {
 }
 
 /* 字段标题 - 深色字体，下面有红色下划线 */
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.section-title-row .section-title {
+  margin: 0;
+}
+
 .section-title {
   margin: 0 0 12px 0;
   font-size: 16px;
@@ -840,7 +901,34 @@ onMounted(() => {
   display: inline-block;
 }
 
+.btn-edit-experts {
+  padding: 6px 14px;
+  border: 1px solid #b31b1b;
+  border-radius: 6px;
+  background: #fff;
+  color: #b31b1b;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-edit-experts:hover {
+  background: #fff5f5;
+}
+
+.expert-editor-box {
+  margin-top: 12px;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+}
+
 /* 内容盒子 - 浅灰色背景 */
+.content-box.no-padding {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .content-box {
   font-size: 15px;
   color: #333;

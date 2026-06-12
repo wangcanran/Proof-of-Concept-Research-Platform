@@ -46,6 +46,10 @@
 
         <div class="nav-section">
           <h4 v-if="!sidebarCollapsed" class="nav-section-title">经费管理</h4>
+          <router-link to="/funds-manager/funds-usage" class="nav-link" active-class="active">
+            <span class="nav-icon">💵</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">经费使用汇总</span>
+          </router-link>
           <router-link to="/funds-manager/funds-request/apply" class="nav-link" active-class="active">
             <span class="nav-icon">📝</span>
             <span v-if="!sidebarCollapsed" class="nav-text">经费申请</span>
@@ -199,6 +203,13 @@
                 快速操作
               </h3>
               <div class="actions-grid">
+                <button class="action-card" @click="navigateToFundsUsage">
+                  <div class="action-icon">📊</div>
+                  <div class="action-content">
+                    <h4>经费使用汇总</h4>
+                    <p>查看各项目经费使用合计与明细</p>
+                  </div>
+                </button>
                 <button class="action-card" @click="navigateToProjects">
                   <div class="action-icon">📁</div>
                   <div class="action-content">
@@ -371,6 +382,8 @@ const handleLogout = () => {
 }
 
 const navigateToProjects = () => router.push('/funds-manager/projects')
+
+const navigateToFundsUsage = () => router.push('/funds-manager/funds-usage')
 
 const navigateToFundsRequestApply = () => router.push('/funds-manager/funds-request/apply')
 

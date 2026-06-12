@@ -205,6 +205,15 @@
         <ProjectFundsUsagePanel v-if="project" :project-id="project.id" />
       </div>
 
+      <!-- 孵化成果 -->
+      <div v-if="activeTab === 'incubationAchievements'" class="tab-panel">
+        <div class="section">
+          <h3>孵化成果</h3>
+          <p class="section-desc">申请人提交的孵化阶段成果与材料。</p>
+          <ProjectIncubationAchievementsPanel v-if="project" :project-id="project.id" />
+        </div>
+      </div>
+
       <!-- 经费预算 -->
       <div v-if="activeTab === 'budget'" class="tab-panel">
         <div class="section">
@@ -442,6 +451,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
 import ProjectFundsUsagePanel from '@/components/ProjectFundsUsagePanel.vue'
+import ProjectIncubationAchievementsPanel from '@/components/ProjectIncubationAchievementsPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -497,16 +507,23 @@ const showFundsUsageTab = computed(() => {
   return s === 'approved' || s === 'incubating' || s === 'completed'
 })
 
+const showIncubationAchievementTab = computed(() => {
+  const s = project.value?.status
+  return s === 'approved' || s === 'incubating' || s === 'completed'
+})
+
 // 标签页
 const tabs = computed(() => {
   const list = [
     { key: 'basicInfo', label: '基本信息' },
     { key: 'detail', label: '项目详情' },
     { key: 'team', label: '研究团队' },
-    { key: 'budget', label: '经费预算' },
   ]
   if (showFundsUsageTab.value) {
     list.push({ key: 'fundsUsage', label: '经费使用' })
+  }
+  if (showIncubationAchievementTab.value) {
+    list.push({ key: 'incubationAchievements', label: '孵化成果' })
   }
   list.push(
     { key: 'images', label: '图片与视频' },

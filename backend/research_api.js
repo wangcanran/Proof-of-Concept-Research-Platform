@@ -8,6 +8,10 @@ const multer = require('multer');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const fs = require('fs');
+const {
+  upsertExpertiseDescription,
+  refreshExpertKeywordsFromProfile,
+} = require('./expertKeywords');
 const ExcelJS = require('exceljs');
 // MySQL配置（生产环境请在 backend/.env 中设置 DB_*，勿提交 .env）
 const DB_CONFIG = {
@@ -185,6 +189,9 @@ function sqlProjectBudgetTotal(alias = 'p') {
 
 const FUNDS_REQUEST_UPLOADS_DIR = path.join(__dirname, 'uploads', 'funds-requests');
 const INCUBATION_UPLOADS_DIR = path.join(__dirname, 'uploads', 'incubation');
+const INCUBATION_ACHIEVEMENT_UPLOADS_DIR = path.join(__dirname, 'uploads', 'incubation-achievements');
+/** 申请人可随时提交孵化成果的项目状态 */
+const INCUBATION_ACHIEVEMENT_SUBMIT_PROJECT_STATUSES = ['approved', 'incubating'];
 
 /** 入库用相对路径（相对 backend 根目录），便于迁移部署 */
 function uploadFileStoredPath(absoluteDiskPath, fallbackRelativeDir) {
@@ -239,6 +246,14 @@ function incubationFileStoredPath(absoluteDiskPath) {
 
 function resolveIncubationFileDiskPath(storedPath) {
   return resolveUploadDiskPath(storedPath, INCUBATION_UPLOADS_DIR);
+}
+
+function incubationAchievementFileStoredPath(absoluteDiskPath) {
+  return uploadFileStoredPath(absoluteDiskPath, 'uploads/incubation-achievements');
+}
+
+function resolveIncubationAchievementFileDiskPath(storedPath) {
+  return resolveUploadDiskPath(storedPath, INCUBATION_ACHIEVEMENT_UPLOADS_DIR);
 }
 
 const PROJECT_UPLOADS_DIR = path.join(__dirname, 'uploads', 'projects');
@@ -415,6 +430,98 @@ const newsUpload = multer({
   limits: { fileSize: 50 * 1024 * 1024 },
 });
 
+const ENTERPRISE_DEMAND_UPLOADS_DIR = path.join(__dirname, 'uploads', 'enterprise-demand');
+/** 企业需求可推送的项目状态：已入库(approved)、孵化中(incubating) */
+const ENTERPRISE_DEMAND_PUSH_PROJECT_STATUSES = ['approved', 'incubating'];
+
+function enterpriseDemandMediaStoredPath(absoluteDiskPath) {
+  return uploadFileStoredPath(absoluteDiskPath, 'uploads/enterprise-demand');
+}
+
+function resolveEnterpriseDemandMediaDiskPath(storedPath) {
+  return resolveUploadDiskPath(storedPath, ENTERPRISE_DEMAND_UPLOADS_DIR);
+}
+
+function enterpriseDemandMediaPublicPath(storedPath) {
+  if (!storedPath) return '';
+  let p = String(storedPath).trim().replace(/\\/g, '/');
+  if (/^https?:\/\//i.test(p)) {
+    try {
+      p = new URL(p).pathname;
+    } catch { /* keep p */ }
+  }
+  return p.startsWith('/') ? p : `/${p}`;
+}
+
+function enterpriseDemandMediaPathForDb(filePath) {
+  if (!filePath) return filePath;
+  let p = String(filePath).trim();
+  if (/^https?:\/\//i.test(p)) {
+    try {
+      return enterpriseDemandMediaPathForDb(new URL(p).pathname);
+    } catch { /* fall through */ }
+  }
+  if (path.isAbsolute(p) && !p.replace(/\\/g, '/').startsWith('/')) {
+    return enterpriseDemandMediaStoredPath(p);
+  }
+  return p.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function mapEnterpriseDemandMediaRow(row) {
+  if (!row) return row;
+  return { ...row, file_url: enterpriseDemandMediaPublicPath(row.file_url) };
+}
+
+function normalizeEnterpriseDemandContentForDb(html) {
+  if (!html || typeof html !== 'string') return html;
+  return html.replace(
+    /(src|href)=(["'])([^"']+)\2/gi,
+    (m, attr, q, url) => {
+      if (!/uploads[/\\]enterprise-demand[/\\]/i.test(url)) return m;
+      const pub = enterpriseDemandMediaPublicPath(enterpriseDemandMediaPathForDb(url));
+      return `${attr}=${q}${pub}${q}`;
+    },
+  );
+}
+
+if (!fs.existsSync(ENTERPRISE_DEMAND_UPLOADS_DIR)) {
+  fs.mkdirSync(ENTERPRISE_DEMAND_UPLOADS_DIR, { recursive: true });
+}
+const enterpriseDemandUploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, ENTERPRISE_DEMAND_UPLOADS_DIR),
+  filename: (req, file, cb) => {
+    const safe = fixMultipartFilename(file.originalname || '');
+    const ext = path.extname(safe) || path.extname(file.originalname || '');
+    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+  },
+});
+const enterpriseDemandUpload = multer({
+  storage: enterpriseDemandUploadStorage,
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+
+function formatEnterpriseDemandRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    content: row.content ? normalizeEnterpriseDemandContentForDb(row.content) : row.content,
+    published_at: row.published_at ? row.published_at.toISOString?.() || row.published_at : null,
+    deadline: row.deadline ? (row.deadline.toISOString?.().slice(0, 10) || row.deadline) : null,
+    created_at: row.created_at ? row.created_at.toISOString?.() || row.created_at : null,
+    updated_at: row.updated_at ? row.updated_at.toISOString?.() || row.updated_at : null,
+  };
+}
+
+function formatEnterpriseDemandPushRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    created_at: row.created_at ? row.created_at.toISOString?.() || row.created_at : null,
+    claimed_at: row.claimed_at ? row.claimed_at.toISOString?.() || row.claimed_at : null,
+    updated_at: row.updated_at ? row.updated_at.toISOString?.() || row.updated_at : null,
+  };
+}
+
 /** 项目已花费：经费申请批准金额合计 */
 function sqlProjectFundsSpent(alias = 'p') {
   return `(SELECT COALESCE(SUM(fri.feedback_amount), 0)
@@ -430,6 +537,144 @@ function calcProjectFundsRemaining(totalBudget, spentAmount) {
   const total = parseFloat(totalBudget) || 0;
   const spent = parseFloat(spentAmount) || 0;
   return parseFloat((total - spent).toFixed(2));
+}
+
+/** 加载个人中心完整资料（申请人 / 专家等） */
+async function loadUserProfileForApi(userId) {
+  const [users] = await pool.query(
+    `SELECT id, username, name, email, role, department, title, phone, status, last_login, created_at, updated_at
+     FROM \`User\` WHERE id = ?`,
+    [userId],
+  );
+  if (!users.length) return null;
+  const user = users[0];
+  let expertise_description = null;
+  let expertise_keywords = null;
+  let expert_domains = [];
+  let expert_types = [];
+  if (user.role === 'reviewer') {
+    const [epRows] = await pool.query(
+      'SELECT expertise_description, keywords FROM `ExpertProfile` WHERE id = ?',
+      [userId],
+    );
+    expertise_description = epRows[0]?.expertise_description ?? null;
+    expertise_keywords = epRows[0]?.keywords ?? null;
+    const [domains] = await pool.query(
+      `SELECT rd.id, rd.name, rd.code, rd.sort_order
+       FROM \`ExpertDomain\` ed
+       INNER JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
+       WHERE ed.expert_id = ?
+       ORDER BY rd.sort_order ASC, rd.name ASC`,
+      [userId],
+    );
+    expert_domains = domains;
+    expert_types = await getExpertTypesForUser(userId);
+  }
+  const profile = {
+    ...user,
+    expertise_description,
+    expert_domains,
+    expertDomains: expert_domains,
+  };
+  if (user.role === 'reviewer') {
+    profile.keywords = expertise_keywords;
+    profile.expert_types = expert_types;
+    profile.expertTypes = expert_types;
+  }
+  return profile;
+}
+
+const VALID_EXPERT_TYPES = ['technical', 'investment', 'industry'];
+
+function normalizeExpertTypesInput(input) {
+  const types = Array.isArray(input) ? input : [];
+  return [...new Set(types.map((t) => String(t).trim()).filter((t) => VALID_EXPERT_TYPES.includes(t)))];
+}
+
+async function getExpertTypesForUser(expertId) {
+  const [rows] = await pool.query(
+    'SELECT expert_type FROM `ExpertExpertType` WHERE expert_id = ? ORDER BY expert_type ASC',
+    [expertId],
+  );
+  return rows.map((r) => r.expert_type);
+}
+
+/** 专家类型：全量替换（technical / investment / industry） */
+async function replaceExpertTypes(expertId, expertTypes) {
+  const types = normalizeExpertTypesInput(expertTypes);
+  await pool.query('DELETE FROM `ExpertExpertType` WHERE expert_id = ?', [expertId]);
+  for (const expertType of types) {
+    await pool.query(
+      'INSERT INTO `ExpertExpertType` (id, expert_id, expert_type, created_at) VALUES (?, ?, ?, NOW())',
+      [randomUUID(), expertId, expertType],
+    );
+  }
+  return types;
+}
+
+async function attachExpertTypesToUsers(users) {
+  if (!Array.isArray(users) || !users.length) return users;
+  const reviewerIds = users.filter((u) => u.role === 'reviewer').map((u) => u.id);
+  if (!reviewerIds.length) return users;
+  const [rows] = await pool.query(
+    'SELECT expert_id, expert_type FROM `ExpertExpertType` WHERE expert_id IN (?)',
+    [reviewerIds],
+  );
+  const map = {};
+  rows.forEach((r) => {
+    if (!map[r.expert_id]) map[r.expert_id] = [];
+    map[r.expert_id].push(r.expert_type);
+  });
+  users.forEach((u) => {
+    if (u.role === 'reviewer') {
+      u.expert_types = map[u.id] || [];
+      u.expertTypes = u.expert_types;
+    }
+  });
+  return users;
+}
+
+/** 专家擅长领域：全量替换 */
+async function replaceExpertDomains(expertId, domainIds) {
+  const ids = Array.isArray(domainIds)
+    ? [...new Set(domainIds.map((id) => String(id).trim()).filter(Boolean))]
+    : [];
+  if (ids.length > 0) {
+    const placeholders = ids.map(() => '?').join(',');
+    const [valid] = await pool.query(
+      `SELECT id FROM \`ResearchDomain\` WHERE enabled = TRUE AND id IN (${placeholders})`,
+      ids,
+    );
+    if (valid.length !== ids.length) {
+      const err = new Error('包含无效或未启用的研究领域');
+      err.code = 'INVALID_DOMAIN';
+      throw err;
+    }
+  }
+  await pool.query('DELETE FROM `ExpertDomain` WHERE expert_id = ?', [expertId]);
+  for (const domainId of ids) {
+    await pool.query(
+      'INSERT INTO `ExpertDomain` (id, expert_id, domain_id, created_at) VALUES (?, ?, ?, NOW())',
+      [randomUUID(), expertId, domainId],
+    );
+  }
+}
+
+async function verifyUserPassword(plainPassword, storedHash) {
+  if (!storedHash) return false;
+  const bcrypt = require('bcryptjs');
+  if (
+    storedHash.startsWith('$2a$') ||
+    storedHash.startsWith('$2b$') ||
+    storedHash.startsWith('$2y$')
+  ) {
+    try {
+      return await bcrypt.compare(plainPassword, storedHash);
+    } catch {
+      return plainPassword === storedHash;
+    }
+  }
+  return plainPassword === storedHash;
 }
 
 /** 项目经费使用汇总（总预算、已花费、历次申请及明细） */
@@ -932,6 +1177,155 @@ async function userMayViewIncubationProgress(pool, progress, user) {
     [progress.project_id, uid]
   );
   return m.length > 0;
+}
+
+const INCUBATION_EXPERT_TYPE_LABELS = {
+  technical: '技术专家',
+  investment: '投资专家',
+  industry: '产业专家',
+};
+
+/** 获取孵化服务申请已分配专家 */
+async function getIncubationAssignedExperts(progressId) {
+  const [rows] = await pool.query(
+    `SELECT ipe.id, ipe.progress_id, ipe.expert_id, ipe.expert_type, ipe.assigned_by, ipe.created_at,
+            u.name AS expert_name, u.email AS expert_email, u.phone AS expert_phone,
+            u.department, u.title, ep.expertise_description, ep.keywords
+     FROM \`IncubationProgressExpert\` ipe
+     JOIN \`User\` u ON ipe.expert_id = u.id
+     LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.id
+     WHERE ipe.progress_id = ?
+     ORDER BY ipe.expert_type ASC, ipe.created_at ASC`,
+    [progressId],
+  );
+  return rows;
+}
+
+/** 校验当前用户是否为该孵化服务申请对应项目的项目经理 */
+async function verifyIncubationProgressManager(progressId, userId) {
+  const [progressRows] = await pool.query(
+    `SELECT ip.*, p.manager_id, p.title AS project_title
+     FROM \`IncubationProgress\` ip
+     JOIN \`Project\` p ON ip.project_id = p.id
+     WHERE ip.id = ?`,
+    [progressId],
+  );
+  if (!progressRows.length) {
+    return { ok: false, status: 404, error: '服务申请不存在' };
+  }
+  const progress = progressRows[0];
+  if (progress.manager_id !== userId) {
+    return { ok: false, status: 403, error: '您不是该项目的项目经理' };
+  }
+  return { ok: true, progress };
+}
+
+/** 为孵化服务申请分配专家（跳过无效项与重复项） */
+async function assignIncubationProgressExperts(progressId, assignments, assignedBy, progress) {
+  const results = [];
+  if (!Array.isArray(assignments) || !assignments.length) return results;
+
+  for (const item of assignments) {
+    const expertId = item.expert_id;
+    const expertType = item.expert_type;
+    if (!expertId || !VALID_EXPERT_TYPES.includes(expertType)) continue;
+
+    const [experts] = await pool.query(
+      `SELECT u.id, u.name FROM \`User\` u
+       WHERE u.id = ? AND u.role = 'reviewer' AND u.status = 'active'
+         AND EXISTS (
+           SELECT 1 FROM \`ExpertExpertType\` eet
+           WHERE eet.expert_id = u.id AND eet.expert_type = ?
+         )`,
+      [expertId, expertType],
+    );
+    if (!experts.length) continue;
+
+    const assignmentId = randomUUID();
+    try {
+      await pool.query(
+        `INSERT INTO \`IncubationProgressExpert\`
+         (id, progress_id, expert_id, expert_type, assigned_by, created_at)
+         VALUES (?, ?, ?, ?, ?, NOW())`,
+        [assignmentId, progressId, expertId, expertType, assignedBy],
+      );
+      results.push({
+        id: assignmentId,
+        expert_id: expertId,
+        expert_type: expertType,
+        expert_name: experts[0].name,
+      });
+
+      await pool.query(
+        `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+         VALUES (?, ?, 'incubation', ?, ?, ?, 'IncubationProgress', NOW())`,
+        [
+          randomUUID(),
+          expertId,
+          '孵化服务专家指派',
+          `您已被指派为项目「${progress.project_title}」孵化服务申请的${INCUBATION_EXPERT_TYPE_LABELS[expertType] || expertType}。`,
+          progressId,
+        ],
+      );
+    } catch (e) {
+      if (e.code !== 'ER_DUP_ENTRY') throw e;
+    }
+  }
+  return results;
+}
+
+async function loadIncubationAchievementRecordsWithFiles(projectId) {
+  const [records] = await pool.query(
+    `SELECT iar.*, u.name AS creator_name
+     FROM \`IncubationAchievementRecord\` iar
+     JOIN \`User\` u ON iar.created_by = u.id
+     WHERE iar.project_id = ?
+     ORDER BY COALESCE(iar.record_date, iar.created_at) DESC, iar.created_at DESC`,
+    [projectId],
+  );
+  for (const record of records) {
+    const [files] = await pool.query(
+      `SELECT id, record_id, file_name, file_path, file_size, mime_type, file_extension, description, created_at
+       FROM \`IncubationAchievementRecordFile\`
+       WHERE record_id = ?
+       ORDER BY sort_order ASC, created_at ASC`,
+      [record.id],
+    );
+    record.files = files;
+  }
+  return records;
+}
+
+async function userMayViewIncubationAchievements(pool, projectId, user) {
+  const uid = user.userId || user.id;
+  if (checkPermission(user.role, ['admin'])) return true;
+  const [p] = await pool.query(
+    'SELECT applicant_id, manager_id FROM `Project` WHERE id = ?',
+    [projectId],
+  );
+  if (!p.length) return false;
+  if (p[0].manager_id === uid || p[0].applicant_id === uid) return true;
+  return userIsApplicantOrTeamMember(pool, projectId, uid);
+}
+
+async function userMaySubmitIncubationAchievement(pool, projectId, user) {
+  const uid = user.userId || user.id;
+  const isMember = await userIsApplicantOrTeamMember(pool, projectId, uid);
+  if (!isMember) {
+    return { ok: false, status: 403, error: '仅项目申请人或团队成员可提交孵化成果' };
+  }
+  const [p] = await pool.query('SELECT status, title, manager_id FROM `Project` WHERE id = ?', [projectId]);
+  if (!p.length) {
+    return { ok: false, status: 404, error: '项目不存在' };
+  }
+  if (!INCUBATION_ACHIEVEMENT_SUBMIT_PROJECT_STATUSES.includes(p[0].status)) {
+    return {
+      ok: false,
+      status: 400,
+      error: '仅已入库或孵化中的项目可提交孵化成果',
+    };
+  }
+  return { ok: true, project: p[0] };
 }
 
 // 统一响应函数
@@ -1537,6 +1931,777 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ==================== 企业需求管理 API（项目经理） ====================
+
+    if (pathname === '/api/enterprise-demands' && req.method === 'GET') {
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const status = query.status || '';
+        const keyword = query.keyword || '';
+        const page = parseInt(query.page, 10) || 1;
+        const pageSize = parseInt(query.pageSize, 10) || 10;
+        const offset = (page - 1) * pageSize;
+
+        let where = 'WHERE 1=1';
+        const params = [];
+        if (status) {
+          where += ' AND d.status = ?';
+          params.push(status);
+        }
+        if (keyword) {
+          where += ' AND (d.title LIKE ? OR d.summary LIKE ? OR d.enterprise_name LIKE ? OR d.industry LIKE ?)';
+          const kw = `%${keyword}%`;
+          params.push(kw, kw, kw, kw);
+        }
+
+        const [rows] = await pool.query(
+          `SELECT d.*, u.name AS publisher_name,
+            (SELECT COUNT(*) FROM \`ProjectEnterpriseDemand\` ped WHERE ped.demand_id = d.id AND ped.status != 'withdrawn') AS push_count
+           FROM \`EnterpriseDemand\` d
+           LEFT JOIN \`User\` u ON d.publisher_id = u.id
+           ${where}
+           ORDER BY d.published_at DESC, d.created_at DESC
+           LIMIT ? OFFSET ?`,
+          [...params, pageSize, offset],
+        );
+        const [cnt] = await pool.query(
+          `SELECT COUNT(*) AS total FROM \`EnterpriseDemand\` d ${where}`,
+          params,
+        );
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            list: rows.map(formatEnterpriseDemandRow),
+            total: cnt[0].total,
+            page,
+            pageSize,
+          },
+        });
+      } catch (error) {
+        console.error('获取企业需求列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取企业需求列表失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/enterprise-demands' && req.method === 'POST') {
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const { title, summary, content, status: demandStatus } = body;
+        if (!title || !content) {
+          sendResponse(res, 400, { success: false, error: '标题和内容不能为空' });
+          return;
+        }
+        const finalStatus = ['draft', 'published', 'closed', 'offline'].includes(demandStatus)
+          ? demandStatus
+          : 'draft';
+        const publishedAt = finalStatus === 'published' ? new Date() : null;
+        const publisherId = user.id || user.userId;
+        const id = randomUUID();
+        await pool.query(
+          `INSERT INTO \`EnterpriseDemand\`
+            (id, title, summary, content, enterprise_name, industry, source_url, source_note,
+             contact_name, contact_phone, contact_email, status, publisher_id, published_at, deadline)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id,
+            String(title).trim(),
+            String(summary || '').trim(),
+            normalizeEnterpriseDemandContentForDb(content),
+            body.enterprise_name ? String(body.enterprise_name).trim() : null,
+            body.industry ? String(body.industry).trim() : null,
+            body.source_url ? String(body.source_url).trim() : null,
+            body.source_note ? String(body.source_note).trim() : null,
+            body.contact_name ? String(body.contact_name).trim() : null,
+            body.contact_phone ? String(body.contact_phone).trim() : null,
+            body.contact_email ? String(body.contact_email).trim() : null,
+            finalStatus,
+            publisherId,
+            publishedAt,
+            body.deadline || null,
+          ],
+        );
+        const [created] = await pool.query(
+          `SELECT d.*, u.name AS publisher_name FROM \`EnterpriseDemand\` d
+           LEFT JOIN \`User\` u ON d.publisher_id = u.id WHERE d.id = ?`,
+          [id],
+        );
+        sendResponse(res, 201, {
+          success: true,
+          data: formatEnterpriseDemandRow(created[0]),
+          message: '创建成功',
+        });
+      } catch (error) {
+        console.error('创建企业需求失败:', error);
+        sendResponse(res, 500, { success: false, error: '创建企业需求失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/enterprise-demands/upload' && req.method === 'POST') {
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { errno: 1, success: false, error: '无权操作' });
+          return;
+        }
+
+        enterpriseDemandUpload.single('file')(req, res, async (err) => {
+          if (err) {
+            sendResponse(res, 500, { errno: 1, success: false, error: '上传失败: ' + err.message });
+            return;
+          }
+          if (!req.file) {
+            sendResponse(res, 400, { errno: 1, success: false, error: '请选择文件' });
+            return;
+          }
+
+          const file = req.file;
+          const demandId = req.body.demand_id || '';
+          const mediaId = randomUUID();
+          let fileType = 'attachment';
+          if (file.mimetype.startsWith('image/')) fileType = 'image';
+          else if (file.mimetype.startsWith('video/')) fileType = 'video';
+          else if (file.mimetype.startsWith('audio/')) fileType = 'audio';
+
+          const storedPath = enterpriseDemandMediaStoredPath(file.path);
+          const publicPath = enterpriseDemandMediaPublicPath(storedPath);
+          const uploaderId = user.id || user.userId;
+
+          if (demandId) {
+            await pool.query(
+              `INSERT INTO \`EnterpriseDemandMedia\`
+                (id, demand_id, file_type, file_url, file_name, file_size, mime_type, uploaded_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                mediaId,
+                demandId,
+                fileType,
+                storedPath,
+                fixMultipartFilename(file.originalname || ''),
+                file.size,
+                file.mimetype,
+                uploaderId,
+              ],
+            );
+          }
+
+          sendResponse(res, 200, {
+            errno: 0,
+            success: true,
+            data: {
+              id: demandId ? mediaId : '',
+              url: publicPath,
+              type: fileType,
+              name: fixMultipartFilename(file.originalname || ''),
+            },
+          });
+        });
+      } catch (error) {
+        console.error('企业需求上传失败:', error);
+        sendResponse(res, 500, { errno: 1, success: false, error: '上传失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/enterprise-demands\/[\w-]+$/) &&
+      req.method === 'GET' &&
+      !pathname.includes('/upload')
+    ) {
+      const demandId = pathname.replace('/api/enterprise-demands/', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const [rows] = await pool.query(
+          `SELECT d.*, u.name AS publisher_name FROM \`EnterpriseDemand\` d
+           LEFT JOIN \`User\` u ON d.publisher_id = u.id WHERE d.id = ?`,
+          [demandId],
+        );
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '企业需求不存在' });
+          return;
+        }
+        const [media] = await pool.query(
+          `SELECT * FROM \`EnterpriseDemandMedia\` WHERE demand_id = ? ORDER BY sort_order, created_at`,
+          [demandId],
+        );
+        const content = rows[0].content || '';
+        const contentImages = [];
+        const imgRegex = /<img[^>]+src=["']([^"']+)["']/gi;
+        let imgMatch;
+        const seenUrls = new Set();
+        while ((imgMatch = imgRegex.exec(content)) !== null) {
+          const url = imgMatch[1];
+          if (!seenUrls.has(url)) {
+            seenUrls.add(url);
+            contentImages.push({
+              id: `content-img-${contentImages.length}`,
+              file_url: url,
+              file_type: 'image',
+              file_name: url.split('/').pop() || url,
+            });
+          }
+        }
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            ...formatEnterpriseDemandRow(rows[0]),
+            media: media.map(mapEnterpriseDemandMediaRow),
+            contentImages: contentImages.map((img) => ({
+              ...img,
+              file_url: enterpriseDemandMediaPublicPath(enterpriseDemandMediaPathForDb(img.file_url)),
+            })),
+          },
+        });
+      } catch (error) {
+        console.error('获取企业需求详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取企业需求详情失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/enterprise-demands\/[\w-]+$/) &&
+      req.method === 'PUT' &&
+      !pathname.endsWith('/publish') &&
+      !pathname.endsWith('/offline') &&
+      !pathname.endsWith('/close')
+    ) {
+      const demandId = pathname.replace('/api/enterprise-demands/', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const [check] = await pool.query(`SELECT status FROM \`EnterpriseDemand\` WHERE id = ?`, [demandId]);
+        if (!check.length) {
+          sendResponse(res, 404, { success: false, error: '企业需求不存在' });
+          return;
+        }
+        const currentStatus = check[0].status;
+
+        const fields = [];
+        const values = [];
+        const strFields = [
+          'title', 'summary', 'enterprise_name', 'industry', 'source_url', 'source_note',
+          'contact_name', 'contact_phone', 'contact_email',
+        ];
+        strFields.forEach((key) => {
+          if (body[key] !== undefined) {
+            fields.push(`\`${key}\` = ?`);
+            values.push(body[key] != null ? String(body[key]).trim() || null : null);
+          }
+        });
+        if (body.content !== undefined) {
+          fields.push('content = ?');
+          values.push(normalizeEnterpriseDemandContentForDb(body.content));
+        }
+        if (body.deadline !== undefined) {
+          fields.push('deadline = ?');
+          values.push(body.deadline || null);
+        }
+        if (body.status !== undefined && ['draft', 'published', 'closed', 'offline'].includes(body.status)) {
+          fields.push('status = ?');
+          values.push(body.status);
+          if (body.status === 'published' && currentStatus !== 'published') {
+            fields.push('published_at = ?');
+            values.push(new Date());
+          }
+        }
+        if (!fields.length) {
+          sendResponse(res, 400, { success: false, error: '没有要更新的字段' });
+          return;
+        }
+        values.push(demandId);
+        await pool.query(`UPDATE \`EnterpriseDemand\` SET ${fields.join(', ')} WHERE id = ?`, values);
+        const [updated] = await pool.query(
+          `SELECT d.*, u.name AS publisher_name FROM \`EnterpriseDemand\` d
+           LEFT JOIN \`User\` u ON d.publisher_id = u.id WHERE d.id = ?`,
+          [demandId],
+        );
+        sendResponse(res, 200, {
+          success: true,
+          data: formatEnterpriseDemandRow(updated[0]),
+          message: '更新成功',
+        });
+      } catch (error) {
+        console.error('更新企业需求失败:', error);
+        sendResponse(res, 500, { success: false, error: '更新企业需求失败' });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/enterprise-demands\/[\w-]+\/publish$/) && req.method === 'PUT') {
+      const demandId = pathname.replace('/api/enterprise-demands/', '').replace('/publish', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        await pool.query(
+          `UPDATE \`EnterpriseDemand\` SET status = 'published', published_at = ? WHERE id = ?`,
+          [new Date(), demandId],
+        );
+        sendResponse(res, 200, { success: true, message: '发布成功' });
+      } catch (error) {
+        console.error('发布企业需求失败:', error);
+        sendResponse(res, 500, { success: false, error: '发布企业需求失败' });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/enterprise-demands\/[\w-]+\/offline$/) && req.method === 'PUT') {
+      const demandId = pathname.replace('/api/enterprise-demands/', '').replace('/offline', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        await pool.query(`UPDATE \`EnterpriseDemand\` SET status = 'offline' WHERE id = ?`, [demandId]);
+        sendResponse(res, 200, { success: true, message: '下架成功' });
+      } catch (error) {
+        console.error('下架企业需求失败:', error);
+        sendResponse(res, 500, { success: false, error: '下架企业需求失败' });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/enterprise-demands\/[\w-]+\/close$/) && req.method === 'PUT') {
+      const demandId = pathname.replace('/api/enterprise-demands/', '').replace('/close', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        await pool.query(`UPDATE \`EnterpriseDemand\` SET status = 'closed' WHERE id = ?`, [demandId]);
+        sendResponse(res, 200, { success: true, message: '已关闭' });
+      } catch (error) {
+        console.error('关闭企业需求失败:', error);
+        sendResponse(res, 500, { success: false, error: '关闭企业需求失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/enterprise-demands\/[\w-]+$/) &&
+      req.method === 'DELETE'
+    ) {
+      const demandId = pathname.replace('/api/enterprise-demands/', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const [media] = await pool.query(
+          `SELECT file_url FROM \`EnterpriseDemandMedia\` WHERE demand_id = ?`,
+          [demandId],
+        );
+        for (const m of media) {
+          const diskPath = resolveEnterpriseDemandMediaDiskPath(m.file_url);
+          if (diskPath && fs.existsSync(diskPath)) {
+            try { fs.unlinkSync(diskPath); } catch (e) { /* ignore */ }
+          }
+        }
+        await pool.query(`DELETE FROM \`EnterpriseDemand\` WHERE id = ?`, [demandId]);
+        sendResponse(res, 200, { success: true, message: '删除成功' });
+      } catch (error) {
+        console.error('删除企业需求失败:', error);
+        sendResponse(res, 500, { success: false, error: '删除企业需求失败' });
+      }
+      return;
+    }
+
+    // 企业需求推送给项目 / 项目方承接
+    if (pathname.match(/^\/api\/enterprise-demands\/[\w-]+\/pushes$/) && req.method === 'GET') {
+      const demandId = pathname.replace('/api/enterprise-demands/', '').replace('/pushes', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const [demandRows] = await pool.query(
+          'SELECT id, status FROM `EnterpriseDemand` WHERE id = ?',
+          [demandId],
+        );
+        if (!demandRows.length) {
+          sendResponse(res, 404, { success: false, error: '企业需求不存在' });
+          return;
+        }
+        const [rows] = await pool.query(
+          `SELECT ped.*,
+            p.title AS project_title,
+            p.project_code,
+            p.status AS project_status,
+            ua.name AS applicant_name,
+            uc.name AS claimed_by_name
+           FROM \`ProjectEnterpriseDemand\` ped
+           INNER JOIN \`Project\` p ON ped.project_id = p.id
+           LEFT JOIN \`User\` ua ON p.applicant_id = ua.id
+           LEFT JOIN \`User\` uc ON ped.claimed_by = uc.id
+           WHERE ped.demand_id = ?
+           ORDER BY ped.created_at DESC`,
+          [demandId],
+        );
+        sendResponse(res, 200, { success: true, data: rows.map(formatEnterpriseDemandPushRow) });
+      } catch (error) {
+        console.error('获取推送记录失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取推送记录失败' });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/enterprise-demands\/[\w-]+\/push$/) && req.method === 'POST') {
+      const demandId = pathname.replace('/api/enterprise-demands/', '').replace('/push', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const projectIds = Array.isArray(body.project_ids)
+          ? [...new Set(body.project_ids.map((id) => String(id).trim()).filter(Boolean))]
+          : body.project_id
+            ? [String(body.project_id).trim()]
+            : [];
+        if (!projectIds.length) {
+          sendResponse(res, 400, { success: false, error: '请选择要推送的项目' });
+          return;
+        }
+        const remark = body.remark != null ? String(body.remark).trim() || null : null;
+        const [demandRows] = await pool.query(
+          'SELECT id, status, title FROM `EnterpriseDemand` WHERE id = ?',
+          [demandId],
+        );
+        if (!demandRows.length) {
+          sendResponse(res, 404, { success: false, error: '企业需求不存在' });
+          return;
+        }
+        if (demandRows[0].status !== 'published') {
+          sendResponse(res, 400, { success: false, error: '仅已发布的需求可推送给项目' });
+          return;
+        }
+        const pmId = user.id || user.userId;
+        const created = [];
+        const skipped = [];
+        for (const projectId of projectIds) {
+          const [projRows] = await pool.query(
+            'SELECT id, title, manager_id, status FROM `Project` WHERE id = ?',
+            [projectId],
+          );
+          if (!projRows.length) {
+            skipped.push({ project_id: projectId, reason: '项目不存在' });
+            continue;
+          }
+          const ownership = assertProjectManagerProjectOwnership(projRows[0], user);
+          if (!ownership.ok) {
+            skipped.push({ project_id: projectId, reason: ownership.error });
+            continue;
+          }
+          if (!ENTERPRISE_DEMAND_PUSH_PROJECT_STATUSES.includes(projRows[0].status)) {
+            skipped.push({
+              project_id: projectId,
+              reason: '仅可向已入库或孵化中的项目推送企业需求',
+            });
+            continue;
+          }
+          const [existing] = await pool.query(
+            'SELECT id, status FROM `ProjectEnterpriseDemand` WHERE project_id = ? AND demand_id = ?',
+            [projectId, demandId],
+          );
+          if (existing.length && existing[0].status === 'claimed') {
+            skipped.push({ project_id: projectId, reason: '该项目已承接此需求' });
+            continue;
+          }
+          if (existing.length) {
+            await pool.query(
+              `UPDATE \`ProjectEnterpriseDemand\`
+               SET status = 'pushed', pushed_by = ?, remark = ?, claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
+               WHERE id = ?`,
+              [pmId, remark, existing[0].id],
+            );
+            created.push(existing[0].id);
+          } else {
+            const pushId = randomUUID();
+            await pool.query(
+              `INSERT INTO \`ProjectEnterpriseDemand\`
+                (id, project_id, demand_id, pushed_by, remark, status)
+               VALUES (?, ?, ?, ?, ?, 'pushed')`,
+              [pushId, projectId, demandId, pmId, remark],
+            );
+            created.push(pushId);
+          }
+        }
+        if (!created.length) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '未能推送给任何项目',
+            skipped,
+          });
+          return;
+        }
+        sendResponse(res, 200, {
+          success: true,
+          message: `已推送给 ${created.length} 个项目`,
+          data: { created_count: created.length, skipped },
+        });
+      } catch (error) {
+        console.error('推送企业需求失败:', error);
+        sendResponse(res, 500, { success: false, error: '推送企业需求失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/enterprise-demands\/[\w-]+\/pushes\/[\w-]+\/withdraw$/) &&
+      req.method === 'PUT'
+    ) {
+      const parts = pathname.replace('/api/enterprise-demands/', '').split('/');
+      const demandId = parts[0];
+      const pushId = parts[2];
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const [rows] = await pool.query(
+          `SELECT ped.*, p.manager_id
+           FROM \`ProjectEnterpriseDemand\` ped
+           INNER JOIN \`Project\` p ON ped.project_id = p.id
+           WHERE ped.id = ? AND ped.demand_id = ?`,
+          [pushId, demandId],
+        );
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '推送记录不存在' });
+          return;
+        }
+        const ownership = assertProjectManagerProjectOwnership(rows[0], user);
+        if (!ownership.ok) {
+          sendResponse(res, 403, { success: false, error: ownership.error });
+          return;
+        }
+        if (rows[0].status === 'claimed') {
+          sendResponse(res, 400, { success: false, error: '项目已承接，无法撤回' });
+          return;
+        }
+        if (rows[0].status === 'withdrawn') {
+          sendResponse(res, 200, { success: true, message: '已撤回' });
+          return;
+        }
+        await pool.query(
+          `UPDATE \`ProjectEnterpriseDemand\` SET status = 'withdrawn', updated_at = NOW() WHERE id = ?`,
+          [pushId],
+        );
+        sendResponse(res, 200, { success: true, message: '已撤回推送' });
+      } catch (error) {
+        console.error('撤回推送失败:', error);
+        sendResponse(res, 500, { success: false, error: '撤回推送失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/applicant\/projects\/[\w-]+\/enterprise-demands$/) &&
+      req.method === 'GET'
+    ) {
+      const projectId = pathname.replace('/api/applicant/projects/', '').replace('/enterprise-demands', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || user.role !== 'applicant') {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const [projRows] = await pool.query(
+          'SELECT id, applicant_id, title FROM `Project` WHERE id = ?',
+          [projectId],
+        );
+        if (!projRows.length) {
+          sendResponse(res, 404, { success: false, error: '项目不存在' });
+          return;
+        }
+        if (String(projRows[0].applicant_id) !== String(user.id || user.userId)) {
+          sendResponse(res, 403, { success: false, error: '只能查看本人项目的推送需求' });
+          return;
+        }
+        const [rows] = await pool.query(
+          `SELECT ped.*,
+            d.title AS demand_title,
+            d.summary AS demand_summary,
+            d.content AS demand_content,
+            d.enterprise_name,
+            d.industry,
+            d.deadline,
+            d.contact_name,
+            d.contact_phone,
+            d.contact_email,
+            d.source_url,
+            d.source_note,
+            up.name AS pushed_by_name
+           FROM \`ProjectEnterpriseDemand\` ped
+           INNER JOIN \`EnterpriseDemand\` d ON ped.demand_id = d.id
+           LEFT JOIN \`User\` up ON ped.pushed_by = up.id
+           WHERE ped.project_id = ? AND ped.status != 'withdrawn'
+           ORDER BY
+             CASE ped.status WHEN 'pushed' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END,
+             ped.created_at DESC`,
+          [projectId],
+        );
+        sendResponse(res, 200, {
+          success: true,
+          data: rows.map((row) => ({
+            ...formatEnterpriseDemandPushRow(row),
+            demand_title: row.demand_title,
+            demand_summary: row.demand_summary,
+            demand_content: normalizeEnterpriseDemandContentForDb(row.demand_content),
+            enterprise_name: row.enterprise_name,
+            industry: row.industry,
+            deadline: row.deadline
+              ? row.deadline.toISOString?.().slice(0, 10) || row.deadline
+              : null,
+            contact_name: row.contact_name,
+            contact_phone: row.contact_phone,
+            contact_email: row.contact_email,
+            source_url: row.source_url,
+            source_note: row.source_note,
+            pushed_by_name: row.pushed_by_name,
+          })),
+        });
+      } catch (error) {
+        console.error('获取项目企业需求失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目企业需求失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/applicant\/projects\/[\w-]+\/enterprise-demands\/[\w-]+\/claim$/) &&
+      req.method === 'PUT'
+    ) {
+      const m = pathname.match(
+        /^\/api\/applicant\/projects\/([\w-]+)\/enterprise-demands\/([\w-]+)\/claim$/,
+      );
+      const projectId = m[1];
+      const pushId = m[2];
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || user.role !== 'applicant') {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const userId = user.id || user.userId;
+        const [projRows] = await pool.query(
+          'SELECT applicant_id FROM `Project` WHERE id = ?',
+          [projectId],
+        );
+        if (!projRows.length) {
+          sendResponse(res, 404, { success: false, error: '项目不存在' });
+          return;
+        }
+        if (String(projRows[0].applicant_id) !== String(userId)) {
+          sendResponse(res, 403, { success: false, error: '只能操作本人项目' });
+          return;
+        }
+        const [pushRows] = await pool.query(
+          'SELECT id, status FROM `ProjectEnterpriseDemand` WHERE id = ? AND project_id = ?',
+          [pushId, projectId],
+        );
+        if (!pushRows.length) {
+          sendResponse(res, 404, { success: false, error: '推送记录不存在' });
+          return;
+        }
+        if (pushRows[0].status !== 'pushed') {
+          sendResponse(res, 400, { success: false, error: '当前状态不可承接' });
+          return;
+        }
+        await pool.query(
+          `UPDATE \`ProjectEnterpriseDemand\`
+           SET status = 'claimed', claimed_by = ?, claimed_at = NOW(), updated_at = NOW()
+           WHERE id = ?`,
+          [userId, pushId],
+        );
+        sendResponse(res, 200, { success: true, message: '已确认承接该企业需求' });
+      } catch (error) {
+        console.error('承接企业需求失败:', error);
+        sendResponse(res, 500, { success: false, error: '承接企业需求失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/applicant\/projects\/[\w-]+\/enterprise-demands\/[\w-]+\/decline$/) &&
+      req.method === 'PUT'
+    ) {
+      const m = pathname.match(
+        /^\/api\/applicant\/projects\/([\w-]+)\/enterprise-demands\/([\w-]+)\/decline$/,
+      );
+      const projectId = m[1];
+      const pushId = m[2];
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || user.role !== 'applicant') {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const userId = user.id || user.userId;
+        const [projRows] = await pool.query(
+          'SELECT applicant_id FROM `Project` WHERE id = ?',
+          [projectId],
+        );
+        if (!projRows.length) {
+          sendResponse(res, 404, { success: false, error: '项目不存在' });
+          return;
+        }
+        if (String(projRows[0].applicant_id) !== String(userId)) {
+          sendResponse(res, 403, { success: false, error: '只能操作本人项目' });
+          return;
+        }
+        const [pushRows] = await pool.query(
+          'SELECT id, status FROM `ProjectEnterpriseDemand` WHERE id = ? AND project_id = ?',
+          [pushId, projectId],
+        );
+        if (!pushRows.length) {
+          sendResponse(res, 404, { success: false, error: '推送记录不存在' });
+          return;
+        }
+        if (pushRows[0].status !== 'pushed') {
+          sendResponse(res, 400, { success: false, error: '当前状态不可操作' });
+          return;
+        }
+        await pool.query(
+          `UPDATE \`ProjectEnterpriseDemand\`
+           SET status = 'declined', claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
+           WHERE id = ?`,
+          [pushId],
+        );
+        sendResponse(res, 200, { success: true, message: '已拒绝承接' });
+      } catch (error) {
+        console.error('拒绝承接失败:', error);
+        sendResponse(res, 500, { success: false, error: '拒绝承接失败' });
+      }
+      return;
+    }
+
     // ==================== 轮播配置 API（项目经理） ====================
 
     // 获取轮播配置列表（管理端）
@@ -1936,11 +3101,7 @@ const server = http.createServer(async (req, res) => {
           if (targetRole === 'reviewer') {
             const [epRows] = await pool.query('SELECT id FROM ExpertProfile WHERE id = ?', [existing.id]);
             if (epRows.length === 0) {
-              await pool.query(
-                `INSERT INTO ExpertProfile (id, expertise_description, created_at) 
-         VALUES (?, ?, NOW())`,
-                [existing.id, body.expertiseDescription || null]
-              );
+              await upsertExpertiseDescription(pool, existing.id, body.expertiseDescription || null);
             }
           }
 
@@ -2070,11 +3231,7 @@ const server = http.createServer(async (req, res) => {
 
         // 如果注册的是专家，创建专家扩展信息
         if (targetRole === 'reviewer') {
-          await pool.query(
-            `INSERT INTO ExpertProfile (id, expertise_description, created_at) 
-         VALUES (?, ?, NOW())`,
-            [userId, body.expertiseDescription || null]
-          );
+          await upsertExpertiseDescription(pool, userId, body.expertiseDescription || null);
         }
 
         // 如果使用了邀请码，更新邀请记录状态
@@ -2153,27 +3310,16 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const user = users[0];
-
-        // 获取专家领域（如果是专家）
-        let expertDomains = [];
-        if (user.role === 'reviewer') {
-          const [domains] = await pool.query(
-            `SELECT rd.id, rd.name, rd.code 
-         FROM ExpertDomain ed 
-         JOIN ResearchDomain rd ON ed.domain_id = rd.id 
-         WHERE ed.expert_id = ?`,
-            [user.id]
-          );
-          expertDomains = domains;
+        const profile = await loadUserProfileForApi(decoded.userId);
+        if (!profile) {
+          sendResponse(res, 404, { success: false, error: '用户不存在' });
+          return;
         }
 
         sendResponse(res, 200, {
           success: true,
-          user: {
-            ...user,
-            expertDomains
-          }
+          user: profile,
+          data: profile,
         });
       } catch (error) {
         console.error('获取用户信息错误:', error);
@@ -2181,6 +3327,168 @@ const server = http.createServer(async (req, res) => {
           success: false,
           error: '获取用户信息失败'
         });
+      }
+      return;
+    }
+
+    // 更新个人资料（申请人 / 专家等，仅本人）
+    if (pathname === '/api/auth/profile' && req.method === 'PUT') {
+      const authUser = await verifyToken(req.headers.authorization);
+      if (!authUser) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+      try {
+        const body = await getBody(req);
+        const userId = authUser.userId || authUser.id;
+        const [rows] = await pool.query('SELECT id, role FROM `User` WHERE id = ?', [userId]);
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '用户不存在' });
+          return;
+        }
+        const name = body.name != null ? String(body.name).trim() : undefined;
+        if (name !== undefined && !name) {
+          sendResponse(res, 400, { success: false, error: '姓名不能为空' });
+          return;
+        }
+        const phone = body.phone != null ? String(body.phone).trim() : undefined;
+        if (phone !== undefined && phone && !/^1[3-9]\d{9}$/.test(phone)) {
+          sendResponse(res, 400, { success: false, error: '手机号码格式不正确' });
+          return;
+        }
+        const updates = {};
+        if (name !== undefined) updates.name = name;
+        if (body.department !== undefined) updates.department = String(body.department || '').trim() || null;
+        if (body.title !== undefined) updates.title = String(body.title || '').trim() || null;
+        if (phone !== undefined) updates.phone = phone || null;
+        if (Object.keys(updates).length) {
+          const setParts = Object.keys(updates).map((k) => `\`${k}\` = ?`);
+          await pool.query(
+            `UPDATE \`User\` SET ${setParts.join(', ')}, updated_at = NOW() WHERE id = ?`,
+            [...Object.values(updates), userId],
+          );
+        }
+        if (rows[0].role === 'reviewer' && body.expertise_description !== undefined) {
+          await upsertExpertiseDescription(pool, userId, body.expertise_description);
+        }
+        const profile = await loadUserProfileForApi(userId);
+        sendResponse(res, 200, { success: true, message: '个人资料已更新', user: profile, data: profile });
+      } catch (error) {
+        console.error('更新个人资料失败:', error);
+        sendResponse(res, 500, { success: false, error: '更新个人资料失败', message: error.message });
+      }
+      return;
+    }
+
+    // 修改密码（本人）
+    if (pathname === '/api/auth/change-password' && (req.method === 'POST' || req.method === 'PUT')) {
+      const authUser = await verifyToken(req.headers.authorization);
+      if (!authUser) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+      try {
+        const body = await getBody(req);
+        const currentPassword = body.current_password ?? body.currentPassword;
+        const newPassword = body.new_password ?? body.newPassword;
+        if (!currentPassword || !newPassword) {
+          sendResponse(res, 400, { success: false, error: '请填写当前密码和新密码' });
+          return;
+        }
+        if (String(newPassword).length < 6) {
+          sendResponse(res, 400, { success: false, error: '新密码长度不能少于6位' });
+          return;
+        }
+        if (currentPassword === newPassword) {
+          sendResponse(res, 400, { success: false, error: '新密码不能与当前密码相同' });
+          return;
+        }
+        const userId = authUser.userId || authUser.id;
+        const [users] = await pool.query('SELECT password FROM `User` WHERE id = ?', [userId]);
+        if (!users.length) {
+          sendResponse(res, 404, { success: false, error: '用户不存在' });
+          return;
+        }
+        const ok = await verifyUserPassword(String(currentPassword), users[0].password);
+        if (!ok) {
+          sendResponse(res, 400, { success: false, error: '当前密码不正确' });
+          return;
+        }
+        const bcrypt = require('bcryptjs');
+        const hashed = await bcrypt.hash(String(newPassword), 10);
+        await pool.query('UPDATE `User` SET password = ?, updated_at = NOW() WHERE id = ?', [
+          hashed,
+          userId,
+        ]);
+        sendResponse(res, 200, { success: true, message: '密码修改成功' });
+      } catch (error) {
+        console.error('修改密码失败:', error);
+        sendResponse(res, 500, { success: false, error: '修改密码失败', message: error.message });
+      }
+      return;
+    }
+
+    // 专家设置擅长研究领域
+    if (pathname === '/api/auth/expert-domains' && req.method === 'PUT') {
+      const authUser = await verifyToken(req.headers.authorization);
+      if (!authUser) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+      if (authUser.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '仅评审专家可设置擅长领域' });
+        return;
+      }
+      try {
+        const body = await getBody(req);
+        const domainIds = body.domain_ids ?? body.domainIds ?? [];
+        const userId = authUser.userId || authUser.id;
+        await replaceExpertDomains(userId, domainIds);
+        await refreshExpertKeywordsFromProfile(pool, userId);
+        const profile = await loadUserProfileForApi(userId);
+        sendResponse(res, 200, {
+          success: true,
+          message: '擅长领域已更新',
+          expert_domains: profile.expert_domains,
+          user: profile,
+        });
+      } catch (error) {
+        if (error.code === 'INVALID_DOMAIN') {
+          sendResponse(res, 400, { success: false, error: error.message });
+          return;
+        }
+        console.error('更新专家领域失败:', error);
+        sendResponse(res, 500, { success: false, error: '更新擅长领域失败', message: error.message });
+      }
+      return;
+    }
+
+    // 专家设置类型（技术 / 投资 / 产业）
+    if (pathname === '/api/auth/expert-types' && req.method === 'PUT') {
+      const authUser = await verifyToken(req.headers.authorization);
+      if (!authUser) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+      if (authUser.role !== 'reviewer') {
+        sendResponse(res, 403, { success: false, error: '仅评审专家可设置专家类型' });
+        return;
+      }
+      try {
+        const body = await getBody(req);
+        const expertTypes = body.expert_types ?? body.expertTypes ?? [];
+        const userId = authUser.userId || authUser.id;
+        const types = await replaceExpertTypes(userId, expertTypes);
+        const profile = await loadUserProfileForApi(userId);
+        sendResponse(res, 200, {
+          success: true,
+          message: '专家类型已更新',
+          expert_types: types,
+          user: profile,
+        });
+      } catch (error) {
+        console.error('更新专家类型失败:', error);
+        sendResponse(res, 500, { success: false, error: '更新专家类型失败', message: error.message });
       }
       return;
     }
@@ -2369,6 +3677,7 @@ const server = http.createServer(async (req, res) => {
       const defaultPermissions = {
         'applicant': [
           'view_dashboard',
+          'view_profile',
           'view_projects',
           'create_project',
           'edit_project',
@@ -2382,6 +3691,7 @@ const server = http.createServer(async (req, res) => {
         ],
         'reviewer': [
           'view_dashboard',
+          'view_profile',
           'view_review_tasks',
           'submit_review',
           'view_projects',
@@ -2389,6 +3699,7 @@ const server = http.createServer(async (req, res) => {
         ],
         'project_manager': [
           'view_dashboard',
+          'view_profile',
           'view_applications',
           'review_applications',
           'view_projects',
@@ -2401,6 +3712,7 @@ const server = http.createServer(async (req, res) => {
         ],
         'funds_manager': [
           'view_dashboard',
+          'view_profile',
           'view_funding',
           'review_funding_applications',
           'manage_funding',
@@ -2409,6 +3721,7 @@ const server = http.createServer(async (req, res) => {
         ],
         'admin': [
           'view_dashboard',
+          'view_profile',
           'view_admin_dashboard',
           'manage_users',
           'manage_projects',
@@ -3832,11 +5145,10 @@ const server = http.createServer(async (req, res) => {
         );
         if (body.role === 'reviewer') {
           const desc = body.expertise_description != null ? body.expertise_description : body.research_field;
-          await pool.query(
-            `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
-         ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
-            [newUserId, desc || null]
-          );
+          await upsertExpertiseDescription(pool, newUserId, desc || null);
+          if (body.expert_types !== undefined || body.expertTypes !== undefined) {
+            await replaceExpertTypes(newUserId, body.expert_types ?? body.expertTypes ?? []);
+          }
         }
 
         // 记录操作日志
@@ -3954,15 +5266,14 @@ const server = http.createServer(async (req, res) => {
           await pool.query(`UPDATE \`User\` SET ${setParts.join(', ')}, updated_at = NOW() WHERE id = ?`, [...setVals, userId]);
         }
         const expertDesc = body.expertise_description !== undefined ? body.expertise_description : body.research_field;
+        const effRole = body.role !== undefined ? body.role : oldUser.role;
         if (expertDesc !== undefined || body.role === 'reviewer') {
-          const effRole = body.role !== undefined ? body.role : oldUser.role;
           if (effRole === 'reviewer') {
-            await pool.query(
-              `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
-           ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
-              [userId, expertDesc != null ? expertDesc : null]
-            );
+            await upsertExpertiseDescription(pool, userId, expertDesc != null ? expertDesc : null);
           }
+        }
+        if (effRole === 'reviewer' && (body.expert_types !== undefined || body.expertTypes !== undefined)) {
+          await replaceExpertTypes(userId, body.expert_types ?? body.expertTypes ?? []);
         }
 
         // 记录操作日志
@@ -7324,6 +8635,111 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // 经费管理员：各项目经费使用汇总（含合计，明细通过 /api/projects/:id/funds-usage 获取）
+    if (pathname === '/api/funds-manager/projects/funds-usage' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      try {
+        const q = url.parse(req.url, true).query;
+        const page = Math.max(parseInt(q.page, 10) || 1, 1);
+        const pageSize = Math.min(parseInt(q.pageSize, 10) || 20, 100);
+        const offset = (page - 1) * pageSize;
+        const search = q.search ? String(q.search).trim() : '';
+        const status = q.status ? String(q.status).trim() : '';
+
+        const whereParts = [`p.status IN ('approved', 'incubating')`];
+        const params = [];
+        const countParams = [];
+
+        if (status === 'approved' || status === 'incubating') {
+          whereParts.push('p.status = ?');
+          params.push(status);
+          countParams.push(status);
+        }
+        if (search) {
+          whereParts.push('(p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)');
+          const like = `%${search}%`;
+          params.push(like, like, like);
+          countParams.push(like, like, like);
+        }
+
+        const whereClause = 'WHERE ' + whereParts.join(' AND ');
+
+        const [countRows] = await pool.query(`
+          SELECT COUNT(*) as total
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          ${whereClause}
+        `, countParams);
+
+        const [summaryRows] = await pool.query(`
+          SELECT
+            COUNT(*) AS project_count,
+            COALESCE(SUM(${sqlProjectFundsSpent('p')}), 0) AS total_spent
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          ${whereClause}
+        `, countParams);
+
+        const [rows] = await pool.query(`
+          SELECT
+            p.id,
+            p.project_code,
+            p.title,
+            p.status,
+            p.approval_date,
+            u.name AS applicant_name,
+            mgr.name AS manager_name,
+            ${sqlProjectFundsSpent('p')} AS spent_amount,
+            (SELECT COUNT(*) FROM \`FundsRequest\` fr WHERE fr.project_id = p.id) AS request_count,
+            (SELECT COUNT(*) FROM \`FundsRequest\` fr
+             WHERE fr.project_id = p.id
+               AND fr.feedback_action IN ('approved', 'partial_approved')) AS approved_request_count
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u ON p.applicant_id = u.id
+          LEFT JOIN \`User\` mgr ON p.manager_id = mgr.id
+          ${whereClause}
+          ORDER BY spent_amount DESC, p.updated_at DESC
+          LIMIT ? OFFSET ?
+        `, [...params, pageSize, offset]);
+
+        const projects = rows.map((row) => ({
+          ...row,
+          spent_amount: parseFloat(row.spent_amount) || 0,
+          request_count: parseInt(row.request_count, 10) || 0,
+          approved_request_count: parseInt(row.approved_request_count, 10) || 0,
+        }));
+
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            projects,
+            total: countRows[0]?.total || 0,
+            page,
+            pageSize,
+            summary: {
+              project_count: parseInt(summaryRows[0]?.project_count, 10) || 0,
+              total_spent: parseFloat(summaryRows[0]?.total_spent) || 0,
+            },
+          },
+        });
+      } catch (error) {
+        console.error('获取项目经费使用汇总失败:', error);
+        sendResponse(res, 500, {
+          success: false,
+          error: '获取项目经费使用汇总失败',
+          message: error.message,
+        });
+      }
+      return;
+    }
+
     if (pathname.match(/^\/api\/funds-manager\/projects\/[^/]+$/) && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -7756,13 +9172,14 @@ const server = http.createServer(async (req, res) => {
         name LIKE ? OR username LIKE ? OR email LIKE ?
         OR department LIKE ? OR title LIKE ?
         OR EXISTS (SELECT 1 FROM \`ExpertProfile\` ep WHERE ep.id = \`User\`.id AND ep.expertise_description LIKE ?)
+        OR EXISTS (SELECT 1 FROM \`ExpertProfile\` ep WHERE ep.id = \`User\`.id AND ep.keywords LIKE ?)
         OR EXISTS (
           SELECT 1 FROM \`ExpertDomain\` ed
           INNER JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
           WHERE ed.expert_id = \`User\`.id AND rd.name LIKE ?
         )
       )`;
-          params.push(kw, kw, kw, kw, kw, kw, kw);
+          params.push(kw, kw, kw, kw, kw, kw, kw, kw);
         }
 
         // 获取总数
@@ -11146,6 +12563,8 @@ const server = http.createServer(async (req, res) => {
           activeUsers: statsResult[0]?.activeUsers || 0,
         };
 
+        await attachExpertTypesToUsers(users);
+
         sendResponse(res, 200, {
           success: true,
           data: {
@@ -11325,11 +12744,10 @@ const server = http.createServer(async (req, res) => {
         );
         if (body.role === 'reviewer') {
           const desc = body.expertise_description != null ? body.expertise_description : body.research_field;
-          await pool.query(
-            `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
-         ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
-            [newUserId, desc || null]
-          );
+          await upsertExpertiseDescription(pool, newUserId, desc || null);
+          if (body.expert_types !== undefined || body.expertTypes !== undefined) {
+            await replaceExpertTypes(newUserId, body.expert_types ?? body.expertTypes ?? []);
+          }
         }
 
         // 记录操作日志
@@ -11420,15 +12838,14 @@ const server = http.createServer(async (req, res) => {
           await pool.query(`UPDATE \`User\` SET ${setParts.join(', ')}, updated_at = NOW() WHERE id = ?`, [...setVals, userId]);
         }
         const expertDesc = body.expertise_description !== undefined ? body.expertise_description : body.research_field;
+        const effRole = body.role !== undefined ? body.role : oldUser.role;
         if (expertDesc !== undefined || body.role === 'reviewer') {
-          const effRole = body.role !== undefined ? body.role : oldUser.role;
           if (effRole === 'reviewer') {
-            await pool.query(
-              `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
-           ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
-              [userId, expertDesc != null ? expertDesc : null]
-            );
+            await upsertExpertiseDescription(pool, userId, expertDesc != null ? expertDesc : null);
           }
+        }
+        if (effRole === 'reviewer' && (body.expert_types !== undefined || body.expertTypes !== undefined)) {
+          await replaceExpertTypes(userId, body.expert_types ?? body.expertTypes ?? []);
         }
 
         // 记录操作日志
@@ -13300,13 +14717,30 @@ const server = http.createServer(async (req, res) => {
           projectDomainNames = projectDomains.map(d => d.name);
         }
 
-        // 构建查询条件
-        let whereConditions = ['u.role = ?', 'u.status = ?'];
+        // 构建查询条件（项目评审仅分配技术专家）
+        let whereConditions = [
+          'u.role = ?',
+          'u.status = ?',
+          `EXISTS (
+            SELECT 1 FROM \`ExpertExpertType\` eet
+            WHERE eet.expert_id = u.id AND eet.expert_type = 'technical'
+          )`,
+        ];
         let queryParams = ['reviewer', 'active'];
 
         if (keyword) {
-          whereConditions.push('(u.name LIKE ? OR u.department LIKE ? OR u.email LIKE ?)');
-          queryParams.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+          const kw = `%${keyword}%`;
+          whereConditions.push(`(
+            u.name LIKE ? OR u.department LIKE ? OR u.email LIKE ?
+            OR ep.expertise_description LIKE ?
+            OR ep.keywords LIKE ?
+            OR EXISTS (
+              SELECT 1 FROM \`ExpertDomain\` ed
+              INNER JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
+              WHERE ed.expert_id = u.id AND rd.name LIKE ?
+            )
+          )`);
+          queryParams.push(kw, kw, kw, kw, kw, kw);
         }
 
         // 查询评审专家
@@ -13322,6 +14756,7 @@ const server = http.createServer(async (req, res) => {
             u.status,
             u.created_at,
             ep.expertise_description,
+            ep.keywords,
             (
               SELECT COUNT(*) FROM \`AuditLog\` al 
               WHERE al.user_id = u.id AND al.action = 'expert_project_review'
@@ -13394,6 +14829,7 @@ const server = http.createServer(async (req, res) => {
             expertise_domain_ids: reviewerDomainIds,
             organization: reviewer.department || '',
             expertise_description: reviewer.expertise_description,
+            keywords: reviewer.keywords || null,
             is_external: false,
             status: reviewer.status,
             completed_reviews: reviewer.completed_reviews || 0,
@@ -13913,16 +15349,19 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // 检查专家是否存在
-        const [reviewers] = await pool.query(`
-          SELECT id, name FROM \`User\` 
-          WHERE id IN (?) AND role = 'reviewer' AND status = 'active'
-        `, [reviewerIds]);
+        // 检查专家是否存在且为技术专家（项目评审仅可分配技术专家）
+        const [reviewers] = await pool.query(
+          `SELECT u.id, u.name
+           FROM \`User\` u
+           INNER JOIN \`ExpertExpertType\` eet ON eet.expert_id = u.id AND eet.expert_type = 'technical'
+           WHERE u.id IN (?) AND u.role = 'reviewer' AND u.status = 'active'`,
+          [reviewerIds],
+        );
 
         if (reviewers.length !== reviewerIds.length) {
           sendResponse(res, 400, {
             success: false,
-            error: '部分评审专家不存在或不是有效专家'
+            error: '部分专家不存在、未激活或非技术专家，项目评审只能分配技术专家',
           });
           return;
         }
@@ -14203,22 +15642,16 @@ const server = http.createServer(async (req, res) => {
       }
 
       try {
-        const [users] = await pool.query(
-          'SELECT id, username, email, role, created_at, last_login FROM `User` WHERE id = ?',
-          [user.id]
-        );
-
-        if (users.length === 0) {
-          sendResponse(res, 404, {
-            success: false,
-            error: '用户不存在'
-          });
+        const profile = await loadUserProfileForApi(user.userId || user.id);
+        if (!profile) {
+          sendResponse(res, 404, { success: false, error: '用户不存在' });
           return;
         }
 
         sendResponse(res, 200, {
           success: true,
-          user: users[0]
+          user: profile,
+          data: profile,
         });
       } catch (error) {
         sendResponse(res, 500, {
@@ -16272,8 +17705,9 @@ const server = http.createServer(async (req, res) => {
     }
     // 获取单个项目详情
     // 注意：需要排除 /reviews 等子路由，以及 /api/projects/export-*（否则会误把 export-meta 当成项目 id）
+    // 仅匹配单段项目 ID，避免 /api/projects/{id}/incubation-achievements 等子路由被误当作项目详情
     if (
-      (pathname.startsWith('/api/project/') || pathname.startsWith('/api/projects/')) &&
+      (pathname.match(/^\/api\/project\/[^\/]+$/) || pathname.match(/^\/api\/projects\/[^\/]+$/)) &&
       req.method === 'GET' &&
       !pathname.endsWith('/reviews') &&
       !pathname.includes('/reviews/') &&
@@ -18559,8 +19993,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 8. 获取项目下的所有成果
-    if (pathname.startsWith('/api/projects/') && pathname.includes('/achievements') && req.method === 'GET') {
+    // 8. 获取项目下的所有成果（科研成果 ProjectAchievement，不含孵化成果 incubation-achievements）
+    if (
+      pathname.startsWith('/api/projects/') &&
+      pathname.includes('/achievements') &&
+      !pathname.includes('/incubation-achievements') &&
+      req.method === 'GET'
+    ) {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
 
@@ -22990,11 +24429,7 @@ const server = http.createServer(async (req, res) => {
         await pool.query(sql, params);
         if (body.role === 'reviewer') {
           const desc = body.expertise_description != null ? body.expertise_description : body.research_field;
-          await pool.query(
-            `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
-             ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
-            [userId, desc || null],
-          );
+          await upsertExpertiseDescription(pool, userId, desc || null);
         }
 
         // 获取新创建的用户（不包含密码）
@@ -23208,11 +24643,7 @@ const server = http.createServer(async (req, res) => {
           const [ur] = await pool.query('SELECT role FROM `User` WHERE id = ?', [userId]);
           const effRole = body.role !== undefined ? body.role : ur[0]?.role;
           if (effRole === 'reviewer') {
-            await pool.query(
-              `INSERT INTO \`ExpertProfile\` (id, expertise_description, created_at) VALUES (?, ?, NOW())
-               ON DUPLICATE KEY UPDATE expertise_description = VALUES(expertise_description)`,
-              [userId, expertDesc != null ? expertDesc : null],
-            );
+            await upsertExpertiseDescription(pool, userId, expertDesc != null ? expertDesc : null);
           }
         }
 
@@ -24574,6 +26005,37 @@ const server = http.createServer(async (req, res) => {
       fs.mkdirSync(INCUBATION_UPLOADS_DIR, { recursive: true });
     }
 
+    // 申请人：获取可提交孵化成果的项目（已入库、孵化中）
+    if (pathname === '/api/incubation/achievement-eligible-projects' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'applicant') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const uid = user.userId || user.id;
+        const statusPlaceholders = INCUBATION_ACHIEVEMENT_SUBMIT_PROJECT_STATUSES.map(() => '?').join(', ');
+        const [projects] = await pool.query(
+          `SELECT p.id, p.project_code, p.title, p.status, p.approval_date,
+                  (SELECT COUNT(*) FROM \`IncubationAchievementRecord\` iar WHERE iar.project_id = p.id) AS achievement_count
+           FROM \`Project\` p
+           WHERE p.status IN (${statusPlaceholders})
+             AND (
+               p.applicant_id = ?
+               OR p.id IN (SELECT pm.project_id FROM \`ProjectMember\` pm WHERE pm.user_id = ?)
+             )
+           ORDER BY p.updated_at DESC`,
+          [...INCUBATION_ACHIEVEMENT_SUBMIT_PROJECT_STATUSES, uid, uid],
+        );
+        sendResponse(res, 200, { success: true, data: projects });
+      } catch (error) {
+        console.error('获取可提交孵化成果的项目失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目列表失败' });
+      }
+      return;
+    }
+
     // 申请人：获取可发起服务申请的项目列表（状态为approved的项目）
     if (pathname === '/api/incubation/eligible-projects' && req.method === 'GET') {
       const token = req.headers.authorization;
@@ -24849,7 +26311,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const progressId = pathname.split('/')[4];
         const body = await parseRequestBody(req);
-        const { feedback_action, feedback_comment } = body;
+        const { feedback_action, feedback_comment, expert_assignments } = body;
 
         if (!feedback_action || !['approved', 'rejected'].includes(feedback_action)) {
           sendResponse(res, 400, { success: false, error: '请选择是否提供服务' });
@@ -24901,6 +26363,16 @@ const server = http.createServer(async (req, res) => {
         }
         // 如果approved，项目状态保持incubating
 
+        let assignedExperts = [];
+        if (feedback_action === 'approved' && Array.isArray(expert_assignments) && expert_assignments.length) {
+          assignedExperts = await assignIncubationProgressExperts(
+            progressId,
+            expert_assignments,
+            user.id,
+            progress,
+          );
+        }
+
         // 发送通知给申请人
         await pool.query(
           `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
@@ -24911,7 +26383,8 @@ const server = http.createServer(async (req, res) => {
 
         sendResponse(res, 200, {
           success: true,
-          message: feedback_action === 'approved' ? '已同意提供服务' : '已拒绝服务申请'
+          message: feedback_action === 'approved' ? '已同意提供服务' : '已拒绝服务申请',
+          assigned_experts: assignedExperts,
         });
       } catch (error) {
         console.error('处理服务申请反馈失败:', error);
@@ -25264,6 +26737,221 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // 项目经理：获取可分配的孵化服务专家（按专家类型筛选）
+    if (pathname.match(/^\/api\/incubation\/requests\/[^/]+\/available-experts$/) && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const progressId = pathname.split('/')[4];
+        const query = url.parse(req.url, true).query;
+        const expertType = query.expert_type;
+        const keyword = (query.keyword || '').trim();
+
+        if (!VALID_EXPERT_TYPES.includes(expertType)) {
+          sendResponse(res, 400, { success: false, error: '请选择有效的专家类型' });
+          return;
+        }
+
+        if (!keyword) {
+          sendResponse(res, 200, { success: true, data: [] });
+          return;
+        }
+
+        const mgr = await verifyIncubationProgressManager(progressId, user.id);
+        if (!mgr.ok) {
+          sendResponse(res, mgr.status, { success: false, error: mgr.error });
+          return;
+        }
+
+        const [assignedRows] = await pool.query(
+          'SELECT expert_id FROM `IncubationProgressExpert` WHERE progress_id = ?',
+          [progressId],
+        );
+        const assignedIds = assignedRows.map((r) => r.expert_id);
+
+        const kw = `%${keyword}%`;
+        let whereConditions = [
+          'u.role = ?',
+          'u.status = ?',
+          `EXISTS (
+            SELECT 1 FROM \`ExpertExpertType\` eet
+            WHERE eet.expert_id = u.id AND eet.expert_type = ?
+          )`,
+          `(
+            u.name LIKE ? OR u.department LIKE ? OR u.email LIKE ?
+            OR ep.expertise_description LIKE ?
+            OR ep.keywords LIKE ?
+            OR EXISTS (
+              SELECT 1 FROM \`ExpertDomain\` ed
+              INNER JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
+              WHERE ed.expert_id = u.id AND rd.name LIKE ?
+            )
+          )`,
+        ];
+        const queryParams = ['reviewer', 'active', expertType, kw, kw, kw, kw, kw, kw];
+
+        const [reviewers] = await pool.query(
+          `SELECT u.id, u.name, u.email, u.phone, u.department, u.title, ep.expertise_description, ep.keywords
+           FROM \`User\` u
+           LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.id
+           WHERE ${whereConditions.join(' AND ')}
+           ORDER BY u.name ASC
+           LIMIT 50`,
+          queryParams,
+        );
+
+        const reviewerIds = reviewers.map((r) => r.id);
+        let expertDomains = {};
+        if (reviewerIds.length) {
+          const [domains] = await pool.query(
+            `SELECT ed.expert_id, rd.name AS research_field
+             FROM \`ExpertDomain\` ed
+             LEFT JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
+             WHERE ed.expert_id IN (?)`,
+            [reviewerIds],
+          );
+          domains.forEach((d) => {
+            if (!expertDomains[d.expert_id]) expertDomains[d.expert_id] = [];
+            expertDomains[d.expert_id].push(d.research_field);
+          });
+        }
+
+        const data = reviewers.map((r) => ({
+          id: r.id,
+          name: r.name,
+          email: r.email,
+          phone: r.phone,
+          department: r.department,
+          title: r.title,
+          expertise_description: r.expertise_description,
+          keywords: r.keywords,
+          research_fields: expertDomains[r.id] || [],
+          already_assigned: assignedIds.includes(r.id),
+        }));
+
+        sendResponse(res, 200, { success: true, data });
+      } catch (error) {
+        console.error('获取可分配孵化服务专家失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取专家列表失败' });
+      }
+      return;
+    }
+
+    // 获取/更新孵化服务申请已分配专家
+    if (pathname.match(/^\/api\/incubation\/requests\/[^/]+\/experts$/) && (req.method === 'GET' || req.method === 'PUT')) {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      const progressId = pathname.split('/')[4];
+
+      if (req.method === 'GET') {
+        try {
+          const [progressRows] = await pool.query(
+            'SELECT * FROM `IncubationProgress` WHERE id = ?',
+            [progressId],
+          );
+          if (!progressRows.length) {
+            sendResponse(res, 404, { success: false, error: '服务申请不存在' });
+            return;
+          }
+          if (!(await userMayViewIncubationProgress(pool, progressRows[0], user))) {
+            sendResponse(res, 403, { success: false, error: '没有权限' });
+            return;
+          }
+          const experts = await getIncubationAssignedExperts(progressId);
+          sendResponse(res, 200, { success: true, data: experts });
+        } catch (error) {
+          console.error('获取已分配专家失败:', error);
+          sendResponse(res, 500, { success: false, error: '获取已分配专家失败' });
+        }
+        return;
+      }
+
+      if (user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const mgr = await verifyIncubationProgressManager(progressId, user.id);
+        if (!mgr.ok) {
+          sendResponse(res, mgr.status, { success: false, error: mgr.error });
+          return;
+        }
+        const { progress } = mgr;
+        if (progress.feedback_action !== 'approved') {
+          sendResponse(res, 400, { success: false, error: '仅已同意的服务申请可分配专家' });
+          return;
+        }
+        if (progress.status === 'result_submitted') {
+          sendResponse(res, 400, { success: false, error: '该服务申请已完成，无法再分配专家' });
+          return;
+        }
+
+        const body = await parseRequestBody(req);
+        const assigned = await assignIncubationProgressExperts(
+          progressId,
+          body.assignments || body.expert_assignments || [],
+          user.id,
+          progress,
+        );
+        const allExperts = await getIncubationAssignedExperts(progressId);
+        sendResponse(res, 200, {
+          success: true,
+          message: '专家分配成功',
+          assigned,
+          data: allExperts,
+        });
+      } catch (error) {
+        console.error('分配孵化服务专家失败:', error);
+        sendResponse(res, 500, { success: false, error: '分配专家失败' });
+      }
+      return;
+    }
+
+    // 项目经理：移除孵化服务专家分配
+    if (pathname.match(/^\/api\/incubation\/requests\/[^/]+\/experts\/[^/]+$/) && req.method === 'DELETE') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const parts = pathname.split('/');
+        const progressId = parts[4];
+        const assignmentId = parts[6];
+
+        const mgr = await verifyIncubationProgressManager(progressId, user.id);
+        if (!mgr.ok) {
+          sendResponse(res, mgr.status, { success: false, error: mgr.error });
+          return;
+        }
+
+        const [rows] = await pool.query(
+          'SELECT id FROM `IncubationProgressExpert` WHERE id = ? AND progress_id = ?',
+          [assignmentId, progressId],
+        );
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '分配记录不存在' });
+          return;
+        }
+
+        await pool.query('DELETE FROM `IncubationProgressExpert` WHERE id = ?', [assignmentId]);
+        sendResponse(res, 200, { success: true, message: '已移除专家分配' });
+      } catch (error) {
+        console.error('移除孵化服务专家分配失败:', error);
+        sendResponse(res, 500, { success: false, error: '移除专家分配失败' });
+      }
+      return;
+    }
+
     // 获取服务申请详情
     if (pathname.match(/^\/api\/incubation\/requests\/[^/]+$/) && req.method === 'GET') {
       const token = req.headers.authorization;
@@ -25305,11 +26993,265 @@ const server = http.createServer(async (req, res) => {
           [progressId]
         );
         progress.files = files;
+        progress.assigned_experts = await getIncubationAssignedExperts(progressId);
 
         sendResponse(res, 200, { success: true, data: progress });
       } catch (error) {
         console.error('获取服务申请详情失败:', error);
         sendResponse(res, 500, { success: false, error: '获取服务申请详情失败' });
+      }
+      return;
+    }
+
+    // ==================== 孵化成果记录 API ====================
+
+    // 获取项目孵化成果列表
+    if (
+      pathname.match(/^\/api\/projects\/[\w-]+\/incubation-achievements$/) &&
+      req.method === 'GET'
+    ) {
+      const projectId = pathname.replace('/api/projects/', '').replace('/incubation-achievements', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user) {
+          sendResponse(res, 403, { success: false, error: '没有权限' });
+          return;
+        }
+        const [projRows] = await pool.query('SELECT id FROM `Project` WHERE id = ?', [projectId]);
+        if (!projRows.length) {
+          sendResponse(res, 404, { success: false, error: '项目不存在' });
+          return;
+        }
+        if (!(await userMayViewIncubationAchievements(pool, projectId, user))) {
+          sendResponse(res, 403, { success: false, error: '没有权限查看孵化成果' });
+          return;
+        }
+        const records = await loadIncubationAchievementRecordsWithFiles(projectId);
+        sendResponse(res, 200, { success: true, data: records });
+      } catch (error) {
+        console.error('获取孵化成果列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取孵化成果列表失败' });
+      }
+      return;
+    }
+
+    // 提交孵化成果记录
+    if (
+      pathname.match(/^\/api\/projects\/[\w-]+\/incubation-achievements$/) &&
+      req.method === 'POST'
+    ) {
+      const projectId = pathname.replace('/api/projects/', '').replace('/incubation-achievements', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user) {
+          sendResponse(res, 403, { success: false, error: '没有权限' });
+          return;
+        }
+        const perm = await userMaySubmitIncubationAchievement(pool, projectId, user);
+        if (!perm.ok) {
+          sendResponse(res, perm.status || 403, { success: false, error: perm.error });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const title = String(body.title || '').trim();
+        const description = body.description != null ? String(body.description).trim() : '';
+        let recordDate = body.record_date != null ? String(body.record_date).trim() : '';
+        if (!title) {
+          sendResponse(res, 400, { success: false, error: '请填写成果标题' });
+          return;
+        }
+        if (title.length > 200) {
+          sendResponse(res, 400, { success: false, error: '成果标题不能超过200字' });
+          return;
+        }
+        if (recordDate && !/^\d{4}-\d{2}-\d{2}$/.test(recordDate)) {
+          sendResponse(res, 400, { success: false, error: '成果日期格式无效，请使用 YYYY-MM-DD' });
+          return;
+        }
+        if (!recordDate) recordDate = null;
+        const recordId = randomUUID();
+        const uid = user.userId || user.id;
+        await pool.query(
+          `INSERT INTO \`IncubationAchievementRecord\`
+           (id, project_id, title, description, record_date, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+          [recordId, projectId, title, description || null, recordDate, uid],
+        );
+        sendResponse(res, 201, {
+          success: true,
+          message: '孵化成果已提交',
+          data: { id: recordId, title, description, record_date: recordDate },
+        });
+      } catch (error) {
+        console.error('提交孵化成果失败:', error);
+        sendResponse(res, 500, { success: false, error: '提交孵化成果失败' });
+      }
+      return;
+    }
+
+    // 上传孵化成果附件（支持任意文件类型）
+    if (pathname === '/api/incubation-achievements/upload' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      if (!fs.existsSync(INCUBATION_ACHIEVEMENT_UPLOADS_DIR)) {
+        fs.mkdirSync(INCUBATION_ACHIEVEMENT_UPLOADS_DIR, { recursive: true });
+      }
+
+      const form = formidable({
+        uploadDir: INCUBATION_ACHIEVEMENT_UPLOADS_DIR,
+        keepExtensions: true,
+        maxFileSize: 50 * 1024 * 1024,
+        filename: (name, ext, part) => {
+          return `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+        },
+      });
+
+      form.parse(req, async (err, fields, files) => {
+        if (err) {
+          console.error('孵化成果附件上传失败:', err);
+          sendResponse(res, 500, { success: false, error: '文件上传失败' });
+          return;
+        }
+
+        const file = files.file;
+        if (!file) {
+          sendResponse(res, 400, { success: false, error: '未找到上传文件' });
+          return;
+        }
+
+        try {
+          let recordId = fields.record_id;
+          let fileDescription = fields.description;
+          if (Array.isArray(recordId)) recordId = recordId[0];
+          if (Array.isArray(fileDescription)) fileDescription = fileDescription[0];
+
+          if (!recordId) {
+            sendResponse(res, 400, { success: false, error: '缺少成果记录ID' });
+            return;
+          }
+
+          const [recRows] = await pool.query(
+            'SELECT id, project_id FROM `IncubationAchievementRecord` WHERE id = ?',
+            [recordId],
+          );
+          if (!recRows.length) {
+            sendResponse(res, 404, { success: false, error: '成果记录不存在' });
+            return;
+          }
+
+          const perm = await userMaySubmitIncubationAchievement(pool, recRows[0].project_id, user);
+          if (!perm.ok) {
+            sendResponse(res, perm.status || 403, { success: false, error: perm.error });
+            return;
+          }
+
+          const fileId = randomUUID();
+          const fileData = Array.isArray(file) ? file[0] : file;
+          const filePath = fileData.filepath || fileData.path;
+          const fileName = fileData.originalFilename || fileData.name;
+          const fileSize = fileData.size;
+          const mimeType = fileData.mimetype || fileData.type || 'application/octet-stream';
+          const absPath = path.resolve(filePath);
+          if (!fs.existsSync(absPath)) {
+            sendResponse(res, 500, { success: false, error: '上传文件保存失败' });
+            return;
+          }
+          const storedPath = incubationAchievementFileStoredPath(absPath);
+          const fileExt = path.extname(fileName || '').replace(/^\./, '').toLowerCase() || null;
+          const uid = user.userId || user.id;
+          const desc =
+            fileDescription != null && String(fileDescription).trim()
+              ? String(fileDescription).trim().slice(0, 500)
+              : null;
+
+          await pool.query(
+            `INSERT INTO \`IncubationAchievementRecordFile\`
+             (id, record_id, file_name, file_path, file_size, mime_type, file_extension, description, sort_order, uploaded_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NOW())`,
+            [fileId, recordId, fileName, storedPath, fileSize, mimeType, fileExt, desc, uid],
+          );
+
+          sendResponse(res, 200, {
+            success: true,
+            message: '文件上传成功',
+            data: {
+              id: fileId,
+              file_name: fileName,
+              file_size: fileSize,
+              mime_type: mimeType,
+              file_extension: fileExt,
+            },
+          });
+        } catch (dbError) {
+          console.error('保存孵化成果附件失败:', dbError);
+          sendResponse(res, 500, { success: false, error: '保存文件记录失败: ' + dbError.message });
+        }
+      });
+      return;
+    }
+
+    // 下载孵化成果附件
+    if (pathname.match(/^\/api\/incubation-achievements\/files\/[a-f0-9-]+$/) && req.method === 'GET') {
+      const token = parsedUrl.query.token || req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      try {
+        const fileId = pathname.split('/')[4];
+        const [files] = await pool.query(
+          'SELECT * FROM `IncubationAchievementRecordFile` WHERE id = ?',
+          [fileId],
+        );
+        if (!files.length) {
+          sendResponse(res, 404, { success: false, error: '文件不存在' });
+          return;
+        }
+        const fileInfo = files[0];
+        const [recRows] = await pool.query(
+          'SELECT project_id FROM `IncubationAchievementRecord` WHERE id = ?',
+          [fileInfo.record_id],
+        );
+        if (!recRows.length) {
+          sendResponse(res, 404, { success: false, error: '关联的成果记录不存在' });
+          return;
+        }
+        if (!(await userMayViewIncubationAchievements(pool, recRows[0].project_id, user))) {
+          sendResponse(res, 403, { success: false, error: '没有权限下载此文件' });
+          return;
+        }
+
+        const diskPath = resolveIncubationAchievementFileDiskPath(fileInfo.file_path);
+        if (!diskPath || !fs.existsSync(diskPath)) {
+          sendResponse(res, 404, { success: false, error: '文件已丢失' });
+          return;
+        }
+
+        res.setHeader('Content-Type', fileInfo.mime_type || 'application/octet-stream');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename*=UTF-8''${encodeURIComponent(fileInfo.file_name)}`,
+        );
+        res.setHeader('Content-Length', fileInfo.file_size);
+
+        const fileStream = fs.createReadStream(diskPath);
+        fileStream.pipe(res);
+        fileStream.on('error', (streamErr) => {
+          console.error('孵化成果附件读取错误:', streamErr);
+          if (!res.headersSent) {
+            sendResponse(res, 500, { success: false, error: '文件读取失败' });
+          }
+        });
+      } catch (error) {
+        console.error('下载孵化成果附件失败:', error);
+        sendResponse(res, 500, { success: false, error: '下载文件失败' });
       }
       return;
     }
@@ -25425,6 +27367,10 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`   PUT  /api/incubation/requests/{id}/result - 提交成果反馈（申请人）`);
   console.log(`   PUT  /api/incubation/projects/{id}/terminate - 终止项目（项目经理）`);
   console.log(`   GET  /api/incubation/requests/{id} - 获取服务申请详情`);
+  console.log(`   GET  /api/incubation/requests/{id}/available-experts - 获取可分配专家（项目经理）`);
+  console.log(`   GET  /api/incubation/requests/{id}/experts - 获取已分配专家`);
+  console.log(`   PUT  /api/incubation/requests/{id}/experts - 分配专家（项目经理）`);
+  console.log(`   DELETE /api/incubation/requests/{id}/experts/{assignmentId} - 移除专家分配`);
   console.log(`   POST /api/incubation/upload - 上传孵化服务附件`);
   console.log(`   GET  /api/incubation/files/{id} - 下载孵化服务附件`);
   console.log('');

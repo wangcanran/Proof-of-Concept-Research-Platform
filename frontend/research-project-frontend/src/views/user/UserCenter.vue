@@ -1,930 +1,1039 @@
 <template>
-  <div class="user-center-container">
-    <!-- 页面标题和面包屑 -->
-    <div class="page-header">
-      <el-breadcrumb separator="/">
-        <el-breadcrumb-item :to="{ path: '/' }">首页</el-breadcrumb-item>
-        <el-breadcrumb-item>个人中心</el-breadcrumb-item>
-      </el-breadcrumb>
-      <h1 class="page-title">个人中心</h1>
-      <p class="page-subtitle">管理您的个人信息、安全设置和系统偏好</p>
-    </div>
-
-    <!-- 加载状态 -->
-    <div v-if="loading" class="loading-container">
-      <el-skeleton :rows="5" animated />
-    </div>
-
-    <!-- 主要内容区域 -->
-    <div v-else class="main-content">
-      <!-- 左侧菜单 -->
-      <div class="left-sidebar">
-        <el-card class="sidebar-card" shadow="never">
-          <!-- 用户信息概览 -->
-          <div class="user-overview">
-            <el-avatar :size="80" :src="userInfo.avatar" class="user-avatar">
-              <span v-if="!userInfo.avatar" class="avatar-text">
-                {{ (userInfo.name || 'U').charAt(0) }}
-              </span>
-            </el-avatar>
-            <div class="user-summary">
-              <h3>{{ userInfo.name || '未设置用户名' }}</h3>
-              <el-tag :type="getRoleTagType(userInfo.role)" size="small">
-                {{ formatRole(userInfo.role) }}
-              </el-tag>
-              <p class="user-department">
-                <el-icon><OfficeBuilding /></el-icon>
-                {{ userInfo.department || '未设置学院' }}
-              </p>
-              <p class="user-email">
-                <el-icon><Message /></el-icon>
-                {{ userInfo.email || '未设置邮箱' }}
-              </p>
-            </div>
-          </div>
-
-          <!-- 导航菜单 -->
-          <el-menu :default-active="activeTab" class="side-menu" @select="handleMenuSelect">
-            <el-menu-item index="profile">
-              <template #title>
-                <el-icon><User /></el-icon>
-                <span>个人资料</span>
-              </template>
-            </el-menu-item>
-
-            <el-menu-item index="security">
-              <template #title>
-                <el-icon><Lock /></el-icon>
-                <span>安全设置</span>
-              </template>
-            </el-menu-item>
-
-            <el-menu-item index="notification">
-              <template #title>
-                <el-icon><Bell /></el-icon>
-                <span>消息通知</span>
-                <el-badge
-                  v-if="unreadNotifications > 0"
-                  :value="unreadNotifications"
-                  class="menu-badge"
-                />
-              </template>
-            </el-menu-item>
-
-            <el-menu-item index="preferences">
-              <template #title>
-                <el-icon><Setting /></el-icon>
-                <span>系统偏好</span>
-              </template>
-            </el-menu-item>
-
-            <el-menu-item index="activities">
-              <template #title>
-                <el-icon><Histogram /></el-icon>
-                <span>操作记录</span>
-              </template>
-            </el-menu-item>
-          </el-menu>
-
-          <!-- 账户状态 -->
-          <div class="account-status">
-            <h4>账户状态</h4>
-            <div class="status-item">
-              <span class="status-label">账户状态</span>
-              <el-tag type="success" size="small">正常</el-tag>
-            </div>
-            <div class="status-item">
-              <span class="status-label">注册时间</span>
-              <span class="status-value">{{ userInfo.createTime || '2023-01-01' }}</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">最后登录</span>
-              <span class="status-value">{{ userInfo.lastLogin || '刚刚' }}</span>
-            </div>
-          </div>
-        </el-card>
+  <div class="user-center-page">
+    <header class="page-header">
+      <div class="header-left">
+        <button type="button" class="back-btn" @click="goBack">
+          <el-icon><ArrowLeft /></el-icon>
+          <span>返回工作台</span>
+        </button>
+        <div class="header-text">
+          <h1>个人中心</h1>
+          <p class="header-subtitle">管理个人资料、擅长领域与登录密码</p>
+        </div>
       </div>
+    </header>
 
-      <!-- 右侧内容区域 -->
-      <div class="right-content">
-        <!-- 个人资料页面 -->
-        <div v-if="activeTab === 'profile'" class="tab-content">
-          <el-card class="content-card">
-            <template #header>
-              <div class="card-header">
-                <h3>个人资料</h3>
-                <el-button type="primary" @click="editProfile" icon="Edit"> 编辑资料 </el-button>
-              </div>
-            </template>
-
-            <div class="profile-details">
-              <el-descriptions :column="2" border>
-                <el-descriptions-item label="姓名">{{
-                  userInfo.name || '未设置'
-                }}</el-descriptions-item>
-                <el-descriptions-item label="用户ID">{{
-                  userInfo.id || '未设置'
-                }}</el-descriptions-item>
-                <el-descriptions-item label="性别">{{
-                  userInfo.gender || '未设置'
-                }}</el-descriptions-item>
-                <el-descriptions-item label="出生日期">{{
-                  userInfo.birthday || '未设置'
-                }}</el-descriptions-item>
-                <el-descriptions-item label="手机号码">{{
-                  userInfo.phone || '未设置'
-                }}</el-descriptions-item>
-                <el-descriptions-item label="邮箱">{{
-                  userInfo.email || '未设置'
-                }}</el-descriptions-item>
-                <el-descriptions-item label="学院/部门">{{
-                  userInfo.department || '未设置'
-                }}</el-descriptions-item>
-                <el-descriptions-item label="职称/年级">{{
-                  userInfo.title || '未设置'
-                }}</el-descriptions-item>
-                <el-descriptions-item label="研究方向" :span="2">
-                  {{ userInfo.researchField || '未设置' }}
-                </el-descriptions-item>
-                <el-descriptions-item label="个人简介" :span="2">
-                  {{ userInfo.bio || '暂无个人简介' }}
-                </el-descriptions-item>
-              </el-descriptions>
+    <div v-loading="loading" class="content-wrapper">
+      <aside class="side-panel">
+        <div class="profile-hero">
+          <div class="avatar-ring">
+            <el-avatar :size="80" class="avatar">{{ avatarLetter }}</el-avatar>
+          </div>
+          <h3 class="hero-name">{{ profile.name || '未设置姓名' }}</h3>
+          <el-tag class="role-tag" effect="dark" round>{{ roleLabel }}</el-tag>
+          <div class="hero-meta">
+            <div class="meta-row">
+              <el-icon><User /></el-icon>
+              <span>{{ profile.username || '—' }}</span>
             </div>
-          </el-card>
+            <div class="meta-row">
+              <el-icon><Message /></el-icon>
+              <span>{{ profile.email || '—' }}</span>
+            </div>
+          </div>
         </div>
 
-        <!-- 安全设置页面 -->
-        <div v-else-if="activeTab === 'security'" class="tab-content">
-          <el-card class="content-card">
-            <template #header>
-              <h3>安全设置</h3>
-            </template>
+        <nav class="side-nav">
+          <button
+            type="button"
+            class="nav-item"
+            :class="{ active: activeTab === 'profile' }"
+            @click="activeTab = 'profile'"
+          >
+            <el-icon><EditPen /></el-icon>
+            <span>个人资料</span>
+          </button>
+          <button
+            type="button"
+            class="nav-item"
+            :class="{ active: activeTab === 'security' }"
+            @click="activeTab = 'security'"
+          >
+            <el-icon><Lock /></el-icon>
+            <span>修改密码</span>
+          </button>
+        </nav>
 
-            <div class="security-settings">
-              <!-- 修改密码 -->
-              <div class="setting-section">
-                <h4>修改密码</h4>
-                <el-form
-                  ref="passwordFormRef"
-                  :model="passwordForm"
-                  :rules="passwordRules"
-                  label-width="120px"
-                >
-                  <el-form-item label="当前密码" prop="currentPassword">
-                    <el-input
-                      v-model="passwordForm.currentPassword"
-                      type="password"
-                      placeholder="请输入当前密码"
-                      show-password
-                    />
-                  </el-form-item>
-
-                  <el-form-item label="新密码" prop="newPassword">
-                    <el-input
-                      v-model="passwordForm.newPassword"
-                      type="password"
-                      placeholder="请输入新密码"
-                      show-password
-                    />
-                  </el-form-item>
-
-                  <el-form-item label="确认新密码" prop="confirmPassword">
-                    <el-input
-                      v-model="passwordForm.confirmPassword"
-                      type="password"
-                      placeholder="请再次输入新密码"
-                      show-password
-                    />
-                  </el-form-item>
-
-                  <el-form-item>
-                    <el-button type="primary" @click="changePassword" :loading="changingPassword">
-                      修改密码
-                    </el-button>
-                    <el-button @click="resetPasswordForm">重置</el-button>
-                  </el-form-item>
-                </el-form>
-              </div>
-
-              <el-divider />
-
-              <!-- 安全选项 -->
-              <div class="setting-section">
-                <h4>安全选项</h4>
-                <div class="security-options">
-                  <div class="option-item">
-                    <div class="option-info">
-                      <h5>双重验证</h5>
-                      <p>启用后，登录需要手机验证码验证</p>
-                    </div>
-                    <el-switch
-                      v-model="securitySettings.twoFactorAuth"
-                      @change="updateSecuritySetting('twoFactorAuth')"
-                    />
-                  </div>
-
-                  <div class="option-item">
-                    <div class="option-info">
-                      <h5>登录通知</h5>
-                      <p>新设备登录时发送邮件通知</p>
-                    </div>
-                    <el-switch
-                      v-model="securitySettings.loginNotification"
-                      @change="updateSecuritySetting('loginNotification')"
-                    />
-                  </div>
-
-                  <div class="option-item">
-                    <div class="option-info">
-                      <h5>登录设备管理</h5>
-                      <p>查看和管理登录设备</p>
-                    </div>
-                    <el-button type="text" @click="manageSessions"> 查看设备 </el-button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </el-card>
+        <div class="side-status">
+          <div class="status-pill" :class="profile.status === 'active' ? 'ok' : 'warn'">
+            {{ profile.status === 'active' ? '账户正常' : '未激活' }}
+          </div>
+          <p class="status-time">上次登录 {{ formatDateTime(profile.last_login) }}</p>
         </div>
+      </aside>
 
-        <!-- 消息通知页面 -->
-        <div v-else-if="activeTab === 'notification'" class="tab-content">
-          <el-card class="content-card">
-            <template #header>
-              <div class="card-header">
-                <h3>消息通知</h3>
-                <el-button @click="markAllAsRead" :disabled="unreadNotifications === 0">
-                  全部标记为已读
-                </el-button>
-              </div>
-            </template>
-
-            <div class="notification-settings">
-              <div class="notification-list">
-                <div v-if="notifications.length === 0" class="empty-notifications">
-                  <el-empty description="暂无通知" />
-                </div>
-
-                <div
-                  v-for="notification in notifications"
-                  :key="notification.id"
-                  class="notification-item"
-                  :class="{ unread: !notification.read }"
-                >
-                  <div class="notification-icon">
-                    <el-icon>
-                      <Bell />
-                    </el-icon>
-                  </div>
-                  <div class="notification-content">
-                    <div class="notification-header">
-                      <h4>{{ notification.title }}</h4>
-                      <span class="notification-time">{{ notification.time }}</span>
-                    </div>
-                    <p class="notification-message">{{ notification.message }}</p>
-                  </div>
+      <main class="main-panel">
+        <!-- 个人资料 -->
+        <section v-show="activeTab === 'profile'" class="panel-section">
+          <div class="section-card">
+            <div class="section-head">
+              <div class="section-title-wrap">
+                <span class="section-icon">📋</span>
+                <div>
+                  <h2>个人资料</h2>
+                  <p>只读信息来自系统账户，下方内容可修改并保存</p>
                 </div>
               </div>
+              <el-button type="primary" class="save-btn" :loading="savingProfile" @click="saveProfile">
+                保存资料
+              </el-button>
             </div>
-          </el-card>
-        </div>
 
-        <!-- 系统偏好页面 -->
-        <div v-else-if="activeTab === 'preferences'" class="tab-content">
-          <el-card class="content-card">
-            <template #header>
-              <h3>系统偏好</h3>
-            </template>
-
-            <div class="preference-settings">
-              <div class="preference-section">
-                <h4>界面设置</h4>
-                <div class="preference-options">
-                  <div class="option-item">
-                    <span class="option-label">主题模式</span>
-                    <el-radio-group v-model="preferences.theme">
-                      <el-radio label="light">浅色</el-radio>
-                      <el-radio label="dark">深色</el-radio>
-                      <el-radio label="auto">跟随系统</el-radio>
-                    </el-radio-group>
-                  </div>
+            <el-form
+              ref="profileFormRef"
+              :model="profileForm"
+              :rules="profileRules"
+              label-width="108px"
+              class="profile-form"
+            >
+              <div class="form-block readonly-block">
+                <div class="block-label">
+                  <span class="block-dot"></span>
+                  账户信息
+                  <span class="block-tag">只读</span>
                 </div>
+                <el-row :gutter="20">
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item label="用户名">
+                      <el-input :model-value="profile.username" disabled />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item label="邮箱">
+                      <el-input :model-value="profile.email" disabled />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item label="角色">
+                      <el-input :model-value="roleLabel" disabled />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item label="注册时间">
+                      <el-input :model-value="formatDateTime(profile.created_at)" disabled />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
               </div>
 
-              <el-divider />
-
-              <div class="preference-section">
-                <h4>功能设置</h4>
-                <div class="preference-options">
-                  <div class="option-item">
-                    <el-checkbox v-model="preferences.autoSave"> 自动保存表单 </el-checkbox>
-                    <span class="option-desc">填写表单时自动保存草稿</span>
-                  </div>
+              <div class="form-block editable-block">
+                <div class="block-label">
+                  <span class="block-dot editable"></span>
+                  基本信息
                 </div>
+                <el-row :gutter="20">
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item label="姓名" prop="name">
+                      <el-input v-model="profileForm.name" placeholder="真实姓名" clearable />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item label="联系电话" prop="phone">
+                      <el-input
+                        v-model="profileForm.phone"
+                        placeholder="11 位手机号"
+                        maxlength="11"
+                        clearable
+                      />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item :label="departmentLabel" prop="department">
+                      <el-input
+                        v-model="profileForm.department"
+                        :placeholder="`请输入${departmentLabel}`"
+                        clearable
+                      />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :xs="24" :sm="12">
+                    <el-form-item :label="titleLabel" prop="title">
+                      <el-input
+                        v-model="profileForm.title"
+                        :placeholder="`请输入${titleLabel}`"
+                        clearable
+                      />
+                    </el-form-item>
+                  </el-col>
+                  <el-col v-if="isReviewer" :xs="24">
+                    <el-form-item label="专家类型">
+                      <el-checkbox-group v-model="selectedExpertTypes" class="expert-type-group">
+                        <el-checkbox
+                          v-for="opt in expertTypeOptions"
+                          :key="opt.value"
+                          :label="opt.value"
+                        >
+                          {{ opt.label }}
+                        </el-checkbox>
+                      </el-checkbox-group>
+                      <p class="field-hint">可多选；参与项目评审须勾选「技术专家」。</p>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
               </div>
 
-              <div class="preference-actions">
-                <el-button type="primary" @click="savePreferences"> 保存设置 </el-button>
-                <el-button @click="resetPreferences"> 恢复默认 </el-button>
-              </div>
-            </div>
-          </el-card>
-        </div>
-
-        <!-- 操作记录页面 -->
-        <div v-else-if="activeTab === 'activities'" class="tab-content">
-          <el-card class="content-card">
-            <template #header>
-              <div class="card-header">
-                <h3>操作记录</h3>
-              </div>
-            </template>
-
-            <div class="activity-log">
-              <el-table :data="activities" style="width: 100%">
-                <el-table-column prop="time" label="时间" width="180" />
-                <el-table-column prop="action" label="操作类型" width="120">
-                  <template #default="{ row }">
-                    <el-tag :type="getActivityTagType(row.action)" size="small">
-                      {{ row.action }}
+              <div v-if="isReviewer" class="form-block expert-block">
+                <div class="block-label">
+                  <span class="block-dot expert"></span>
+                  专家擅长领域
+                </div>
+                <el-form-item label="擅长领域">
+                  <el-select
+                    v-model="selectedDomainIds"
+                    multiple
+                    filterable
+                    collapse-tags
+                    collapse-tags-tooltip
+                    placeholder="请选择擅长研究领域"
+                    class="domain-select"
+                    :loading="domainsLoading"
+                  >
+                    <el-option
+                      v-for="d in researchDomains"
+                      :key="d.id"
+                      :label="d.name"
+                      :value="d.id"
+                    />
+                  </el-select>
+                  <p class="field-hint">与项目申报领域一致，便于项目经理按领域匹配评审任务。</p>
+                  <div v-if="selectedDomainNames.length" class="domain-tags">
+                    <el-tag
+                      v-for="name in selectedDomainNames"
+                      :key="name"
+                      type="danger"
+                      effect="plain"
+                      round
+                    >
+                      {{ name }}
                     </el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="description" label="操作描述" />
-                <el-table-column prop="ip" label="IP地址" width="140" />
-              </el-table>
+                  </div>
+                </el-form-item>
+                <el-form-item label="专业特长">
+                  <el-input
+                    v-model="profileForm.expertise_description"
+                    type="textarea"
+                    :rows="3"
+                    placeholder="补充说明研究方向或特长（选填）"
+                    maxlength="500"
+                    show-word-limit
+                  />
+                </el-form-item>
+                <el-form-item label="专业关键词">
+                  <div v-if="profile.keywords" class="keywords-readonly">{{ profile.keywords }}</div>
+                  <div v-else class="keywords-empty">保存特长描述后将自动生成，用于专家检索匹配</div>
+                </el-form-item>
+              </div>
+            </el-form>
+          </div>
+        </section>
+
+        <!-- 修改密码 -->
+        <section v-show="activeTab === 'security'" class="panel-section">
+          <div class="section-card">
+            <div class="section-head">
+              <div class="section-title-wrap">
+                <span class="section-icon">🔐</span>
+                <div>
+                  <h2>修改密码</h2>
+                  <p>建议定期更换密码，长度不少于 6 位</p>
+                </div>
+              </div>
             </div>
-          </el-card>
-        </div>
-      </div>
+
+            <div class="security-tip">
+              <el-icon><WarningFilled /></el-icon>
+              <span>修改成功后请使用新密码登录；请勿与当前密码相同。</span>
+            </div>
+
+            <el-form
+              ref="passwordFormRef"
+              :model="passwordForm"
+              :rules="passwordRules"
+              label-width="108px"
+              class="password-form"
+            >
+              <el-form-item label="当前密码" prop="currentPassword">
+                <el-input
+                  v-model="passwordForm.currentPassword"
+                  type="password"
+                  show-password
+                  autocomplete="current-password"
+                  placeholder="请输入当前登录密码"
+                />
+              </el-form-item>
+              <el-form-item label="新密码" prop="newPassword">
+                <el-input
+                  v-model="passwordForm.newPassword"
+                  type="password"
+                  show-password
+                  autocomplete="new-password"
+                  placeholder="至少 6 位"
+                />
+              </el-form-item>
+              <el-form-item label="确认新密码" prop="confirmPassword">
+                <el-input
+                  v-model="passwordForm.confirmPassword"
+                  type="password"
+                  show-password
+                  autocomplete="new-password"
+                  placeholder="再次输入新密码"
+                />
+              </el-form-item>
+              <el-form-item class="form-actions">
+                <el-button type="primary" class="save-btn" :loading="changingPassword" @click="submitPasswordChange">
+                  确认修改
+                </el-button>
+                <el-button @click="resetPasswordForm">清空</el-button>
+              </el-form-item>
+            </el-form>
+          </div>
+        </section>
+      </main>
     </div>
-
-    <!-- 编辑资料对话框 -->
-    <el-dialog v-model="editDialogVisible" title="编辑个人资料" width="600px">
-      <el-form ref="editFormRef" :model="editForm" label-width="100px">
-        <el-form-item label="姓名">
-          <el-input v-model="editForm.name" placeholder="请输入姓名" />
-        </el-form-item>
-
-        <el-form-item label="性别">
-          <el-radio-group v-model="editForm.gender">
-            <el-radio label="男">男</el-radio>
-            <el-radio label="女">女</el-radio>
-          </el-radio-group>
-        </el-form-item>
-
-        <el-form-item label="出生日期">
-          <el-date-picker
-            v-model="editForm.birthday"
-            type="date"
-            placeholder="选择出生日期"
-            style="width: 100%"
-          />
-        </el-form-item>
-
-        <el-form-item label="手机号码">
-          <el-input v-model="editForm.phone" placeholder="请输入手机号码" />
-        </el-form-item>
-
-        <el-form-item label="邮箱">
-          <el-input v-model="editForm.email" placeholder="请输入邮箱" />
-        </el-form-item>
-
-        <el-form-item label="学院/部门">
-          <el-input v-model="editForm.department" placeholder="请输入学院/部门" />
-        </el-form-item>
-
-        <el-form-item label="职称/年级">
-          <el-input v-model="editForm.title" placeholder="请输入职称或年级" />
-        </el-form-item>
-      </el-form>
-
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="editDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="saveProfile"> 保存 </el-button>
-        </span>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
+import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import { ArrowLeft, User, Lock, Message, EditPen, WarningFilled } from '@element-plus/icons-vue'
+import { useAuthStore } from '@/stores/auth'
 import {
-  User,
-  Lock,
-  Bell,
-  Setting,
-  Histogram,
-  Message,
-  OfficeBuilding,
-  Edit,
-} from '@element-plus/icons-vue'
+  getProfile,
+  updateProfile,
+  updateExpertDomains,
+  updateExpertTypes,
+  getResearchDomains,
+  changePassword as apiChangePassword,
+} from '@/api/auth'
 
-// 当前激活的标签页
+type DomainOption = { id: string; name: string; code?: string }
+type ProfileData = {
+  id?: string
+  username?: string
+  name?: string
+  email?: string
+  role?: string
+  department?: string
+  title?: string
+  phone?: string
+  status?: string
+  created_at?: string
+  last_login?: string
+  expertise_description?: string | null
+  keywords?: string | null
+  expert_domains?: DomainOption[]
+  expert_types?: string[]
+  expertTypes?: string[]
+}
+
+const expertTypeOptions = [
+  { value: 'technical', label: '技术专家' },
+  { value: 'industry', label: '产业专家' },
+  { value: 'investment', label: '投资专家' },
+] as const
+
+const router = useRouter()
+const authStore = useAuthStore()
 const activeTab = ref('profile')
+const loading = ref(false)
+const savingProfile = ref(false)
+const changingPassword = ref(false)
+const domainsLoading = ref(false)
 
-// 用户信息 - 从 localStorage 获取
-const userInfo = ref({
-  id: '',
+const profile = ref<ProfileData>({})
+const profileForm = reactive({
   name: '',
-  avatar: '',
-  role: '',
-  gender: '',
-  birthday: '',
   phone: '',
-  email: '',
   department: '',
   title: '',
-  researchField: '',
-  bio: '',
-  createTime: '',
-  lastLogin: '',
+  expertise_description: '',
 })
+const selectedDomainIds = ref<string[]>([])
+const selectedExpertTypes = ref<string[]>([])
+const researchDomains = ref<DomainOption[]>([])
 
-// 加载状态
-const loading = ref(false)
-
-// 编辑对话框
-const editDialogVisible = ref(false)
-const editForm = reactive({})
-
-// 密码表单
 const passwordForm = reactive({
   currentPassword: '',
   newPassword: '',
   confirmPassword: '',
 })
+const profileFormRef = ref<FormInstance>()
+const passwordFormRef = ref<FormInstance>()
 
-const changingPassword = ref(false)
+const isReviewer = computed(() => profile.value.role === 'reviewer')
 
-// 安全设置
-const securitySettings = reactive({
-  twoFactorAuth: false,
-  loginNotification: true,
+const roleLabel = computed(() => {
+  const map: Record<string, string> = {
+    applicant: '申请人',
+    reviewer: '评审专家',
+    project_manager: '项目经理',
+    admin: '系统管理员',
+    funds_manager: '经费管理员',
+  }
+  return map[profile.value.role || ''] || profile.value.role || '—'
 })
 
-// 通知数据
-const notifications = ref([
-  {
-    id: 1,
-    title: '系统通知',
-    message: '欢迎使用科研项目管理系统',
-    time: '2024-01-15',
-    read: false,
-  },
-])
+const departmentLabel = computed(() =>
+  profile.value.role === 'reviewer' ? '单位' : '部门/单位',
+)
+const titleLabel = computed(() => '职称/职务')
 
-const unreadNotifications = computed(() => {
-  return notifications.value.filter((n) => !n.read).length
+const avatarLetter = computed(() => (profile.value.name || profile.value.username || 'U').charAt(0))
+
+const selectedDomainNames = computed(() => {
+  const map = new Map(researchDomains.value.map((d) => [d.id, d.name]))
+  return selectedDomainIds.value.map((id) => map.get(id)).filter(Boolean) as string[]
 })
 
-// 系统偏好
-const preferences = reactive({
-  theme: 'light',
-  autoSave: true,
+const dashboardPath = computed(() => {
+  const role = (profile.value.role || localStorage.getItem('userRole') || '').toLowerCase()
+  const paths: Record<string, string> = {
+    applicant: '/applicant/dashboard',
+    reviewer: '/reviewer/dashboard',
+    project_manager: '/assistant/dashboard',
+    funds_manager: '/funds-manager/dashboard',
+    admin: '/admin/dashboard',
+  }
+  return paths[role] || '/'
 })
 
-// 操作记录
-const activities = ref([
-  {
-    id: 1,
-    time: '2024-01-15 14:30:25',
-    action: '登录',
-    description: '用户登录系统',
-    ip: '192.168.1.100',
-  },
-])
+const profileRules: FormRules = {
+  name: [
+    { required: true, message: '请输入姓名', trigger: 'blur' },
+    { min: 2, max: 50, message: '姓名长度为 2–50 个字符', trigger: 'blur' },
+  ],
+  phone: [{ pattern: /^$|^1[3-9]\d{9}$/, message: '请输入正确的手机号', trigger: 'blur' }],
+}
 
-// 从 localStorage 加载用户信息
-const loadUserInfo = () => {
+const validateConfirmPassword = (_rule: unknown, value: string, callback: (e?: Error) => void) => {
+  if (value !== passwordForm.newPassword) callback(new Error('两次输入的新密码不一致'))
+  else callback()
+}
+
+const passwordRules: FormRules = {
+  currentPassword: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
+  newPassword: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    { min: 6, message: '密码至少 6 位', trigger: 'blur' },
+  ],
+  confirmPassword: [
+    { required: true, message: '请确认新密码', trigger: 'blur' },
+    { validator: validateConfirmPassword, trigger: 'blur' },
+  ],
+}
+
+function goBack() {
+  router.push(dashboardPath.value)
+}
+
+function formatDateTime(v: string | null | undefined) {
+  if (!v) return '—'
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) return String(v)
+  return d.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function applyProfileToForm(data: ProfileData) {
+  profile.value = data
+  profileForm.name = data.name || ''
+  profileForm.phone = data.phone || ''
+  profileForm.department = data.department || ''
+  profileForm.title = data.title || ''
+  profileForm.expertise_description = data.expertise_description || ''
+  const domains = data.expert_domains || (data as { expertDomains?: DomainOption[] }).expertDomains || []
+  selectedDomainIds.value = domains.map((d) => d.id)
+  const types = data.expert_types || data.expertTypes || []
+  selectedExpertTypes.value = Array.isArray(types) ? [...types] : []
+}
+
+function syncLocalUser(data: ProfileData) {
+  const stored = {
+    id: data.id,
+    username: data.username,
+    name: data.name,
+    email: data.email,
+    role: data.role,
+    department: data.department,
+    title: data.title,
+    phone: data.phone,
+    expertDomains: data.expert_domains,
+  }
+  localStorage.setItem('user', JSON.stringify(stored))
+  localStorage.setItem('userName', data.name || '')
+  localStorage.setItem('userRole', data.role || '')
+  localStorage.setItem('userId', data.id || '')
+  localStorage.setItem('userEmail', data.email || '')
+  authStore.user = stored as never
+}
+
+async function loadResearchDomains() {
+  domainsLoading.value = true
+  try {
+    const res = (await getResearchDomains()) as { success?: boolean; data?: DomainOption[] }
+    researchDomains.value = res?.data || []
+  } catch {
+    researchDomains.value = []
+  } finally {
+    domainsLoading.value = false
+  }
+}
+
+async function loadProfile() {
   loading.value = true
   try {
-    // 从 localStorage 获取用户数据
-    const savedUser = localStorage.getItem('userInfo')
-    if (savedUser) {
-      Object.assign(userInfo.value, JSON.parse(savedUser))
-    } else {
-      // 如果没有保存的用户数据，尝试从其他 localStorage 项获取
-      userInfo.value.id = localStorage.getItem('userId') || ''
-      userInfo.value.name = localStorage.getItem('userName') || '未设置用户名'
-      userInfo.value.role = localStorage.getItem('userRole') || ''
-      userInfo.value.department = localStorage.getItem('userDepartment') || ''
-      userInfo.value.email = localStorage.getItem('userEmail') || ''
+    const res = (await getProfile()) as { success?: boolean; user?: ProfileData; data?: ProfileData }
+    const data = res?.user ?? res?.data
+    if (!data?.id) {
+      ElMessage.error('加载个人资料失败')
+      return
     }
-
-    console.log('加载的用户信息:', userInfo.value)
-  } catch (error) {
-    console.error('加载用户信息失败:', error)
-    ElMessage.error('加载用户信息失败')
+    applyProfileToForm(data)
+    if (data.role === 'reviewer') await loadResearchDomains()
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { error?: string } } }
+    ElMessage.error(err.response?.data?.error || '加载个人资料失败')
   } finally {
     loading.value = false
   }
 }
 
-// 角色格式化函数
-const formatRole = (role) => {
-  const roleMap = {
-    APPLICANT: '申请人',
-    REVIEWER: '评审专家',
-    ADMIN: '管理员',
-    TEACHER: '教师',
-    STUDENT: '学生',
-  }
-  return roleMap[role] || role
-}
-
-// 获取角色标签类型
-const getRoleTagType = (role) => {
-  const typeMap = {
-    APPLICANT: 'success',
-    REVIEWER: 'warning',
-    ADMIN: 'danger',
-    TEACHER: 'primary',
-    STUDENT: 'info',
-  }
-  return typeMap[role] || 'info'
-}
-
-// 获取操作标签类型
-const getActivityTagType = (action) => {
-  const typeMap = {
-    登录: 'success',
-    创建项目: 'primary',
-    修改项目: 'warning',
-    添加成果: 'info',
-    修改密码: 'danger',
-    删除: 'danger',
-  }
-  return typeMap[action] || 'info'
-}
-
-// 菜单选择处理
-const handleMenuSelect = (index) => {
-  activeTab.value = index
-}
-
-// 编辑个人资料
-const editProfile = () => {
-  Object.assign(editForm, userInfo.value)
-  editDialogVisible.value = true
-}
-
-// 保存个人资料
-const saveProfile = () => {
-  Object.assign(userInfo.value, editForm)
-
-  // 保存到 localStorage
-  localStorage.setItem('userInfo', JSON.stringify(userInfo.value))
-  localStorage.setItem('userName', userInfo.value.name)
-  localStorage.setItem('userDepartment', userInfo.value.department)
-  localStorage.setItem('userEmail', userInfo.value.email)
-
-  ElMessage.success('个人资料更新成功')
-  editDialogVisible.value = false
-}
-
-// 修改密码
-// 修改密码
-const changePassword = async () => {
-  // 表单验证
-  if (!passwordForm.currentPassword.trim()) {
-    ElMessage.warning('请输入当前密码')
-    return
-  }
-
-  if (!passwordForm.newPassword.trim()) {
-    ElMessage.warning('请输入新密码')
-    return
-  }
-
-  if (passwordForm.newPassword.length < 6) {
-    ElMessage.warning('新密码长度不能少于6位')
-    return
-  }
-
-  if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-    ElMessage.warning('两次输入的新密码不一致')
-    return
-  }
-
-  if (passwordForm.currentPassword === passwordForm.newPassword) {
-    ElMessage.warning('新密码不能与当前密码相同')
-    return
-  }
-
-  changingPassword.value = true
-
+async function saveProfile() {
+  if (!profileFormRef.value) return
   try {
-    // 这里调用你的后端API
-    // const response = await fetch('/api/user/change-password', {
-    //   method: 'POST',
-    //   headers: {
-    //     'Content-Type': 'application/json',
-    //     'Authorization': `Bearer ${localStorage.getItem('token')}`
-    //   },
-    //   body: JSON.stringify({
-    //     currentPassword: passwordForm.currentPassword,
-    //     newPassword: passwordForm.newPassword
-    //   })
-    // })
-
-    // 模拟API响应
-    // const result = await response.json()
-
-    // 模拟API调用延迟
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    // 模拟成功响应
-    const mockSuccess = true // 这里应该根据实际API响应判断
-
-    if (mockSuccess) {
-      ElMessage.success('密码修改成功')
-
-      // 清空表单
-      resetPasswordForm()
-
-      // 记录操作
-      activities.value.unshift({
-        id: Date.now(),
-        time: new Date().toLocaleString(),
-        action: '修改密码',
-        description: '用户修改了登录密码',
-        ip: '192.168.1.100',
-      })
-
-      // 如果是真实场景，可能需要重新登录
-      // ElMessageBox.confirm('密码修改成功，建议重新登录以确保安全。是否立即重新登录？', '安全提示', {
-      //   confirmButtonText: '重新登录',
-      //   cancelButtonText: '稍后',
-      //   type: 'warning'
-      // }).then(() => {
-      //   // 清除登录状态
-      //   localStorage.removeItem('token')
-      //   // 跳转到登录页
-      //   router.push('/login')
-      // })
-    } else {
-      ElMessage.error('密码修改失败，请检查当前密码是否正确')
+    await profileFormRef.value.validate()
+  } catch {
+    return
+  }
+  savingProfile.value = true
+  try {
+    const payload: Record<string, string> = {
+      name: profileForm.name.trim(),
+      phone: profileForm.phone.trim(),
+      department: profileForm.department.trim(),
+      title: profileForm.title.trim(),
     }
-  } catch (error) {
-    console.error('密码修改失败:', error)
-    ElMessage.error('密码修改失败，请稍后重试')
+    if (isReviewer.value) {
+      payload.expertise_description = profileForm.expertise_description.trim()
+    }
+    const res = (await updateProfile(payload)) as {
+      success?: boolean
+      user?: ProfileData
+      data?: ProfileData
+      error?: string
+    }
+    if (!res?.success) {
+      ElMessage.error(res?.error || '保存失败')
+      return
+    }
+    if (isReviewer.value) {
+      const typesRes = (await updateExpertTypes(selectedExpertTypes.value)) as {
+        success?: boolean
+        error?: string
+        user?: ProfileData
+      }
+      if (!typesRes?.success) {
+        ElMessage.error(typesRes?.error || '专家类型保存失败')
+        return
+      }
+      const domRes = (await updateExpertDomains(selectedDomainIds.value)) as {
+        success?: boolean
+        error?: string
+        user?: ProfileData
+      }
+      if (!domRes?.success) {
+        ElMessage.error(domRes?.error || '擅长领域保存失败')
+        return
+      }
+      const merged = domRes.user ?? typesRes.user ?? res.user ?? res.data
+      if (merged) applyProfileToForm(merged)
+      else applyProfileToForm(res.user ?? res.data ?? profile.value)
+    } else {
+      applyProfileToForm(res.user ?? res.data ?? profile.value)
+    }
+    syncLocalUser(profile.value)
+    ElMessage.success('个人资料已保存')
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { error?: string } } }
+    ElMessage.error(err.response?.data?.error || '保存失败')
+  } finally {
+    savingProfile.value = false
+  }
+}
+
+async function submitPasswordChange() {
+  if (!passwordFormRef.value) return
+  try {
+    await passwordFormRef.value.validate()
+  } catch {
+    return
+  }
+  changingPassword.value = true
+  try {
+    const res = (await apiChangePassword({
+      current_password: passwordForm.currentPassword,
+      new_password: passwordForm.newPassword,
+    })) as { success?: boolean; error?: string }
+    if (res?.success) {
+      ElMessage.success('密码修改成功')
+      resetPasswordForm()
+    } else {
+      ElMessage.error(res?.error || '密码修改失败')
+    }
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { error?: string } } }
+    ElMessage.error(err.response?.data?.error || '密码修改失败')
   } finally {
     changingPassword.value = false
   }
 }
 
-// 重置密码表单
-const resetPasswordForm = () => {
+function resetPasswordForm() {
   passwordForm.currentPassword = ''
   passwordForm.newPassword = ''
   passwordForm.confirmPassword = ''
+  passwordFormRef.value?.clearValidate()
 }
 
-// 更新安全设置
-const updateSecuritySetting = (setting) => {
-  ElMessage.success(`安全设置已更新`)
-}
-
-// 管理会话
-const manageSessions = () => {
-  ElMessage.info('会话管理功能开发中')
-}
-
-// 标记全部为已读
-const markAllAsRead = () => {
-  notifications.value.forEach((n) => (n.read = true))
-  ElMessage.success('全部标记为已读')
-}
-
-// 保存偏好设置
-const savePreferences = () => {
-  ElMessage.success('系统偏好设置已保存')
-}
-
-// 重置偏好设置
-const resetPreferences = () => {
-  Object.assign(preferences, {
-    theme: 'light',
-    autoSave: true,
-  })
-  ElMessage.success('已恢复默认设置')
-}
-
-// 密码验证规则
-const passwordRules = {
-  currentPassword: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
-  newPassword: [
-    { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 6, message: '密码长度不能少于6位', trigger: 'blur' },
-  ],
-  confirmPassword: [{ required: true, message: '请确认密码', trigger: 'blur' }],
-}
-
-// 在组件挂载时加载用户信息
 onMounted(() => {
-  loadUserInfo()
+  loadProfile()
 })
 </script>
 
 <style scoped>
-.user-center-container {
-  padding: 20px;
-  max-width: 1400px;
-  margin: 0 auto;
+.user-center-page {
+  min-height: 100vh;
+  background: linear-gradient(160deg, #f8f4f4 0%, #f5f7fa 45%, #eef1f6 100%);
 }
 
 .page-header {
-  margin-bottom: 30px;
+  background: #fff;
+  padding: 18px 28px;
+  border-bottom: 1px solid #ebe6e6;
+  box-shadow: 0 2px 12px rgba(179, 27, 27, 0.06);
 }
 
-.page-title {
-  margin: 15px 0 10px 0;
-  font-size: 24px;
-  color: #303133;
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
-.page-subtitle {
-  margin: 0;
-  color: #909399;
-  font-size: 14px;
-}
-
-.loading-container {
-  padding: 20px;
-  background: white;
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #fafafa;
+  border: 1px solid #e8e8e8;
   border-radius: 8px;
+  color: #595959;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
 }
 
-.main-content {
+.back-btn:hover {
+  border-color: #b31b1b;
+  color: #b31b1b;
+  background: rgba(179, 27, 27, 0.04);
+}
+
+.header-text h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: #1f1f1f;
+  line-height: 1.3;
+}
+
+.header-subtitle {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: #8c8c8c;
+}
+
+.content-wrapper {
   display: flex;
   gap: 20px;
+  align-items: flex-start;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
 }
 
-.left-sidebar {
+.side-panel {
   width: 280px;
+  flex-shrink: 0;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+  border: 1px solid #f0f0f0;
 }
 
-.sidebar-card {
-  position: sticky;
-  top: 20px;
-}
-
-.user-overview {
-  padding: 20px;
+.profile-hero {
+  padding: 28px 20px 22px;
   text-align: center;
-  border-bottom: 1px solid #eee;
+  background: linear-gradient(145deg, #b31b1b 0%, #8b0000 100%);
+  color: #fff;
 }
 
-.user-avatar {
-  margin: 0 auto 15px;
-  background-color: #409eff;
-}
-
-.avatar-text {
-  font-size: 32px;
-  font-weight: bold;
-  color: white;
-}
-
-.user-summary h3 {
-  margin: 0 0 10px 0;
-  font-size: 18px;
-}
-
-.user-department,
-.user-email {
-  margin: 8px 0;
-  color: #666;
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-}
-
-.side-menu {
-  border-right: none;
-  margin: 20px 0;
-}
-
-.account-status {
-  padding: 20px;
-  border-top: 1px solid #eee;
-}
-
-.account-status h4 {
-  margin: 0 0 15px 0;
-  font-size: 16px;
-}
-
-.status-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.avatar-ring {
+  display: inline-flex;
+  padding: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
   margin-bottom: 12px;
 }
 
-.status-label {
-  color: #666;
-  font-size: 14px;
+.avatar {
+  background: #fff;
+  color: #b31b1b;
+  font-size: 32px;
+  font-weight: 700;
 }
 
-.status-value {
-  color: #303133;
-  font-size: 14px;
-}
-
-.right-content {
-  flex: 1;
-}
-
-.content-card {
-  margin-bottom: 20px;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.card-header h3 {
-  margin: 0;
+.hero-name {
+  margin: 0 0 10px;
   font-size: 18px;
+  font-weight: 600;
+  color: #fff;
 }
 
-.setting-section {
-  margin-bottom: 30px;
+.role-tag {
+  background: rgba(255, 255, 255, 0.2) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  color: #fff !important;
 }
 
-.setting-section h4 {
-  margin: 0 0 20px 0;
-  font-size: 16px;
+.hero-meta {
+  margin-top: 16px;
+  text-align: left;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
 }
 
-.security-options .option-item {
+.meta-row {
   display: flex;
-  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.92);
+  word-break: break-all;
+}
+
+.meta-row + .meta-row {
+  margin-top: 8px;
+}
+
+.meta-row .el-icon {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.side-nav {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nav-item {
+  display: flex;
   align-items: center;
-  padding: 15px 0;
-  border-bottom: 1px solid #eee;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #595959;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
 }
 
-.notification-item {
-  display: flex;
-  padding: 15px;
-  border-radius: 4px;
-  margin-bottom: 10px;
-  background-color: #fafafa;
+.nav-item:hover {
+  background: #fafafa;
+  color: #b31b1b;
 }
 
-.notification-item.unread {
-  background-color: #f0f9ff;
-  border-left: 3px solid #409eff;
+.nav-item.active {
+  background: rgba(179, 27, 27, 0.08);
+  border-color: rgba(179, 27, 27, 0.2);
+  color: #b31b1b;
+  font-weight: 600;
 }
 
-.notification-icon {
-  margin-right: 15px;
+.side-status {
+  padding: 14px 16px 18px;
+  border-top: 1px solid #f0f0f0;
+  background: #fafafa;
 }
 
-.notification-header {
+.status-pill {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-pill.ok {
+  background: #f6ffed;
+  color: #389e0d;
+  border: 1px solid #b7eb8f;
+}
+
+.status-pill.warn {
+  background: #fff7e6;
+  color: #d46b08;
+  border: 1px solid #ffd591;
+}
+
+.status-time {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #8c8c8c;
+  line-height: 1.4;
+}
+
+.main-panel {
+  flex: 1;
+  min-width: 0;
+}
+
+.section-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  border: 1px solid #f0f0f0;
+  overflow: hidden;
+}
+
+.section-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 8px;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid #f5f5f5;
+  background: linear-gradient(180deg, #fafafa 0%, #fff 100%);
 }
 
-.notification-time {
-  font-size: 12px;
-  color: #909399;
+.section-title-wrap {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
 }
 
-.preference-options .option-item {
+.section-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.section-title-wrap h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.section-title-wrap p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #8c8c8c;
+}
+
+.save-btn {
+  background: #b31b1b !important;
+  border-color: #b31b1b !important;
+}
+
+.save-btn:hover {
+  background: #8b0000 !important;
+  border-color: #8b0000 !important;
+}
+
+.profile-form,
+.password-form {
+  padding: 8px 24px 24px;
+}
+
+.form-block {
+  margin-top: 8px;
+  padding: 18px 18px 4px;
+  border-radius: 10px;
+  border: 1px solid #f0f0f0;
+}
+
+.readonly-block {
+  background: #fafafa;
+}
+
+.editable-block {
+  background: #fff;
+  margin-top: 16px;
+}
+
+.expert-block {
+  background: linear-gradient(180deg, #fff9f9 0%, #fff 100%);
+  border-color: rgba(179, 27, 27, 0.12);
+  margin-top: 16px;
+}
+
+.block-label {
   display: flex;
   align-items: center;
-  margin-bottom: 20px;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #262626;
 }
 
-.option-label {
-  width: 100px;
-  color: #606266;
+.block-dot {
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: #bfbfbf;
+}
+
+.block-dot.editable {
+  background: #b31b1b;
+}
+
+.block-dot.expert {
+  background: #d4380d;
+}
+
+.block-tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: #8c8c8c;
+  padding: 2px 8px;
+  background: #f0f0f0;
+  border-radius: 4px;
+}
+
+.keywords-readonly {
+  padding: 10px 12px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
   font-size: 14px;
+  color: #595959;
+  line-height: 1.6;
 }
 
-.option-desc {
-  margin-left: 10px;
-  color: #909399;
+.keywords-empty {
   font-size: 13px;
+  color: #8c8c8c;
+  line-height: 1.5;
 }
 
-.preference-actions {
+.expert-type-group {
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+.domain-select {
+  width: 100%;
+}
+
+.field-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #8c8c8c;
+  line-height: 1.5;
+}
+
+.domain-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.security-tip {
+  display: flex;
+  align-items: flex-start;
   gap: 10px;
+  margin: 0 24px 8px;
+  padding: 12px 14px;
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #ad6800;
+  line-height: 1.5;
+}
+
+.security-tip .el-icon {
+  font-size: 18px;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.password-form {
+  max-width: 520px;
+}
+
+.form-actions {
+  margin-top: 8px;
+}
+
+:deep(.el-form-item__label) {
+  color: #595959;
+  font-weight: 500;
+}
+
+:deep(.el-input.is-disabled .el-input__wrapper) {
+  background: #f5f5f5;
+}
+
+@media (max-width: 900px) {
+  .content-wrapper {
+    flex-direction: column;
+    padding: 16px;
+  }
+
+  .side-panel {
+    width: 100%;
+  }
+
+  .side-nav {
+    flex-direction: row;
+  }
+
+  .nav-item {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .section-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .save-btn {
+    width: 100%;
+  }
 }
 </style>

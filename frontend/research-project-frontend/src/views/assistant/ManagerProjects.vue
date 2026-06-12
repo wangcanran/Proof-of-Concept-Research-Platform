@@ -122,26 +122,10 @@
           </div>
 
           <div class="funds-budget-strip">
-            <div class="budget-stat">
-              <span class="budget-stat-label">总预算</span>
-              <span class="budget-stat-value">¥ {{ formatAmount(project.budget_total) }}</span>
-            </div>
             <div class="budget-stat spent">
               <span class="budget-stat-label">已使用</span>
               <span class="budget-stat-value">¥ {{ formatAmount(project.spent_amount) }}</span>
             </div>
-            <div class="budget-stat remain">
-              <span class="budget-stat-label">剩余</span>
-              <span class="budget-stat-value" :class="{ over: getFundsRemain(project) < 0 }">
-                ¥ {{ formatAmount(getFundsRemain(project)) }}
-              </span>
-            </div>
-          </div>
-          <div v-if="Number(project.budget_total) > 0" class="funds-usage-bar">
-            <div
-              class="funds-usage-fill"
-              :style="{ width: getFundsUsagePercent(project) + '%' }"
-            ></div>
           </div>
 
           <div class="project-meta">

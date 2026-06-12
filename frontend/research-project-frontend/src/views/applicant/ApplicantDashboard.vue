@@ -275,6 +275,13 @@
                     <p>记录科研成果和产出</p>
                   </div>
                 </button>
+                <button class="action-card" @click="navigateTo('incubation-achievement')">
+                  <div class="action-icon">📦</div>
+                  <div class="action-content">
+                    <h4>孵化成果</h4>
+                    <p>为已入库或孵化中项目登记成果</p>
+                  </div>
+                </button>
                 <button class="action-card" @click="navigateTo('service-request')">
                   <div class="action-icon">🛎️</div>
                   <div class="action-content">
@@ -792,6 +799,7 @@ const navigateTo = (action: string) => {
     'my-projects': '/projects',
     'all-projects': '/projects',
     'submit-achievement': '/achievements/create',
+    'incubation-achievement': '/incubation/achievement-submit',
     'service-request': '/incubation/service-request',
     'funds-request': '/funds-request/apply',
     notifications: '/notifications',

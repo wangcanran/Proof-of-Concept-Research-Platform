@@ -388,6 +388,14 @@
           <el-input v-model="dialog.form.phone" placeholder="请输入联系电话" />
         </el-form-item>
 
+        <el-form-item v-if="dialog.form.role === 'reviewer'" label="专家类型">
+          <el-checkbox-group v-model="dialog.form.expert_types">
+            <el-checkbox label="technical">技术专家</el-checkbox>
+            <el-checkbox label="industry">产业专家</el-checkbox>
+            <el-checkbox label="investment">投资专家</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+
         <el-form-item label="账号状态" prop="status">
           <el-radio-group v-model="dialog.form.status">
             <el-radio label="active">活跃</el-radio>
@@ -532,6 +540,7 @@ const dialog = reactive({
     research_field: '',
     phone: '',
     status: 'active',
+    expert_types: [] as string[],
   },
   rules: {
     username: [
@@ -746,6 +755,7 @@ const editUser = (user: any) => {
     research_field: user.research_field || '',
     phone: user.phone || '',
     status: user.status,
+    expert_types: Array.isArray(user.expert_types) ? [...user.expert_types] : [],
     password: '',
     confirmPassword: '',
   })
@@ -771,6 +781,7 @@ const openCreateDialog = () => {
     research_field: '',
     phone: '',
     status: 'active',
+    expert_types: [],
   }
 }
 

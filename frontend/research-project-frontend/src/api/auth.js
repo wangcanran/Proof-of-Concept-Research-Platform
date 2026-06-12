@@ -18,6 +18,26 @@ export const authAPI = {
     return api.get('/api/auth/profile')
   },
 
+  // 更新个人资料
+  updateProfile(data) {
+    return api.put('/api/auth/profile', data)
+  },
+
+  // 专家擅长领域
+  updateExpertDomains(domainIds) {
+    return api.put('/api/auth/expert-domains', { domain_ids: domainIds })
+  },
+
+  // 专家类型（技术 / 投资 / 产业）
+  updateExpertTypes(expertTypes) {
+    return api.put('/api/auth/expert-types', { expert_types: expertTypes })
+  },
+
+  // 研究领域字典
+  getResearchDomains() {
+    return api.get('/api/research-domains')
+  },
+
   // 刷新token
   refreshToken() {
     return api.post('/api/auth/refresh')
@@ -47,6 +67,10 @@ export const authAPI = {
 export const login = (data) => authAPI.login(data)
 export const register = (data) => authAPI.register(data)
 export const getProfile = () => authAPI.getProfile()
+export const updateProfile = (data) => authAPI.updateProfile(data)
+export const updateExpertDomains = (domainIds) => authAPI.updateExpertDomains(domainIds)
+export const updateExpertTypes = (expertTypes) => authAPI.updateExpertTypes(expertTypes)
+export const getResearchDomains = () => authAPI.getResearchDomains()
 export const logout = () => authAPI.logout()
 export const changePassword = (data) => authAPI.changePassword(data)
 // 测试数据库连接

@@ -109,6 +109,22 @@
             ></textarea>
           </div>
 
+          <template v-if="feedbackAction === 'approved' && request">
+            <IncubationExpertAssignPanel
+              :progress-id="request.id"
+              v-model="expertAssignments"
+              class="form-group expert-assign-block"
+            />
+            <div v-if="expertAssignments.length" class="form-group">
+              <label class="form-label">已选专家</label>
+              <IncubationAssignedExpertsDisplay
+                :experts="expertAssignments"
+                editable
+                @remove="removeExpertAssignment"
+              />
+            </div>
+          </template>
+
           <div class="form-group">
             <label class="form-label">反馈附件（可选）</label>
             <div class="upload-area">
@@ -155,6 +171,10 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { formatServiceCategoriesDisplay } from '@/constants/incubationCategories'
+import IncubationExpertAssignPanel, {
+  type ExpertAssignment,
+} from '@/components/IncubationExpertAssignPanel.vue'
+import IncubationAssignedExpertsDisplay from '@/components/IncubationAssignedExpertsDisplay.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -181,6 +201,7 @@ const request = ref<any>(null)
 const feedbackAction = ref<'approved' | 'rejected'>('approved')
 const feedbackComment = ref('')
 const uploadedFiles = ref<File[]>([])
+const expertAssignments = ref<ExpertAssignment[]>([])
 
 // 文件分类
 const applicationFiles = computed(() => {
@@ -234,6 +255,12 @@ const removeFile = (index: number) => {
   uploadedFiles.value.splice(index, 1)
 }
 
+const removeExpertAssignment = (expert: ExpertAssignment) => {
+  expertAssignments.value = expertAssignments.value.filter(
+    (e) => !(e.expert_id === expert.expert_id && e.expert_type === expert.expert_type),
+  )
+}
+
 // 提交反馈
 const submitFeedback = async () => {
   if (!request.value) return
@@ -241,10 +268,17 @@ const submitFeedback = async () => {
   submitting.value = true
   try {
     // 提交反馈
-    const res = await api.put(`/incubation/requests/${request.value.id}/feedback`, {
+    const payload: Record<string, unknown> = {
       feedback_action: feedbackAction.value,
-      feedback_comment: feedbackComment.value.trim() || null
-    })
+      feedback_comment: feedbackComment.value.trim() || null,
+    }
+    if (feedbackAction.value === 'approved' && expertAssignments.value.length) {
+      payload.expert_assignments = expertAssignments.value.map((a) => ({
+        expert_id: a.expert_id,
+        expert_type: a.expert_type,
+      }))
+    }
+    const res = await api.put(`/incubation/requests/${request.value.id}/feedback`, payload)
 
     if (res.data.success) {
       // 上传附件
@@ -669,5 +703,9 @@ onMounted(() => {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+.expert-assign-block {
+  margin-top: 8px;
 }
 </style>

@@ -447,7 +447,6 @@ const tabs = [
   { key: 'basicInfo', label: '基本信息' },
   { key: 'detail', label: '项目详情' },
   { key: 'team', label: '研究团队' },
-  { key: 'budget', label: '经费预算' },
   { key: 'images', label: '图片与视频' },
   { key: 'attachments', label: '附件材料' },
   { key: 'reviews', label: '评审意见' },

@@ -428,113 +428,10 @@
       </div>
     </div>
 
-    <!-- 步骤4：经费预算 -->
+    <!-- 步骤4：图片与视频展示 -->
     <div v-show="currentStep === 4" class="step-content">
       <div class="section-card">
-        <h3 class="section-title">四、经费预算</h3>
-        <p class="section-subtitle">
-          经费预算为<strong>选填</strong>：可不添加任何行直接下一步。需要时请点「添加科目」。<strong>金额请按万元填写</strong>，保存时自动 ×10000 换算为「元」写入数据库。<strong>「总计」与分项科目二选一</strong>：仅填总金额时选「总计」一行；填分项时请逐行选择科目，勿与「总计」混填。
-        </p>
-
-        <div class="budget-table">
-          <table>
-            <thead>
-              <tr>
-                <th>预算科目</th>
-                <th>项目名称</th>
-                <th>详细说明</th>
-                <th>金额（万元）</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="budgetItems.length === 0">
-                <td colspan="5" class="budget-empty-hint">
-                  当前未添加预算明细；无需填写时请直接「下一步」。需要时请点下方「添加科目」。
-                </td>
-              </tr>
-              <tr v-for="(item, index) in budgetItems" :key="index">
-                <td>
-                  <select
-                    :value="item.category"
-                    class="budget-select"
-                    :disabled="loading"
-                    @change="onBudgetCategorySelect(index, $event)"
-                  >
-                    <option
-                      v-for="opt in budgetCategoryOptions"
-                      :key="opt.value === '' ? '_placeholder' : opt.value"
-                      :value="opt.value"
-                      :disabled="budgetOptionDisabled(index, opt.value)"
-                    >
-                      {{ opt.label }}
-                    </option>
-                  </select>
-                </td>
-                <td>
-                  <input
-                    type="text"
-                    v-model="item.item_name"
-                    placeholder="填写预算项目名称（填写本行时必填）"
-                    :disabled="loading"
-                  />
-                </td>
-                <td>
-                  <input
-                    type="text"
-                    v-model="item.description"
-                    placeholder="填写详细说明"
-                    :disabled="loading"
-                  />
-                </td>
-                <td>
-                  <input
-                    type="number"
-                    v-model="item.amount"
-                    min="0"
-                    step="0.01"
-                    placeholder="万元，如 50"
-                    @input="calculateTotal"
-                    :disabled="loading"
-                  />
-                </td>
-                <td>
-                  <button
-                    type="button"
-                    class="table-btn danger"
-                    @click="removeBudgetItem(index)"
-                    :disabled="loading"
-                  >
-                    删除
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colspan="3" class="total-label">预算合计（万元）</td>
-                <td class="total-amount">{{ totalBudget.toFixed(2) }} <span class="wan-unit">万元</span></td>
-                <td>
-                  <button
-                    type="button"
-                    class="table-btn primary"
-                    @click="addBudgetItem"
-                    :disabled="loading"
-                  >
-                    + 添加科目
-                  </button>
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- 步骤5：图片与视频展示 -->
-    <div v-show="currentStep === 5" class="step-content">
-      <div class="section-card">
-        <h3 class="section-title">五、图片与视频展示</h3>
+        <h3 class="section-title">四、图片与视频展示</h3>
         <p class="section-subtitle">请上传项目相关图片或视频，至少上传 1 个文件；图片不超过 10MB，视频不超过 50MB（支持 MP4、WebM 等）</p>
 
         <!-- 媒体上传区域 -->
@@ -632,10 +529,10 @@
       </div>
     </div>
 
-    <!-- 步骤6：附件材料 -->
-    <div v-show="currentStep === 6" class="step-content">
+    <!-- 步骤5：附件材料 -->
+    <div v-show="currentStep === 5" class="step-content">
       <div class="section-card">
-        <h3 class="section-title">六、附件材料</h3>
+        <h3 class="section-title">五、附件材料</h3>
         <p class="section-subtitle">请上传项目相关的附件材料（文档、PDF等），每个附件可添加文字说明</p>
 
         <!-- 附件上传区域 -->
@@ -842,7 +739,6 @@ const steps = [
   { key: 'basic', label: '基本信息' },
   { key: 'detail', label: '项目详情' },
   { key: 'team', label: '研究团队' },
-  { key: 'budget', label: '经费预算' },
   { key: 'images', label: '图片与视频' },
   { key: 'attachments', label: '附件材料' },
 ]
@@ -1091,21 +987,6 @@ const getMissingForStep = (step: number): string[] => {
       break
     }
     case 4: {
-      const started = budgetItems.value.filter(isBudgetRowStarted)
-      if (started.length === 0) break
-      const mx = getBudgetMutualExclusiveError()
-      if (mx) missing.push(mx)
-      if (totalBudget.value <= 0) missing.push('已填写预算时，合计金额需大于 0')
-      budgetItems.value.forEach((item, index) => {
-        if (!isBudgetRowStarted(item)) return
-        if (!item.category) missing.push(`预算第 ${index + 1} 行的预算科目`)
-        if (!item.item_name || !item.item_name.trim()) {
-          missing.push(`预算第 ${index + 1} 行的项目名称`)
-        }
-      })
-      break
-    }
-    case 5: {
       if (images.value.length === 0) missing.push('至少上传1张图片或1个视频')
       break
     }
@@ -1645,7 +1526,7 @@ const saveDraft = async (options?: { silent?: boolean }): Promise<boolean> => {
         role: m.role,
         member_introduction: m.member_introduction?.trim() || '',
       })),
-      budget_items: normalizedBudgetItemsForPayload(),
+      budget_items: [],
       images: images.value.map((img) => ({
         file_name: img.originalName || img.file_name,
         file_path: img.file_path,

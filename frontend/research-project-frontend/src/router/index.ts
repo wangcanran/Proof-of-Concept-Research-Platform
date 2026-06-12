@@ -219,6 +219,16 @@ const routes: Array<RouteRecordRaw> = [
     },
   },
   {
+    path: '/incubation/achievement-submit',
+    name: 'IncubationAchievementSubmit',
+    component: () => import('../views/incubation/IncubationAchievementSubmit.vue'),
+    meta: {
+      title: '孵化成果提交',
+      requiresAuth: true,
+      role: 'APPLICANT',
+    },
+  },
+  {
     path: '/incubation/result-feedback',
     name: 'ResultFeedback',
     component: () => import('../views/incubation/ResultFeedback.vue'),
@@ -536,6 +546,49 @@ const routes: Array<RouteRecordRaw> = [
       role: ['project_manager'],
     },
   },
+  // 企业需求管理
+  {
+    path: '/assistant/enterprise-demands',
+    name: 'EnterpriseDemandManagement',
+    component: () => import('@/views/assistant/EnterpriseDemandManagement.vue'),
+    meta: {
+      title: '企业需求管理',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/enterprise-demands/create',
+    name: 'CreateEnterpriseDemand',
+    component: () => import('@/views/assistant/EnterpriseDemandEdit.vue'),
+    meta: {
+      title: '创建企业需求',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/enterprise-demands/:id/edit',
+    name: 'EditEnterpriseDemand',
+    component: () => import('@/views/assistant/EnterpriseDemandEdit.vue'),
+    props: true,
+    meta: {
+      title: '编辑企业需求',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/enterprise-demands/:id',
+    name: 'EnterpriseDemandDetail',
+    component: () => import('@/views/assistant/EnterpriseDemandDetail.vue'),
+    props: true,
+    meta: {
+      title: '查看企业需求',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
   // 孵化服务处理
   {
     path: '/assistant/incubation-requests',
@@ -746,6 +799,17 @@ const routes: Array<RouteRecordRaw> = [
       requiresAuth: true,
       role: ['funds_manager'],
       permissions: ['view_dashboard'],
+    },
+  },
+  {
+    path: '/funds-manager/funds-usage',
+    name: 'FundsManagerFundsUsage',
+    component: () => import('@/views/funds-manager/FundsUsageOverview.vue'),
+    meta: {
+      title: '经费使用汇总',
+      requiresAuth: true,
+      role: ['funds_manager'],
+      permissions: ['view_projects'],
     },
   },
   {

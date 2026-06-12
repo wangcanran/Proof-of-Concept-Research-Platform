@@ -315,6 +315,24 @@
         </div>
       </div>
 
+      <!-- 企业需求 -->
+      <div v-if="activeTab === 'enterpriseDemands'" class="tab-panel">
+        <div class="section">
+          <h3>企业需求</h3>
+          <p class="section-desc">项目经理推送的企业合作需求，请选择是否承接。</p>
+          <ProjectEnterpriseDemandsPanel v-if="project" :project-id="project.id" />
+        </div>
+      </div>
+
+      <!-- 孵化成果 -->
+      <div v-if="activeTab === 'incubationAchievements'" class="tab-panel">
+        <div class="section">
+          <h3>孵化成果</h3>
+          <p class="section-desc">本项目已登记的孵化阶段成果与材料。提交新成果请前往工作台「快速操作 → 孵化成果」。</p>
+          <ProjectIncubationAchievementsPanel v-if="project" :project-id="project.id" />
+        </div>
+      </div>
+
       <!-- 项目进展 -->
       <div v-if="activeTab === 'progress'" class="tab-panel">
         <div class="section">
@@ -487,7 +505,7 @@
             <div class="print-option-content">
               <div class="print-option-title">打印所有信息</div>
               <div class="print-option-desc">
-                打印所有板块（基本信息、研究团队、经费预算、项目进展、附件材料）
+                打印所有板块（基本信息、研究团队、项目进展、附件材料）
               </div>
             </div>
           </div>
@@ -520,6 +538,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
 import ProjectFundsUsagePanel from '@/components/ProjectFundsUsagePanel.vue'
+import ProjectEnterpriseDemandsPanel from '@/components/ProjectEnterpriseDemandsPanel.vue'
+import ProjectIncubationAchievementsPanel from '@/components/ProjectIncubationAchievementsPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -654,16 +674,31 @@ const showFundsUsageTab = computed(() => {
   return s === 'approved' || s === 'incubating' || s === 'completed'
 })
 
+const showEnterpriseDemandTab = computed(() => {
+  const s = project.value?.status
+  return !!s && s !== 'draft'
+})
+
+const showIncubationAchievementTab = computed(() => {
+  const s = project.value?.status
+  return s === 'approved' || s === 'incubating' || s === 'completed'
+})
+
 // 标签页 - 根据项目状态动态显示
 const tabs = computed(() => {
   const baseTabs = [
     { key: 'basicInfo', label: '基本信息' },
     { key: 'detail', label: '项目详情' },
     { key: 'team', label: '研究团队' },
-    { key: 'budget', label: '经费预算' },
   ]
   if (showFundsUsageTab.value) {
     baseTabs.push({ key: 'fundsUsage', label: '经费使用' })
+  }
+  if (showEnterpriseDemandTab.value) {
+    baseTabs.push({ key: 'enterpriseDemands', label: '企业需求' })
+  }
+  if (showIncubationAchievementTab.value) {
+    baseTabs.push({ key: 'incubationAchievements', label: '孵化成果' })
   }
   baseTabs.push(
     { key: 'images', label: '图片与视频' },
@@ -1211,15 +1246,14 @@ const printAllPages = () => {
   // 获取所有标签页内容
   const basicPanel = document.querySelectorAll('.tab-panel')[0]
   const teamPanel = document.querySelectorAll('.tab-panel')[1]
-  const budgetPanel = document.querySelectorAll('.tab-panel')[2]
-  const progressPanel = document.querySelectorAll('.tab-panel')[3]
-  const attachmentsPanel = document.querySelectorAll('.tab-panel')[4]
+  const progressPanel = document.querySelectorAll('.tab-panel')[2]
+  const attachmentsPanel = document.querySelectorAll('.tab-panel')[3]
 
   // 获取项目信息卡片
   const projectInfoCard = document.querySelector('.project-info-card')
 
   // 获取标签页名称
-  const tabNames = ['基本信息', '研究团队', '经费预算', '项目进展', '附件材料']
+  const tabNames = ['基本信息', '研究团队', '项目进展', '附件材料']
 
   const printWindow = window.open('', '_blank')
   if (printWindow) {
@@ -1455,17 +1489,9 @@ const printAllPages = () => {
 
         <div class="page-break"></div>
 
-        <!-- 经费预算 -->
-        <div class="section">
-          <h2>三、经费预算</h2>
-          ${generatePrintBudgetContent(budgetPanel)}
-        </div>
-
-        <div class="page-break"></div>
-
         <!-- 项目进展 -->
         <div class="section">
-          <h2>四、项目进展</h2>
+          <h2>三、项目进展</h2>
           ${generatePrintProgressContent(progressPanel)}
         </div>
 
@@ -1473,7 +1499,7 @@ const printAllPages = () => {
 
         <!-- 附件材料 -->
         <div class="section">
-          <h2>五、附件材料</h2>
+          <h2>四、附件材料</h2>
           ${generatePrintAttachmentsContent(attachmentsPanel)}
         </div>
       </body>
@@ -2034,6 +2060,13 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 32px;
+}
+
+.section-desc {
+  margin: -8px 0 16px;
+  font-size: 14px;
+  color: #8c8c8c;
+  line-height: 1.6;
 }
 
 .section h3 {

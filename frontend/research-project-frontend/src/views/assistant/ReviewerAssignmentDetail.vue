@@ -171,10 +171,17 @@
       <div v-if="project" class="assign-dialog-content">
         <!-- 搜索和筛选区域 -->
         <div class="search-section">
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            class="technical-expert-tip"
+            title="项目评审仅可分配「技术专家」，投资专家与产业专家不会出现在列表中。"
+          />
           <div class="assign-filters-row">
             <el-input
               v-model="reviewerSearch"
-              placeholder="姓名、部门、邮箱等关键词搜索"
+              placeholder="姓名、部门、邮箱、专业关键词等"
               clearable
               class="assign-search-input"
               @keyup.enter="runReviewerSearch"
@@ -274,6 +281,9 @@
                   >
                     {{ field || '未指定' }}
                   </el-tag>
+                </div>
+                <div v-if="reviewer.keywords" class="reviewer-select-keywords">
+                  关键词：{{ reviewer.keywords }}
                 </div>
               </div>
               <div class="reviewer-select-check">
@@ -1083,6 +1093,10 @@ onMounted(() => {
   border-bottom: 1px solid #f0f0f0;
 }
 
+.technical-expert-tip {
+  margin-bottom: 12px;
+}
+
 .assign-filters-row {
   display: flex;
   flex-wrap: wrap;
@@ -1204,6 +1218,13 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.reviewer-select-keywords {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #8c8c8c;
+  line-height: 1.5;
 }
 
 .field-tag {
