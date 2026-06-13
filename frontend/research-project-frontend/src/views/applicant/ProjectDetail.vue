@@ -320,7 +320,7 @@
         <div class="section">
           <h3>项目合作资源</h3>
           <p class="section-desc">
-            与本项目相关的合作资源（含项目经理推送或本人主动承接）。浏览更多请前往工作台「项目合作资源」。
+            与本项目相关的合作资源（含项目经理推荐）。浏览全部资源请前往工作台「项目合作资源」，推荐项会优先展示。
           </p>
           <ProjectEnterpriseDemandsPanel v-if="project" :project-id="project.id" />
         </div>

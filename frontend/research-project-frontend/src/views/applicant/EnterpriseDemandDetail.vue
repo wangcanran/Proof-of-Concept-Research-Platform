@@ -5,7 +5,7 @@
         <el-icon><ArrowLeft /></el-icon> 返回列表
       </el-button>
       <el-button v-if="demand" type="primary" class="ruc-btn-primary" @click="openApplyDialog">
-        承接资源
+        报名参与
       </el-button>
     </div>
 
@@ -15,7 +15,18 @@
     <div v-else-if="demand" class="detail-body">
       <div class="detail-title-row">
         <h1 class="detail-title">{{ demand.title }}</h1>
-        <el-tag type="success" size="large">可申请</el-tag>
+        <div class="title-tags">
+          <el-tag v-if="demand.is_recommended" type="danger" size="large" effect="dark">推荐</el-tag>
+          <el-tag type="success" size="large">可报名</el-tag>
+        </div>
+      </div>
+
+      <div v-if="demand.recommended_projects?.length" class="recommend-block">
+        <h3>项目经理推荐</h3>
+        <div v-for="rp in demand.recommended_projects" :key="rp.project_id" class="recommend-row">
+          <span>{{ rp.project_title }}（{{ rp.project_code || rp.project_id }}）</span>
+          <span v-if="rp.remark" class="app-remark">说明：{{ rp.remark }}</span>
+        </div>
       </div>
 
       <div class="detail-meta">
@@ -27,11 +38,23 @@
       </div>
 
       <div v-if="demand.my_applications?.length" class="my-apps-block">
-        <h3>我的承接记录</h3>
+        <h3>我的报名记录</h3>
         <div v-for="app in demand.my_applications" :key="app.push_id" class="my-app-row">
           <span>{{ app.project_title }}（{{ app.project_code || app.project_id }}）</span>
-          <el-tag :type="appStatusType(app.status)" size="small">{{ appStatusLabel(app.status) }}</el-tag>
+          <el-tag :type="appStatusType(app.status, app.is_recommended)" size="small">
+            {{ appStatusLabel(app.status, app.is_recommended) }}
+          </el-tag>
           <span v-if="app.remark" class="app-remark">说明：{{ app.remark }}</span>
+          <el-button
+            v-if="app.status === 'claimed'"
+            link
+            type="warning"
+            size="small"
+            :loading="cancelingId === app.push_id"
+            @click="handleCancel(app)"
+          >
+            取消报名
+          </el-button>
         </div>
       </div>
 
@@ -64,15 +87,15 @@
       </div>
     </div>
     <div v-else class="detail-empty">
-      <el-empty description="项目合作资源不存在或已不可申请" />
+      <el-empty description="项目合作资源不存在或已不可报名" />
     </div>
 
-    <el-dialog v-model="applyDialogVisible" title="承接项目合作资源" width="520px" destroy-on-close>
+    <el-dialog v-model="applyDialogVisible" title="报名参与项目合作资源" width="520px" destroy-on-close>
       <el-alert
         type="info"
         :closable="false"
         show-icon
-        title="仅可选择已入库或孵化中的本人项目；提交后立即承接该项目合作资源。"
+        title="仅可选择已入库或孵化中的本人项目；提交后立即完成报名。"
         style="margin-bottom: 16px"
       />
       <el-form label-width="100px">
@@ -93,7 +116,7 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="承接说明">
+        <el-form-item label="报名说明">
           <el-input
             v-model="applyForm.remark"
             type="textarea"
@@ -107,7 +130,7 @@
       <template #footer>
         <el-button @click="applyDialogVisible = false">取消</el-button>
         <el-button type="primary" class="ruc-btn-primary" :loading="applying" @click="submitApply">
-          确认承接
+          确认报名
         </el-button>
       </template>
     </el-dialog>
@@ -117,7 +140,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import request from '@/utils/request'
 import '@wangeditor/editor/dist/css/style.css'
@@ -129,23 +152,26 @@ const loading = ref(false)
 const demand = ref<any>(null)
 const applyDialogVisible = ref(false)
 const applying = ref(false)
+const cancelingId = ref('')
 const projectsLoading = ref(false)
 const eligibleProjects = ref<any[]>([])
 const applyForm = ref({ project_id: '', remark: '' })
 
-function appStatusLabel(s: string) {
+function appStatusLabel(s: string, isRecommended?: boolean) {
+  if (isRecommended) return '推荐'
   const m: Record<string, string> = {
-    pushed: '待承接（项目经理推送）',
-    applied: '已承接',
-    claimed: '已承接',
+    pushed: '推荐',
+    applied: '已报名',
+    claimed: '已报名',
     declined: '已拒绝',
   }
   return m[s] || s
 }
 
-function appStatusType(s: string) {
+function appStatusType(s: string, isRecommended?: boolean) {
+  if (isRecommended) return 'danger'
   const m: Record<string, string> = {
-    pushed: 'warning',
+    pushed: 'danger',
     applied: 'success',
     claimed: 'success',
     declined: 'info',
@@ -166,8 +192,7 @@ function formatDate(d: string) {
 
 function isProjectDisabled(projectId: string) {
   const app = demand.value?.my_applications?.find((a: any) => a.project_id === projectId)
-  if (!app) return false
-  return ['pushed', 'applied', 'claimed'].includes(app.status)
+  return app?.status === 'claimed'
 }
 
 function goBack() {
@@ -225,16 +250,46 @@ async function submitApply() {
       remark: applyForm.value.remark,
     })
     if (res.success) {
-      ElMessage.success(res.message || '已成功承接')
+      ElMessage.success(res.message || '已成功报名')
       applyDialogVisible.value = false
       await loadDemand()
     } else {
-      ElMessage.error(res.error || '申请失败')
+      ElMessage.error(res.error || '报名失败')
     }
   } catch {
-    ElMessage.error('申请失败')
+    ElMessage.error('报名失败')
   } finally {
     applying.value = false
+  }
+}
+
+async function handleCancel(app: { push_id: string; project_id: string; project_title: string }) {
+  try {
+    await ElMessageBox.confirm(
+      `确定取消「${app.project_title}」对此资源的报名？`,
+      '取消报名',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  cancelingId.value = app.push_id
+  try {
+    const id = route.params.id as string
+    const res = await request.post(`/api/applicant/enterprise-demands/${id}/cancel`, {
+      push_id: app.push_id,
+      project_id: app.project_id,
+    })
+    if (res.success) {
+      ElMessage.success(res.message || '已取消报名')
+      await loadDemand()
+    } else {
+      ElMessage.error(res.error || '取消报名失败')
+    }
+  } catch {
+    ElMessage.error('取消报名失败')
+  } finally {
+    cancelingId.value = ''
   }
 }
 
@@ -280,6 +335,34 @@ onMounted(() => {
   align-items: flex-start;
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.title-tags {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.recommend-block {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  background: #fff7f7;
+  border: 1px solid #ffd6d6;
+  border-radius: 8px;
+}
+
+.recommend-block h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: #b31b1b;
+}
+
+.recommend-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 14px;
 }
 
 .detail-title {

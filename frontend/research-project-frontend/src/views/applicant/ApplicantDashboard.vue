@@ -302,7 +302,7 @@
                   <div class="action-icon">🏢</div>
                   <div class="action-content">
                     <h4>项目合作资源</h4>
-                    <p>浏览项目合作资源并选择项目承接</p>
+                    <p>浏览项目合作资源并选择项目报名参与</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('service-request')">

@@ -2425,7 +2425,7 @@ const server = http.createServer(async (req, res) => {
             ? [String(body.project_id).trim()]
             : [];
         if (!projectIds.length) {
-          sendResponse(res, 400, { success: false, error: '请选择要推送的项目' });
+          sendResponse(res, 400, { success: false, error: '请选择要推荐的项目' });
           return;
         }
         const remark = body.remark != null ? String(body.remark).trim() || null : null;
@@ -2438,7 +2438,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         if (demandRows[0].status !== 'published') {
-          sendResponse(res, 400, { success: false, error: '仅已发布的需求可推送给项目' });
+          sendResponse(res, 400, { success: false, error: '仅已发布的需求可推荐给项目' });
           return;
         }
         const pmId = user.id || user.userId;
@@ -2461,7 +2461,7 @@ const server = http.createServer(async (req, res) => {
           if (!ENTERPRISE_DEMAND_PUSH_PROJECT_STATUSES.includes(projRows[0].status)) {
             skipped.push({
               project_id: projectId,
-              reason: '仅可向已入库或孵化中的项目推送项目合作资源',
+              reason: '仅可向已入库或孵化中的项目推荐项目合作资源',
             });
             continue;
           }
@@ -2470,7 +2470,7 @@ const server = http.createServer(async (req, res) => {
             [projectId, demandId],
           );
           if (existing.length && existing[0].status === 'claimed') {
-            skipped.push({ project_id: projectId, reason: '该项目已承接此需求' });
+            skipped.push({ project_id: projectId, reason: '该项目已报名此资源' });
             continue;
           }
           if (existing.length) {
@@ -2495,14 +2495,14 @@ const server = http.createServer(async (req, res) => {
         if (!created.length) {
           sendResponse(res, 400, {
             success: false,
-            error: '未能推送给任何项目',
+            error: '未能推荐给任何项目',
             skipped,
           });
           return;
         }
         sendResponse(res, 200, {
           success: true,
-          message: `已推送给 ${created.length} 个项目`,
+          message: `已推荐给 ${created.length} 个项目`,
           data: { created_count: created.length, skipped },
         });
       } catch (error) {
@@ -2542,7 +2542,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         if (rows[0].status === 'claimed') {
-          sendResponse(res, 400, { success: false, error: '项目已承接，无法撤回' });
+          sendResponse(res, 400, { success: false, error: '项目已报名，无法撤回推荐' });
           return;
         }
         if (rows[0].status === 'withdrawn') {
@@ -2553,7 +2553,7 @@ const server = http.createServer(async (req, res) => {
           `UPDATE \`ProjectEnterpriseDemand\` SET status = 'withdrawn', updated_at = NOW() WHERE id = ?`,
           [pushId],
         );
-        sendResponse(res, 200, { success: true, message: '已撤回推送' });
+        sendResponse(res, 200, { success: true, message: '已撤回推荐' });
       } catch (error) {
         console.error('撤回推送失败:', error);
         sendResponse(res, 500, { success: false, error: '撤回推送失败' });
@@ -2602,10 +2602,22 @@ const server = http.createServer(async (req, res) => {
         const page = parseInt(query.page, 10) || 1;
         const pageSize = parseInt(query.pageSize, 10) || 10;
         const offset = (page - 1) * pageSize;
+        const recommendExistsSql = `
+          EXISTS (
+            SELECT 1 FROM \`ProjectEnterpriseDemand\` ped
+            INNER JOIN \`Project\` p ON ped.project_id = p.id
+            WHERE ped.demand_id = d.id
+              AND ped.pushed_by IS NOT NULL
+              AND ped.status = 'pushed'
+              AND (
+                p.applicant_id = ?
+                OR EXISTS (SELECT 1 FROM \`ProjectMember\` pm WHERE pm.project_id = p.id AND pm.user_id = ?)
+              )
+          )`;
 
         let where = `WHERE d.status = 'published'
           AND (d.deadline IS NULL OR d.deadline >= CURDATE())`;
-        const params = [];
+        const params = [uid, uid];
         if (keyword) {
           where += ' AND (d.title LIKE ? OR d.summary LIKE ? OR d.enterprise_name LIKE ? OR d.industry LIKE ?)';
           const kw = `%${keyword}%`;
@@ -2613,11 +2625,12 @@ const server = http.createServer(async (req, res) => {
         }
 
         const [rows] = await pool.query(
-          `SELECT d.*, u.name AS publisher_name
+          `SELECT d.*, u.name AS publisher_name,
+            ${recommendExistsSql} AS is_recommended
            FROM \`EnterpriseDemand\` d
            LEFT JOIN \`User\` u ON d.publisher_id = u.id
            ${where}
-           ORDER BY d.published_at DESC, d.created_at DESC
+           ORDER BY is_recommended DESC, d.published_at DESC, d.created_at DESC
            LIMIT ? OFFSET ?`,
           [...params, pageSize, offset],
         );
@@ -2630,7 +2643,7 @@ const server = http.createServer(async (req, res) => {
         let applicationMap = {};
         if (demandIds.length) {
           const [apps] = await pool.query(
-            `SELECT ped.demand_id, ped.id AS push_id, ped.status, ped.project_id,
+            `SELECT ped.demand_id, ped.id AS push_id, ped.status, ped.project_id, ped.pushed_by,
               p.title AS project_title, p.project_code
              FROM \`ProjectEnterpriseDemand\` ped
              INNER JOIN \`Project\` p ON ped.project_id = p.id
@@ -2650,6 +2663,7 @@ const server = http.createServer(async (req, res) => {
               project_title: a.project_title,
               project_code: a.project_code,
               status: a.status,
+              is_recommended: !!(a.pushed_by && a.status === 'pushed'),
             });
           });
         }
@@ -2660,6 +2674,7 @@ const server = http.createServer(async (req, res) => {
             list: rows.map((row) => ({
               ...formatEnterpriseDemandRow(row),
               publisher_name: row.publisher_name,
+              is_recommended: !!row.is_recommended,
               my_applications: applicationMap[row.id] || [],
             })),
             total: cnt[0].total,
@@ -2688,14 +2703,26 @@ const server = http.createServer(async (req, res) => {
         }
         const uid = user.userId || user.id;
         const [rows] = await pool.query(
-          `SELECT d.*, u.name AS publisher_name FROM \`EnterpriseDemand\` d
+          `SELECT d.*, u.name AS publisher_name,
+            EXISTS (
+              SELECT 1 FROM \`ProjectEnterpriseDemand\` ped
+              INNER JOIN \`Project\` p ON ped.project_id = p.id
+              WHERE ped.demand_id = d.id
+                AND ped.pushed_by IS NOT NULL
+                AND ped.status = 'pushed'
+                AND (
+                  p.applicant_id = ?
+                  OR EXISTS (SELECT 1 FROM \`ProjectMember\` pm WHERE pm.project_id = p.id AND pm.user_id = ?)
+                )
+            ) AS is_recommended
+           FROM \`EnterpriseDemand\` d
            LEFT JOIN \`User\` u ON d.publisher_id = u.id
            WHERE d.id = ? AND d.status = 'published'
              AND (d.deadline IS NULL OR d.deadline >= CURDATE())`,
-          [demandId],
+          [uid, uid, demandId],
         );
         if (!rows.length) {
-          sendResponse(res, 404, { success: false, error: '项目合作资源不存在或不可申请' });
+          sendResponse(res, 404, { success: false, error: '项目合作资源不存在或不可报名' });
           return;
         }
         await pool.query(
@@ -2707,7 +2734,8 @@ const server = http.createServer(async (req, res) => {
           [demandId],
         );
         const [apps] = await pool.query(
-          `SELECT ped.id AS push_id, ped.status, ped.project_id, ped.remark, ped.created_at, ped.claimed_at,
+          `SELECT ped.id AS push_id, ped.status, ped.project_id, ped.pushed_by, ped.remark,
+              ped.created_at, ped.claimed_at,
               p.title AS project_title, p.project_code
            FROM \`ProjectEnterpriseDemand\` ped
            INNER JOIN \`Project\` p ON ped.project_id = p.id
@@ -2719,11 +2747,21 @@ const server = http.createServer(async (req, res) => {
            ORDER BY ped.created_at DESC`,
           [demandId, uid, uid],
         );
+        const recommendedProjects = apps
+          .filter((a) => a.pushed_by && a.status === 'pushed')
+          .map((a) => ({
+            project_id: a.project_id,
+            project_title: a.project_title,
+            project_code: a.project_code,
+            remark: a.remark,
+          }));
         sendResponse(res, 200, {
           success: true,
           data: {
             ...formatEnterpriseDemandRow(rows[0]),
             publisher_name: rows[0].publisher_name,
+            is_recommended: !!rows[0].is_recommended,
+            recommended_projects: recommendedProjects,
             media: media.map(mapEnterpriseDemandMediaRow),
             my_applications: apps.map((a) => ({
               push_id: a.push_id,
@@ -2731,6 +2769,7 @@ const server = http.createServer(async (req, res) => {
               project_title: a.project_title,
               project_code: a.project_code,
               status: a.status,
+              is_recommended: !!(a.pushed_by && a.status === 'pushed'),
               remark: a.remark,
               created_at: a.created_at ? a.created_at.toISOString?.() || a.created_at : null,
               claimed_at: a.claimed_at ? a.claimed_at.toISOString?.() || a.claimed_at : null,
@@ -2759,7 +2798,7 @@ const server = http.createServer(async (req, res) => {
         const body = await parseRequestBody(req);
         const projectId = body.project_id ? String(body.project_id).trim() : '';
         if (!projectId) {
-          sendResponse(res, 400, { success: false, error: '请选择要申请承接的项目' });
+          sendResponse(res, 400, { success: false, error: '请选择要报名参与的项目' });
           return;
         }
         const remark = body.remark != null ? String(body.remark).trim() || null : null;
@@ -2773,7 +2812,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         if (demandRows[0].status !== 'published') {
-          sendResponse(res, 400, { success: false, error: '该项目合作资源当前不可申请' });
+          sendResponse(res, 400, { success: false, error: '该项目合作资源当前不可报名' });
           return;
         }
         if (demandRows[0].deadline) {
@@ -2801,11 +2840,11 @@ const server = http.createServer(async (req, res) => {
             [projectId, userId],
           ))[0].length > 0;
         if (!isOwner) {
-          sendResponse(res, 403, { success: false, error: '只能使用本人参与的项目申请' });
+          sendResponse(res, 403, { success: false, error: '只能使用本人参与的项目报名' });
           return;
         }
         if (!ENTERPRISE_DEMAND_PUSH_PROJECT_STATUSES.includes(projRows[0].status)) {
-          sendResponse(res, 400, { success: false, error: '仅已入库或孵化中的项目可申请承接项目合作资源' });
+          sendResponse(res, 400, { success: false, error: '仅已入库或孵化中的项目可报名参与项目合作资源' });
           return;
         }
 
@@ -2816,13 +2855,21 @@ const server = http.createServer(async (req, res) => {
         if (existing.length) {
           const st = existing[0].status;
           if (st === 'claimed') {
-            sendResponse(res, 400, { success: false, error: '该项目已承接此项目合作资源' });
+            sendResponse(res, 400, { success: false, error: '该项目已报名此项目合作资源' });
             return;
           }
           if (st === 'pushed') {
-            sendResponse(res, 400, {
-              success: false,
-              error: '项目经理已推送此需求至该项目，请在项目详情中确认承接',
+            const pushId = existing[0].id;
+            await pool.query(
+              `UPDATE \`ProjectEnterpriseDemand\`
+               SET status = 'claimed', remark = COALESCE(?, remark), claimed_by = ?, claimed_at = NOW(), updated_at = NOW()
+               WHERE id = ?`,
+              [remark, userId, pushId],
+            );
+            sendResponse(res, 200, {
+              success: true,
+              message: '已成功报名参与该项目合作资源',
+              data: { push_id: pushId },
             });
             return;
           }
@@ -2835,7 +2882,7 @@ const server = http.createServer(async (req, res) => {
           );
           sendResponse(res, 200, {
             success: true,
-            message: '已成功承接该项目合作资源',
+            message: '已成功报名参与该项目合作资源',
             data: { push_id: pushId },
           });
           return;
@@ -2850,12 +2897,83 @@ const server = http.createServer(async (req, res) => {
         );
         sendResponse(res, 201, {
           success: true,
-          message: '已成功承接该项目合作资源',
+          message: '已成功报名参与该项目合作资源',
           data: { push_id: pushId },
         });
       } catch (error) {
-        console.error('申请承接项目合作资源失败:', error);
-        sendResponse(res, 500, { success: false, error: '申请失败' });
+        console.error('报名参与项目合作资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '报名失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/applicant\/enterprise-demands\/[\w-]+\/cancel$/) &&
+      req.method === 'POST'
+    ) {
+      const demandId = pathname.replace('/api/applicant/enterprise-demands/', '').replace('/cancel', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || user.role !== 'applicant') {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const userId = user.userId || user.id;
+        const body = await parseRequestBody(req);
+        const projectId = body.project_id ? String(body.project_id).trim() : '';
+        const pushId = body.push_id ? String(body.push_id).trim() : '';
+        if (!projectId && !pushId) {
+          sendResponse(res, 400, { success: false, error: '请指定要取消报名的项目' });
+          return;
+        }
+
+        let rowQuery = `SELECT ped.*, p.applicant_id
+           FROM \`ProjectEnterpriseDemand\` ped
+           INNER JOIN \`Project\` p ON ped.project_id = p.id
+           WHERE ped.demand_id = ?`;
+        const rowParams = [demandId];
+        if (pushId) {
+          rowQuery += ' AND ped.id = ?';
+          rowParams.push(pushId);
+        } else {
+          rowQuery += ' AND ped.project_id = ?';
+          rowParams.push(projectId);
+        }
+        const [rows] = await pool.query(rowQuery, rowParams);
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '报名记录不存在' });
+          return;
+        }
+        const row = rows[0];
+        const isOwner =
+          String(row.applicant_id) === String(userId) ||
+          (await pool.query(
+            'SELECT 1 FROM `ProjectMember` WHERE project_id = ? AND user_id = ? LIMIT 1',
+            [row.project_id, userId],
+          ))[0].length > 0;
+        if (!isOwner) {
+          sendResponse(res, 403, { success: false, error: '只能取消本人参与项目的报名' });
+          return;
+        }
+        if (row.status !== 'claimed') {
+          sendResponse(res, 400, { success: false, error: '当前状态不可取消报名' });
+          return;
+        }
+
+        if (row.pushed_by) {
+          await pool.query(
+            `UPDATE \`ProjectEnterpriseDemand\`
+             SET status = 'pushed', claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
+             WHERE id = ?`,
+            [row.id],
+          );
+        } else {
+          await pool.query('DELETE FROM `ProjectEnterpriseDemand` WHERE id = ?', [row.id]);
+        }
+        sendResponse(res, 200, { success: true, message: '已取消报名' });
+      } catch (error) {
+        console.error('取消报名项目合作资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '取消报名失败' });
       }
       return;
     }
@@ -2880,7 +2998,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         if (String(projRows[0].applicant_id) !== String(user.id || user.userId)) {
-          sendResponse(res, 403, { success: false, error: '只能查看本人项目的推送需求' });
+          sendResponse(res, 403, { success: false, error: '只能查看本人项目的合作资源' });
           return;
         }
         const [rows] = await pool.query(
@@ -2902,7 +3020,7 @@ const server = http.createServer(async (req, res) => {
            LEFT JOIN \`User\` up ON ped.pushed_by = up.id
            WHERE ped.project_id = ? AND ped.status != 'withdrawn'
            ORDER BY
-             CASE ped.status WHEN 'pushed' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END,
+             CASE WHEN ped.pushed_by IS NOT NULL AND ped.status = 'pushed' THEN 0 ELSE 1 END,
              ped.created_at DESC`,
           [projectId],
         );
@@ -2924,6 +3042,7 @@ const server = http.createServer(async (req, res) => {
             source_url: row.source_url,
             source_note: row.source_note,
             pushed_by_name: row.pushed_by_name,
+            is_recommended: !!(row.pushed_by && row.status === 'pushed'),
           })),
         });
       } catch (error) {

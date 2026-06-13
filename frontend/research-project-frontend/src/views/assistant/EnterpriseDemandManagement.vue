@@ -6,7 +6,7 @@
           <el-icon><ArrowLeft /></el-icon> 返回工作台
         </el-button>
         <h1 class="page-title">项目合作资源管理</h1>
-        <div class="page-description">发布、转载项目合作资源，推送给负责的项目由申请人选择是否承接</div>
+        <div class="page-description">发布、转载项目合作资源，推荐给负责的项目并在资源列表中优先展示</div>
       </div>
       <div class="header-right">
         <el-button type="primary" class="ruc-btn-primary" :icon="Plus" @click="goCreate">
@@ -64,7 +64,7 @@
               <el-tag :type="statusType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="push_count" label="已推送" width="80" align="center" />
+          <el-table-column prop="push_count" label="已推荐" width="80" align="center" />
           <el-table-column prop="publisher_name" label="发布人" width="100" align="center" />
           <el-table-column prop="published_at" label="发布时间" width="160" align="center">
             <template #default="{ row }">{{ formatDate(row.published_at) }}</template>
@@ -82,7 +82,7 @@
                   <el-button link type="success" size="small" @click="handlePublish(row)">发布</el-button>
                 </template>
                 <template v-if="row.status === 'published'">
-                  <el-button link type="primary" size="small" @click="goPush(row.id)">推送项目</el-button>
+                  <el-button link type="primary" size="small" @click="goPush(row.id)">推荐项目</el-button>
                   <el-button link type="warning" size="small" @click="handleOffline(row)">下架</el-button>
                   <el-button link type="info" size="small" @click="handleClose(row)">关闭</el-button>
                 </template>
@@ -236,7 +236,7 @@ async function handleOffline(row: any) {
 
 async function handleClose(row: any) {
   try {
-    await ElMessageBox.confirm(`确定关闭「${row.title}」？关闭后不再接受新推送。`, '确认关闭', {
+    await ElMessageBox.confirm(`确定关闭「${row.title}」？关闭后不再接受新推荐。`, '确认关闭', {
       type: 'warning',
     })
     const res = await request.put(`/api/enterprise-demands/${row.id}/close`)

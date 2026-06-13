@@ -6,7 +6,7 @@
           <el-icon><ArrowLeft /></el-icon> 返回工作台
         </el-button>
         <h1 class="page-title">项目合作资源</h1>
-        <div class="page-description">浏览平台发布的项目合作资源，选择合适项目直接承接（不可编辑资源内容）</div>
+        <div class="page-description">浏览平台发布的项目合作资源；项目经理推荐的资源会标注「推荐」并优先展示。</div>
       </div>
     </div>
 
@@ -31,7 +31,12 @@
       <el-table v-loading="loading" :data="demandList" stripe style="width: 100%">
         <el-table-column prop="title" label="标题" min-width="200">
           <template #default="{ row }">
-            <span class="title-text" @click="goView(row.id)">{{ row.title }}</span>
+            <div class="title-cell">
+              <span class="title-text" @click="goView(row.id)">{{ row.title }}</span>
+              <el-tag v-if="row.is_recommended" type="danger" size="small" effect="dark" class="recommend-tag">
+                推荐
+              </el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="enterprise_name" label="企业/单位" width="140" show-overflow-tooltip />
@@ -43,20 +48,20 @@
         <el-table-column prop="deadline" label="截止日期" width="110" align="center">
           <template #default="{ row }">{{ row.deadline || '-' }}</template>
         </el-table-column>
-          <el-table-column label="我的承接" min-width="160">
+          <el-table-column label="我的报名" min-width="160">
           <template #default="{ row }">
             <template v-if="row.my_applications?.length">
               <el-tag
                 v-for="app in row.my_applications"
                 :key="app.push_id"
-                :type="appStatusType(app.status)"
+                :type="appStatusType(app.status, app.is_recommended)"
                 size="small"
                 class="app-tag"
               >
-                {{ app.project_title }} · {{ appStatusLabel(app.status) }}
+                {{ app.project_title }} · {{ appStatusLabel(app.status, app.is_recommended) }}
               </el-tag>
             </template>
-            <span v-else class="text-muted">未承接</span>
+            <span v-else class="text-muted">未报名</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="140" align="center" fixed="right">
@@ -95,19 +100,21 @@ const page = ref(1)
 const pageSize = ref(10)
 const filters = ref({ keyword: '' })
 
-function appStatusLabel(s: string) {
+function appStatusLabel(s: string, isRecommended?: boolean) {
+  if (isRecommended) return '推荐'
   const m: Record<string, string> = {
-    pushed: '待承接',
-    applied: '已承接',
-    claimed: '已承接',
+    pushed: '推荐',
+    applied: '已报名',
+    claimed: '已报名',
     declined: '已拒绝',
   }
   return m[s] || s
 }
 
-function appStatusType(s: string) {
+function appStatusType(s: string, isRecommended?: boolean) {
+  if (isRecommended) return 'danger'
   const m: Record<string, string> = {
-    pushed: 'warning',
+    pushed: 'danger',
     applied: 'success',
     claimed: 'success',
     declined: 'info',
@@ -225,6 +232,17 @@ onMounted(() => {
   padding: 20px;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.title-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.recommend-tag {
+  flex-shrink: 0;
 }
 
 .title-text {

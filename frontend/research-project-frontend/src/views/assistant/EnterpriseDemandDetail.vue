@@ -6,7 +6,7 @@
       </el-button>
       <div v-if="demand" class="header-actions">
         <el-button v-if="demand.status === 'published'" type="primary" @click="openPushDialog">
-          推送给项目
+          推荐给项目
         </el-button>
         <el-button @click="goEdit">编辑</el-button>
       </div>
@@ -60,10 +60,10 @@
 
       <div v-if="demand.status === 'published'" class="push-section">
         <div class="push-section-head">
-          <h3>项目推送记录</h3>
-          <el-button type="primary" size="small" @click="openPushDialog">推送给项目</el-button>
+          <h3>项目推荐记录</h3>
+          <el-button type="primary" size="small" @click="openPushDialog">推荐给项目</el-button>
         </div>
-        <el-table v-loading="pushLoading" :data="pushList" stripe empty-text="尚未推送给任何项目">
+        <el-table v-loading="pushLoading" :data="pushList" stripe empty-text="尚未推荐给任何项目">
           <el-table-column prop="project_title" label="项目" min-width="180" show-overflow-tooltip />
           <el-table-column prop="project_code" label="编号" width="120" />
           <el-table-column prop="applicant_name" label="申请人" width="100" />
@@ -96,13 +96,13 @@
       <el-empty description="项目合作资源不存在或已被删除" />
     </div>
 
-    <el-dialog v-model="pushDialogVisible" title="推送给负责的项目" width="640px" destroy-on-close>
+    <el-dialog v-model="pushDialogVisible" title="推荐给负责的项目" width="640px" destroy-on-close>
       <el-alert
         type="info"
         :closable="false"
         show-icon
         class="push-tip"
-        title="仅可向已入库或孵化中、且由您负责的项目推送；推送后由项目申请人选择是否承接。"
+        title="仅可向已入库或孵化中、且由您负责的项目推荐；推荐后项目方在资源列表中会看到「推荐」标签并优先展示。"
       />
       <el-form label-width="88px" class="push-form">
         <el-form-item label="选择项目" required>
@@ -126,7 +126,7 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="推送说明">
+        <el-form-item label="推荐说明">
           <el-input
             v-model="pushRemark"
             type="textarea"
@@ -139,7 +139,7 @@
       </el-form>
       <template #footer>
         <el-button @click="pushDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="pushSubmitting" @click="submitPush">确认推送</el-button>
+        <el-button type="primary" :loading="pushSubmitting" @click="submitPush">确认推荐</el-button>
       </template>
     </el-dialog>
   </div>
@@ -198,8 +198,8 @@ function statusType(s: string) {
 
 function pushStatusLabel(s: string) {
   const m: Record<string, string> = {
-    pushed: '待承接',
-    claimed: '已承接',
+    pushed: '已推荐',
+    claimed: '已报名',
     declined: '已拒绝',
     withdrawn: '已撤回',
   }
@@ -208,7 +208,7 @@ function pushStatusLabel(s: string) {
 
 function pushStatusType(s: string) {
   const m: Record<string, string> = {
-    pushed: 'warning',
+    pushed: 'danger',
     claimed: 'success',
     declined: 'info',
     withdrawn: 'info',
@@ -267,7 +267,7 @@ async function loadPushes() {
     const res = await request.get(`/api/enterprise-demands/${id}/pushes`)
     if (res.success) pushList.value = res.data || []
   } catch (e) {
-    console.error('加载推送记录失败', e)
+    console.error('加载推荐记录失败', e)
   } finally {
     pushLoading.value = false
   }
@@ -295,7 +295,7 @@ async function openPushDialog() {
   pushDialogVisible.value = true
   await loadMyProjects()
   if (!myProjects.value.length) {
-    ElMessage.info('当前没有已入库或孵化中的负责项目，无法推送')
+    ElMessage.info('当前没有已入库或孵化中的负责项目，无法推荐')
   }
 }
 
@@ -311,17 +311,17 @@ async function submitPush() {
       remark: pushRemark.value.trim() || null,
     })
     if (res.success) {
-      ElMessage.success(res.message || '推送成功')
+      ElMessage.success(res.message || '推荐成功')
       if (res.data?.skipped?.length) {
-        ElMessage.warning(`部分项目未推送：${res.data.skipped.map((s: any) => s.reason).join('；')}`)
+        ElMessage.warning(`部分项目未推荐：${res.data.skipped.map((s: any) => s.reason).join('；')}`)
       }
       pushDialogVisible.value = false
       await loadPushes()
     } else {
-      ElMessage.error(res.error || '推送失败')
+      ElMessage.error(res.error || '推荐失败')
     }
   } catch {
-    ElMessage.error('推送失败')
+    ElMessage.error('推荐失败')
   } finally {
     pushSubmitting.value = false
   }
@@ -329,7 +329,7 @@ async function submitPush() {
 
 async function handleWithdraw(row: any) {
   try {
-    await ElMessageBox.confirm(`确定撤回对「${row.project_title}」的推送？`, '确认撤回', { type: 'warning' })
+    await ElMessageBox.confirm(`确定撤回对「${row.project_title}」的推荐？`, '确认撤回', { type: 'warning' })
     const res = await request.put(
       `/api/enterprise-demands/${route.params.id}/pushes/${row.id}/withdraw`,
     )

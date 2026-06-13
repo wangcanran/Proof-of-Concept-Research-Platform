@@ -6,67 +6,62 @@
     <div v-else-if="items.length === 0" class="empty-state">
       <p>暂无与本项目相关的项目合作资源</p>
       <p class="empty-hint">
-        可前往「项目合作资源」浏览平台发布的合作资源并主动承接；项目经理推送的合作资源也会显示在此。
+        可前往「项目合作资源」浏览全部资源；项目经理推荐的资源会在列表中标注「推荐」并优先展示。
       </p>
     </div>
     <div v-else class="demand-list">
       <div v-for="item in items" :key="item.id" class="demand-card">
         <div class="demand-card-head">
-          <div class="demand-title">{{ item.demand_title }}</div>
-          <el-tag :type="pushStatusType(item.status)" size="small">{{ pushStatusLabel(item.status) }}</el-tag>
+          <div class="demand-title-row">
+            <div class="demand-title">{{ item.demand_title }}</div>
+            <el-tag v-if="isRecommended(item)" type="danger" size="small" effect="dark">推荐</el-tag>
+          </div>
+          <el-tag v-if="item.status === 'claimed'" type="success" size="small">已报名</el-tag>
         </div>
         <div class="demand-meta">
           <span v-if="item.enterprise_name">企业：{{ item.enterprise_name }}</span>
           <span v-if="item.industry">行业：{{ item.industry }}</span>
-          <span v-if="item.pushed_by_name">推送人：{{ item.pushed_by_name }}</span>
-          <span v-else-if="!item.pushed_by_name && item.status === 'claimed'">来源：项目主动申请</span>
-          <span>推送时间：{{ formatDate(item.created_at) }}</span>
+          <span v-if="item.pushed_by_name">推荐人：{{ item.pushed_by_name }}</span>
+          <span v-else-if="!item.pushed_by_name && item.status === 'claimed'">来源：项目主动报名</span>
+          <span v-if="isRecommended(item)">推荐时间：{{ formatDate(item.created_at) }}</span>
+          <span v-else>时间：{{ formatDate(item.created_at) }}</span>
           <span v-if="item.deadline">截止：{{ item.deadline }}</span>
         </div>
-        <p v-if="item.demand_summary" class="demand-summary">{{ item.demand_summary }}</p>
-        <p v-if="item.remark" class="demand-remark">推送说明：{{ item.remark }}</p>
+        <p v-if="item.remark" class="demand-remark">推荐说明：{{ item.remark }}</p>
         <div class="demand-actions">
           <el-button size="small" @click="openDetail(item)">查看详情</el-button>
-          <template v-if="item.status === 'pushed'">
-            <el-button type="primary" size="small" :loading="actingId === item.id" @click="handleClaim(item)">
-              确认承接
-            </el-button>
-            <el-button size="small" :loading="actingId === item.id" @click="handleDecline(item)">
-              不承接
-            </el-button>
-          </template>
+          <el-button
+            v-if="item.status === 'claimed'"
+            size="small"
+            type="warning"
+            :loading="cancelingId === item.id"
+            @click="handleCancel(item)"
+          >
+            取消报名
+          </el-button>
+          <el-button size="small" type="primary" @click="goResourceList">前往资源列表</el-button>
         </div>
       </div>
     </div>
 
     <el-dialog v-model="detailVisible" :title="detailItem?.demand_title || '资源详情'" width="760px" destroy-on-close>
       <div v-if="detailItem" class="detail-dialog-body">
+        <div v-if="isRecommended(detailItem)" class="detail-recommend-tag">
+          <el-tag type="danger" effect="dark">推荐</el-tag>
+        </div>
         <div class="detail-dialog-meta">
           <span v-if="detailItem.enterprise_name">企业：{{ detailItem.enterprise_name }}</span>
           <span v-if="detailItem.industry">行业：{{ detailItem.industry }}</span>
           <span v-if="detailItem.deadline">截止：{{ detailItem.deadline }}</span>
         </div>
-        <div v-if="detailItem.demand_summary" class="detail-summary-box">{{ detailItem.demand_summary }}</div>
         <div
           class="detail-content news-rich-html w-e-text-container"
           v-html="detailItem.demand_content"
         />
-        <div
-          v-if="detailItem.contact_name || detailItem.contact_phone || detailItem.contact_email"
-          class="detail-contact"
-        >
-          <h4>联系信息</h4>
-          <p v-if="detailItem.contact_name">联系人：{{ detailItem.contact_name }}</p>
-          <p v-if="detailItem.contact_phone">电话：{{ detailItem.contact_phone }}</p>
-          <p v-if="detailItem.contact_email">邮箱：{{ detailItem.contact_email }}</p>
-        </div>
       </div>
-      <template v-if="detailItem?.status === 'pushed'" #footer>
+      <template #footer>
         <el-button @click="detailVisible = false">关闭</el-button>
-        <el-button @click="handleDecline(detailItem)">不承接</el-button>
-        <el-button type="primary" :loading="actingId === detailItem.id" @click="handleClaim(detailItem)">
-          确认承接
-        </el-button>
+        <el-button type="primary" @click="goResourceList">前往资源列表</el-button>
       </template>
     </el-dialog>
   </div>
@@ -74,17 +69,20 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/utils/request'
 import '@wangeditor/editor/dist/css/style.css'
 
 const props = defineProps<{ projectId: string }>()
+const router = useRouter()
 
 type PushItem = {
   id: string
+  demand_id?: string
   status: string
+  pushed_by?: string | null
   demand_title?: string
-  demand_summary?: string
   demand_content?: string
   enterprise_name?: string
   industry?: string
@@ -92,35 +90,16 @@ type PushItem = {
   remark?: string
   pushed_by_name?: string
   created_at?: string
-  contact_name?: string
-  contact_phone?: string
-  contact_email?: string
 }
 
 const loading = ref(false)
 const items = ref<PushItem[]>([])
-const actingId = ref('')
+const cancelingId = ref('')
 const detailVisible = ref(false)
 const detailItem = ref<PushItem | null>(null)
 
-function pushStatusLabel(s: string) {
-  const m: Record<string, string> = {
-    pushed: '待承接',
-    claimed: '已承接',
-    declined: '已拒绝',
-    withdrawn: '已撤回',
-  }
-  return m[s] || s
-}
-
-function pushStatusType(s: string) {
-  const m: Record<string, string> = {
-    pushed: 'warning',
-    claimed: 'success',
-    declined: 'info',
-    withdrawn: 'info',
-  }
-  return m[s] || 'info'
+function isRecommended(item: PushItem) {
+  return !!(item.pushed_by && item.status === 'pushed')
 }
 
 function formatDate(d?: string) {
@@ -140,7 +119,13 @@ async function loadList() {
   try {
     const res = await request.get(`/api/applicant/projects/${props.projectId}/enterprise-demands`)
     if (res.success) {
-      items.value = res.data || []
+      const list = res.data || []
+      items.value = list.sort((a: PushItem, b: PushItem) => {
+        const ar = isRecommended(a) ? 0 : 1
+        const br = isRecommended(b) ? 0 : 1
+        if (ar !== br) return ar - br
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+      })
     }
   } catch (e) {
     console.error('加载项目合作资源失败', e)
@@ -154,45 +139,34 @@ function openDetail(item: PushItem) {
   detailVisible.value = true
 }
 
-async function handleClaim(item: PushItem) {
-  try {
-    await ElMessageBox.confirm(`确定承接「${item.demand_title}」？`, '确认承接', { type: 'info' })
-    actingId.value = item.id
-    const res = await request.put(
-      `/api/applicant/projects/${props.projectId}/enterprise-demands/${item.id}/claim`,
-    )
-    if (res.success) {
-      ElMessage.success('已确认承接')
-      detailVisible.value = false
-      await loadList()
-    } else {
-      ElMessage.error(res.error || '操作失败')
-    }
-  } catch {
-    /* cancel */
-  } finally {
-    actingId.value = ''
-  }
+function goResourceList() {
+  detailVisible.value = false
+  router.push('/applicant/enterprise-demands')
 }
 
-async function handleDecline(item: PushItem) {
+async function handleCancel(item: PushItem) {
+  if (!item.demand_id) return
   try {
-    await ElMessageBox.confirm(`确定不承接「${item.demand_title}」？`, '确认', { type: 'warning' })
-    actingId.value = item.id
-    const res = await request.put(
-      `/api/applicant/projects/${props.projectId}/enterprise-demands/${item.id}/decline`,
-    )
+    await ElMessageBox.confirm(`确定取消对此资源的报名？`, '取消报名', { type: 'warning' })
+  } catch {
+    return
+  }
+  cancelingId.value = item.id
+  try {
+    const res = await request.post(`/api/applicant/enterprise-demands/${item.demand_id}/cancel`, {
+      push_id: item.id,
+      project_id: props.projectId,
+    })
     if (res.success) {
-      ElMessage.success('已标记为不承接')
-      detailVisible.value = false
+      ElMessage.success(res.message || '已取消报名')
       await loadList()
     } else {
-      ElMessage.error(res.error || '操作失败')
+      ElMessage.error(res.error || '取消报名失败')
     }
   } catch {
-    /* cancel */
+    ElMessage.error('取消报名失败')
   } finally {
-    actingId.value = ''
+    cancelingId.value = ''
   }
 }
 
@@ -239,6 +213,13 @@ watch(
   margin-bottom: 8px;
 }
 
+.demand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .demand-title {
   font-size: 16px;
   font-weight: 600;
@@ -252,12 +233,6 @@ watch(
   font-size: 13px;
   color: #8c8c8c;
   margin-bottom: 8px;
-}
-
-.demand-summary {
-  margin: 0 0 8px;
-  color: #595959;
-  line-height: 1.6;
 }
 
 .demand-remark {
@@ -281,12 +256,8 @@ watch(
   margin-bottom: 12px;
 }
 
-.detail-summary-box {
-  background: #f9f9f9;
-  border-left: 4px solid #b31b1b;
-  padding: 10px 14px;
-  margin-bottom: 16px;
-  line-height: 1.6;
+.detail-recommend-tag {
+  margin-bottom: 12px;
 }
 
 .detail-content {
@@ -294,18 +265,5 @@ watch(
   color: #333;
   max-height: 50vh;
   overflow-y: auto;
-}
-
-.detail-contact {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid #f0f0f0;
-}
-.detail-contact h4 {
-  margin: 0 0 8px;
-}
-.detail-contact p {
-  margin: 4px 0;
-  color: #555;
 }
 </style>
