@@ -5,8 +5,8 @@
         <el-button class="back-btn" @click="goDashboard">
           <el-icon><ArrowLeft /></el-icon> 返回工作台
         </el-button>
-        <h1 class="page-title">企业需求</h1>
-        <div class="page-description">浏览平台发布的企业需求，选择合适项目直接承接（不可编辑需求内容）</div>
+        <h1 class="page-title">项目合作资源</h1>
+        <div class="page-description">浏览平台发布的项目合作资源，选择合适项目直接承接（不可编辑资源内容）</div>
       </div>
     </div>
 
@@ -36,7 +36,6 @@
         </el-table-column>
         <el-table-column prop="enterprise_name" label="企业/单位" width="140" show-overflow-tooltip />
         <el-table-column prop="industry" label="行业" width="100" show-overflow-tooltip />
-        <el-table-column prop="summary" label="摘要" min-width="160" show-overflow-tooltip />
         <el-table-column prop="publisher_name" label="发布人" width="100" align="center" />
         <el-table-column prop="published_at" label="发布时间" width="160" align="center">
           <template #default="{ row }">{{ formatDate(row.published_at) }}</template>
@@ -142,7 +141,7 @@ async function loadList() {
       total.value = res.data.total || 0
     }
   } catch (e) {
-    console.error('加载企业需求列表失败', e)
+    console.error('加载项目合作资源列表失败', e)
   } finally {
     loading.value = false
   }

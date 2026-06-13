@@ -93,7 +93,7 @@
       </div>
     </div>
     <div v-else class="detail-empty">
-      <el-empty description="企业需求不存在或已被删除" />
+      <el-empty description="项目合作资源不存在或已被删除" />
     </div>
 
     <el-dialog v-model="pushDialogVisible" title="推送给负责的项目" width="640px" destroy-on-close>

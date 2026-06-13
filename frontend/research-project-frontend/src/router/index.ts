@@ -168,7 +168,7 @@ const routes: Array<RouteRecordRaw> = [
     name: 'ApplicantEnterpriseDemands',
     component: () => import('../views/applicant/EnterpriseDemands.vue'),
     meta: {
-      title: '企业需求',
+      title: '项目合作资源',
       requiresAuth: true,
       role: ['applicant'],
     },
@@ -179,7 +179,7 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('../views/applicant/EnterpriseDemandDetail.vue'),
     props: true,
     meta: {
-      title: '企业需求详情',
+      title: '项目合作资源详情',
       requiresAuth: true,
       role: ['applicant'],
     },
@@ -577,13 +577,13 @@ const routes: Array<RouteRecordRaw> = [
       role: ['project_manager'],
     },
   },
-  // 企业需求管理
+  // 项目合作资源管理
   {
     path: '/assistant/enterprise-demands',
     name: 'EnterpriseDemandManagement',
     component: () => import('@/views/assistant/EnterpriseDemandManagement.vue'),
     meta: {
-      title: '企业需求管理',
+      title: '项目合作资源管理',
       requiresAuth: true,
       role: ['project_manager'],
     },
@@ -593,7 +593,7 @@ const routes: Array<RouteRecordRaw> = [
     name: 'CreateEnterpriseDemand',
     component: () => import('@/views/assistant/EnterpriseDemandEdit.vue'),
     meta: {
-      title: '创建企业需求',
+      title: '创建项目合作资源',
       requiresAuth: true,
       role: ['project_manager'],
     },
@@ -604,7 +604,7 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('@/views/assistant/EnterpriseDemandEdit.vue'),
     props: true,
     meta: {
-      title: '编辑企业需求',
+      title: '编辑项目合作资源',
       requiresAuth: true,
       role: ['project_manager'],
     },
@@ -615,7 +615,7 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('@/views/assistant/EnterpriseDemandDetail.vue'),
     props: true,
     meta: {
-      title: '查看企业需求',
+      title: '查看项目合作资源',
       requiresAuth: true,
       role: ['project_manager'],
     },

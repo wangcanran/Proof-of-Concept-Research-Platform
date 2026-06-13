@@ -58,10 +58,10 @@
         </div>
 
         <div class="nav-section">
-          <h4 v-if="!sidebarCollapsed" class="nav-section-title">企业需求</h4>
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">项目合作资源</h4>
           <router-link to="/applicant/enterprise-demands" class="nav-link" active-class="active">
             <span class="nav-icon">🏢</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">企业需求</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">项目合作资源</span>
           </router-link>
         </div>
 
@@ -301,8 +301,8 @@
                 <button class="action-card" @click="navigateTo('enterprise-demands')">
                   <div class="action-icon">🏢</div>
                   <div class="action-content">
-                    <h4>企业需求</h4>
-                    <p>浏览企业需求并选择项目承接</p>
+                    <h4>项目合作资源</h4>
+                    <p>浏览项目合作资源并选择项目承接</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('service-request')">

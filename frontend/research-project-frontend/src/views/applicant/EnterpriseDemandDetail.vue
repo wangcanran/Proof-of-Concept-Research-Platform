@@ -5,7 +5,7 @@
         <el-icon><ArrowLeft /></el-icon> 返回列表
       </el-button>
       <el-button v-if="demand" type="primary" class="ruc-btn-primary" @click="openApplyDialog">
-        承接需求
+        承接资源
       </el-button>
     </div>
 
@@ -64,15 +64,15 @@
       </div>
     </div>
     <div v-else class="detail-empty">
-      <el-empty description="企业需求不存在或已不可申请" />
+      <el-empty description="项目合作资源不存在或已不可申请" />
     </div>
 
-    <el-dialog v-model="applyDialogVisible" title="承接企业需求" width="520px" destroy-on-close>
+    <el-dialog v-model="applyDialogVisible" title="承接项目合作资源" width="520px" destroy-on-close>
       <el-alert
         type="info"
         :closable="false"
         show-icon
-        title="仅可选择已入库或孵化中的本人项目；提交后立即承接该企业需求。"
+        title="仅可选择已入库或孵化中的本人项目；提交后立即承接该项目合作资源。"
         style="margin-bottom: 16px"
       />
       <el-form label-width="100px">
@@ -98,7 +98,7 @@
             v-model="applyForm.remark"
             type="textarea"
             :rows="3"
-            placeholder="可选：简要说明项目与需求的匹配情况"
+            placeholder="可选：简要说明项目与合作资源的匹配情况"
             maxlength="500"
             show-word-limit
           />

@@ -431,7 +431,7 @@ const newsUpload = multer({
 });
 
 const ENTERPRISE_DEMAND_UPLOADS_DIR = path.join(__dirname, 'uploads', 'enterprise-demand');
-/** 企业需求可推送的项目状态：已入库(approved)、孵化中(incubating) */
+/** 项目合作资源可推送的项目状态：已入库(approved)、孵化中(incubating) */
 const ENTERPRISE_DEMAND_PUSH_PROJECT_STATUSES = ['approved', 'incubating'];
 
 function enterpriseDemandMediaStoredPath(absoluteDiskPath) {
@@ -1971,7 +1971,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ==================== 企业需求管理 API（项目经理） ====================
+    // ==================== 项目合作资源管理 API（项目经理） ====================
 
     if (pathname === '/api/enterprise-demands' && req.method === 'GET') {
       try {
@@ -2022,8 +2022,8 @@ const server = http.createServer(async (req, res) => {
           },
         });
       } catch (error) {
-        console.error('获取企业需求列表失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取企业需求列表失败' });
+        console.error('获取项目合作资源列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目合作资源列表失败' });
       }
       return;
     }
@@ -2081,8 +2081,8 @@ const server = http.createServer(async (req, res) => {
           message: '创建成功',
         });
       } catch (error) {
-        console.error('创建企业需求失败:', error);
-        sendResponse(res, 500, { success: false, error: '创建企业需求失败' });
+        console.error('创建项目合作资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '创建项目合作资源失败' });
       }
       return;
     }
@@ -2147,7 +2147,7 @@ const server = http.createServer(async (req, res) => {
           });
         });
       } catch (error) {
-        console.error('企业需求上传失败:', error);
+        console.error('项目合作资源上传失败:', error);
         sendResponse(res, 500, { errno: 1, success: false, error: '上传失败' });
       }
       return;
@@ -2171,7 +2171,7 @@ const server = http.createServer(async (req, res) => {
           [demandId],
         );
         if (!rows.length) {
-          sendResponse(res, 404, { success: false, error: '企业需求不存在' });
+          sendResponse(res, 404, { success: false, error: '项目合作资源不存在' });
           return;
         }
         const [media] = await pool.query(
@@ -2207,8 +2207,8 @@ const server = http.createServer(async (req, res) => {
           },
         });
       } catch (error) {
-        console.error('获取企业需求详情失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取企业需求详情失败' });
+        console.error('获取项目合作资源详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目合作资源详情失败' });
       }
       return;
     }
@@ -2230,7 +2230,7 @@ const server = http.createServer(async (req, res) => {
         const body = await parseRequestBody(req);
         const [check] = await pool.query(`SELECT status FROM \`EnterpriseDemand\` WHERE id = ?`, [demandId]);
         if (!check.length) {
-          sendResponse(res, 404, { success: false, error: '企业需求不存在' });
+          sendResponse(res, 404, { success: false, error: '项目合作资源不存在' });
           return;
         }
         const currentStatus = check[0].status;
@@ -2280,8 +2280,8 @@ const server = http.createServer(async (req, res) => {
           message: '更新成功',
         });
       } catch (error) {
-        console.error('更新企业需求失败:', error);
-        sendResponse(res, 500, { success: false, error: '更新企业需求失败' });
+        console.error('更新项目合作资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '更新项目合作资源失败' });
       }
       return;
     }
@@ -2300,8 +2300,8 @@ const server = http.createServer(async (req, res) => {
         );
         sendResponse(res, 200, { success: true, message: '发布成功' });
       } catch (error) {
-        console.error('发布企业需求失败:', error);
-        sendResponse(res, 500, { success: false, error: '发布企业需求失败' });
+        console.error('发布项目合作资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '发布项目合作资源失败' });
       }
       return;
     }
@@ -2317,8 +2317,8 @@ const server = http.createServer(async (req, res) => {
         await pool.query(`UPDATE \`EnterpriseDemand\` SET status = 'offline' WHERE id = ?`, [demandId]);
         sendResponse(res, 200, { success: true, message: '下架成功' });
       } catch (error) {
-        console.error('下架企业需求失败:', error);
-        sendResponse(res, 500, { success: false, error: '下架企业需求失败' });
+        console.error('下架项目合作资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '下架项目合作资源失败' });
       }
       return;
     }
@@ -2334,8 +2334,8 @@ const server = http.createServer(async (req, res) => {
         await pool.query(`UPDATE \`EnterpriseDemand\` SET status = 'closed' WHERE id = ?`, [demandId]);
         sendResponse(res, 200, { success: true, message: '已关闭' });
       } catch (error) {
-        console.error('关闭企业需求失败:', error);
-        sendResponse(res, 500, { success: false, error: '关闭企业需求失败' });
+        console.error('关闭项目合作资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '关闭项目合作资源失败' });
       }
       return;
     }
@@ -2364,13 +2364,13 @@ const server = http.createServer(async (req, res) => {
         await pool.query(`DELETE FROM \`EnterpriseDemand\` WHERE id = ?`, [demandId]);
         sendResponse(res, 200, { success: true, message: '删除成功' });
       } catch (error) {
-        console.error('删除企业需求失败:', error);
-        sendResponse(res, 500, { success: false, error: '删除企业需求失败' });
+        console.error('删除项目合作资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '删除项目合作资源失败' });
       }
       return;
     }
 
-    // 企业需求推送给项目 / 项目方承接
+    // 项目合作资源推送给项目 / 项目方承接
     if (pathname.match(/^\/api\/enterprise-demands\/[\w-]+\/pushes$/) && req.method === 'GET') {
       const demandId = pathname.replace('/api/enterprise-demands/', '').replace('/pushes', '');
       try {
@@ -2384,7 +2384,7 @@ const server = http.createServer(async (req, res) => {
           [demandId],
         );
         if (!demandRows.length) {
-          sendResponse(res, 404, { success: false, error: '企业需求不存在' });
+          sendResponse(res, 404, { success: false, error: '项目合作资源不存在' });
           return;
         }
         const [rows] = await pool.query(
@@ -2434,7 +2434,7 @@ const server = http.createServer(async (req, res) => {
           [demandId],
         );
         if (!demandRows.length) {
-          sendResponse(res, 404, { success: false, error: '企业需求不存在' });
+          sendResponse(res, 404, { success: false, error: '项目合作资源不存在' });
           return;
         }
         if (demandRows[0].status !== 'published') {
@@ -2461,7 +2461,7 @@ const server = http.createServer(async (req, res) => {
           if (!ENTERPRISE_DEMAND_PUSH_PROJECT_STATUSES.includes(projRows[0].status)) {
             skipped.push({
               project_id: projectId,
-              reason: '仅可向已入库或孵化中的项目推送企业需求',
+              reason: '仅可向已入库或孵化中的项目推送项目合作资源',
             });
             continue;
           }
@@ -2506,8 +2506,8 @@ const server = http.createServer(async (req, res) => {
           data: { created_count: created.length, skipped },
         });
       } catch (error) {
-        console.error('推送企业需求失败:', error);
-        sendResponse(res, 500, { success: false, error: '推送企业需求失败' });
+        console.error('推送项目合作资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '推送项目合作资源失败' });
       }
       return;
     }
@@ -2561,7 +2561,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ==================== 企业需求（项目申请人浏览与申请） ====================
+    // ==================== 项目合作资源（项目申请人浏览与申请） ====================
 
     if (pathname === '/api/applicant/enterprise-demands/eligible-projects' && req.method === 'GET') {
       try {
@@ -2668,8 +2668,8 @@ const server = http.createServer(async (req, res) => {
           },
         });
       } catch (error) {
-        console.error('获取企业需求列表失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取企业需求列表失败' });
+        console.error('获取项目合作资源列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目合作资源列表失败' });
       }
       return;
     }
@@ -2695,7 +2695,7 @@ const server = http.createServer(async (req, res) => {
           [demandId],
         );
         if (!rows.length) {
-          sendResponse(res, 404, { success: false, error: '企业需求不存在或不可申请' });
+          sendResponse(res, 404, { success: false, error: '项目合作资源不存在或不可申请' });
           return;
         }
         await pool.query(
@@ -2738,8 +2738,8 @@ const server = http.createServer(async (req, res) => {
           },
         });
       } catch (error) {
-        console.error('获取企业需求详情失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取企业需求详情失败' });
+        console.error('获取项目合作资源详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目合作资源详情失败' });
       }
       return;
     }
@@ -2769,11 +2769,11 @@ const server = http.createServer(async (req, res) => {
           [demandId],
         );
         if (!demandRows.length) {
-          sendResponse(res, 404, { success: false, error: '企业需求不存在' });
+          sendResponse(res, 404, { success: false, error: '项目合作资源不存在' });
           return;
         }
         if (demandRows[0].status !== 'published') {
-          sendResponse(res, 400, { success: false, error: '该企业需求当前不可申请' });
+          sendResponse(res, 400, { success: false, error: '该项目合作资源当前不可申请' });
           return;
         }
         if (demandRows[0].deadline) {
@@ -2781,7 +2781,7 @@ const server = http.createServer(async (req, res) => {
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           if (dl < today) {
-            sendResponse(res, 400, { success: false, error: '该企业需求已过截止日期' });
+            sendResponse(res, 400, { success: false, error: '该项目合作资源已过截止日期' });
             return;
           }
         }
@@ -2805,7 +2805,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         if (!ENTERPRISE_DEMAND_PUSH_PROJECT_STATUSES.includes(projRows[0].status)) {
-          sendResponse(res, 400, { success: false, error: '仅已入库或孵化中的项目可申请承接企业需求' });
+          sendResponse(res, 400, { success: false, error: '仅已入库或孵化中的项目可申请承接项目合作资源' });
           return;
         }
 
@@ -2816,7 +2816,7 @@ const server = http.createServer(async (req, res) => {
         if (existing.length) {
           const st = existing[0].status;
           if (st === 'claimed') {
-            sendResponse(res, 400, { success: false, error: '该项目已承接此企业需求' });
+            sendResponse(res, 400, { success: false, error: '该项目已承接此项目合作资源' });
             return;
           }
           if (st === 'pushed') {
@@ -2835,7 +2835,7 @@ const server = http.createServer(async (req, res) => {
           );
           sendResponse(res, 200, {
             success: true,
-            message: '已成功承接该企业需求',
+            message: '已成功承接该项目合作资源',
             data: { push_id: pushId },
           });
           return;
@@ -2850,11 +2850,11 @@ const server = http.createServer(async (req, res) => {
         );
         sendResponse(res, 201, {
           success: true,
-          message: '已成功承接该企业需求',
+          message: '已成功承接该项目合作资源',
           data: { push_id: pushId },
         });
       } catch (error) {
-        console.error('申请承接企业需求失败:', error);
+        console.error('申请承接项目合作资源失败:', error);
         sendResponse(res, 500, { success: false, error: '申请失败' });
       }
       return;
@@ -2927,8 +2927,8 @@ const server = http.createServer(async (req, res) => {
           })),
         });
       } catch (error) {
-        console.error('获取项目企业需求失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取项目企业需求失败' });
+        console.error('获取项目合作资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目合作资源失败' });
       }
       return;
     }
@@ -2979,10 +2979,10 @@ const server = http.createServer(async (req, res) => {
            WHERE id = ?`,
           [userId, pushId],
         );
-        sendResponse(res, 200, { success: true, message: '已确认承接该企业需求' });
+        sendResponse(res, 200, { success: true, message: '已确认承接该项目合作资源' });
       } catch (error) {
-        console.error('承接企业需求失败:', error);
-        sendResponse(res, 500, { success: false, error: '承接企业需求失败' });
+        console.error('承接项目合作资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '承接项目合作资源失败' });
       }
       return;
     }

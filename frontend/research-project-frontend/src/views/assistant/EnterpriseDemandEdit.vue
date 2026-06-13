@@ -8,7 +8,7 @@
 
     <div class="page-header">
       <div class="header-left">
-        <h1 class="page-title">{{ isEdit ? '编辑企业需求' : '创建企业需求' }}</h1>
+        <h1 class="page-title">{{ isEdit ? '编辑项目合作资源' : '创建项目合作资源' }}</h1>
       </div>
       <div class="header-right">
         <template v-if="form.status === 'draft'">
@@ -32,8 +32,8 @@
             <el-tag :type="statusType(form.status)" size="large">{{ statusLabel(form.status) }}</el-tag>
           </el-form-item>
 
-          <el-form-item label="需求标题" required>
-            <el-input v-model="form.title" placeholder="请输入需求标题" maxlength="200" show-word-limit />
+          <el-form-item label="资源标题" required>
+            <el-input v-model="form.title" placeholder="请输入资源标题" maxlength="200" show-word-limit />
           </el-form-item>
 
           <el-row :gutter="16">
@@ -49,18 +49,7 @@
             </el-col>
           </el-row>
 
-          <el-form-item label="摘要" required>
-            <el-input
-              v-model="form.summary"
-              type="textarea"
-              :rows="3"
-              placeholder="列表页展示的简短摘要"
-              maxlength="500"
-              show-word-limit
-            />
-          </el-form-item>
-
-          <el-form-item label="需求正文" required>
+          <el-form-item label="资源正文" required>
             <div class="editor-wrapper">
               <Toolbar :editor="editorRef" :defaultConfig="toolbarConfig" style="border-bottom: 1px solid #ccc" />
               <Editor
@@ -76,30 +65,8 @@
           <el-form-item label="来源链接">
             <el-input v-model="form.source_url" placeholder="https://..." />
           </el-form-item>
-          <el-form-item label="转载说明">
-            <el-input v-model="form.source_note" type="textarea" :rows="2" maxlength="500" show-word-limit />
-          </el-form-item>
 
-          <el-divider content-position="left">联系信息（选填）</el-divider>
-          <el-row :gutter="16">
-            <el-col :span="8">
-              <el-form-item label="联系人">
-                <el-input v-model="form.contact_name" maxlength="100" />
-              </el-form-item>
-            </el-col>
-            <el-col :span="8">
-              <el-form-item label="联系电话">
-                <el-input v-model="form.contact_phone" maxlength="50" />
-              </el-form-item>
-            </el-col>
-            <el-col :span="8">
-              <el-form-item label="联系邮箱">
-                <el-input v-model="form.contact_email" maxlength="100" />
-              </el-form-item>
-            </el-col>
-          </el-row>
-
-          <el-form-item label="需求截止日期">
+          <el-form-item label="资源截止日期">
             <el-date-picker
               v-model="form.deadline"
               type="date"
@@ -132,16 +99,11 @@ const isEdit = computed(() => !!route.params.id)
 
 const form = ref({
   title: '',
-  summary: '',
   content: '',
   status: 'draft',
   enterprise_name: '',
   industry: '',
   source_url: '',
-  source_note: '',
-  contact_name: '',
-  contact_phone: '',
-  contact_email: '',
   deadline: '' as string | null,
 })
 
@@ -180,7 +142,7 @@ const toolbarConfig: Partial<IToolbarConfig> = {
 }
 
 const editorConfig: Partial<IEditorConfig> = {
-  placeholder: '请输入企业需求正文（支持图文、音视频）...',
+  placeholder: '请输入项目合作资源正文（支持图文、音视频）...',
   MENU_CONF: {
     uploadImage: {
       customUpload: async (file: File, insertFn: (url: string, alt?: string, href?: string) => void) => {
@@ -317,16 +279,11 @@ async function loadDemand() {
       const d = res.data
       form.value = {
         title: d.title || '',
-        summary: d.summary || '',
         content: d.content || '',
         status: d.status || 'draft',
         enterprise_name: d.enterprise_name || '',
         industry: d.industry || '',
         source_url: d.source_url || '',
-        source_note: d.source_note || '',
-        contact_name: d.contact_name || '',
-        contact_phone: d.contact_phone || '',
-        contact_email: d.contact_email || '',
         deadline: d.deadline || null,
       }
     }
@@ -338,16 +295,16 @@ async function loadDemand() {
 function buildPayload(targetStatus: string) {
   return {
     title: form.value.title,
-    summary: form.value.summary,
+    summary: '',
     content: form.value.content,
     status: targetStatus,
     enterprise_name: form.value.enterprise_name || null,
     industry: form.value.industry || null,
     source_url: form.value.source_url || null,
-    source_note: form.value.source_note || null,
-    contact_name: form.value.contact_name || null,
-    contact_phone: form.value.contact_phone || null,
-    contact_email: form.value.contact_email || null,
+    source_note: null,
+    contact_name: null,
+    contact_phone: null,
+    contact_email: null,
     deadline: form.value.deadline || null,
   }
 }
@@ -359,10 +316,6 @@ async function handleSave(action: string) {
   }
   if (!form.value.content.trim()) {
     ElMessage.warning('请输入正文')
-    return
-  }
-  if (!form.value.summary.trim()) {
-    ElMessage.warning('请输入摘要')
     return
   }
 

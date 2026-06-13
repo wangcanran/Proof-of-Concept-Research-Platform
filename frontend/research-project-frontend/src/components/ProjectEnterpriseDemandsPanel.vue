@@ -4,9 +4,9 @@
       <el-skeleton :rows="4" animated />
     </div>
     <div v-else-if="items.length === 0" class="empty-state">
-      <p>暂无与本项目相关的企业需求</p>
+      <p>暂无与本项目相关的项目合作资源</p>
       <p class="empty-hint">
-        可前往「企业需求」浏览平台发布的需求并主动承接；项目经理推送的需求也会显示在此。
+        可前往「项目合作资源」浏览平台发布的合作资源并主动承接；项目经理推送的合作资源也会显示在此。
       </p>
     </div>
     <div v-else class="demand-list">
@@ -39,7 +39,7 @@
       </div>
     </div>
 
-    <el-dialog v-model="detailVisible" :title="detailItem?.demand_title || '需求详情'" width="760px" destroy-on-close>
+    <el-dialog v-model="detailVisible" :title="detailItem?.demand_title || '资源详情'" width="760px" destroy-on-close>
       <div v-if="detailItem" class="detail-dialog-body">
         <div class="detail-dialog-meta">
           <span v-if="detailItem.enterprise_name">企业：{{ detailItem.enterprise_name }}</span>
@@ -143,7 +143,7 @@ async function loadList() {
       items.value = res.data || []
     }
   } catch (e) {
-    console.error('加载企业需求失败', e)
+    console.error('加载项目合作资源失败', e)
   } finally {
     loading.value = false
   }

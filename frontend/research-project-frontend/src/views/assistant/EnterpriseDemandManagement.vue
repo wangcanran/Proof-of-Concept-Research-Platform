@@ -5,12 +5,12 @@
         <el-button class="back-btn" @click="goDashboard">
           <el-icon><ArrowLeft /></el-icon> 返回工作台
         </el-button>
-        <h1 class="page-title">企业需求管理</h1>
-        <div class="page-description">发布、转载企业需求，推送给负责的项目由申请人选择是否承接</div>
+        <h1 class="page-title">项目合作资源管理</h1>
+        <div class="page-description">发布、转载项目合作资源，推送给负责的项目由申请人选择是否承接</div>
       </div>
       <div class="header-right">
         <el-button type="primary" class="ruc-btn-primary" :icon="Plus" @click="goCreate">
-          新建企业需求
+          新建项目合作资源
         </el-button>
       </div>
     </div>
@@ -59,7 +59,6 @@
           </el-table-column>
           <el-table-column prop="enterprise_name" label="企业/单位" width="140" show-overflow-tooltip />
           <el-table-column prop="industry" label="行业" width="100" show-overflow-tooltip />
-          <el-table-column prop="summary" label="摘要" min-width="160" show-overflow-tooltip />
           <el-table-column prop="status" label="状态" width="90" align="center">
             <template #default="{ row }">
               <el-tag :type="statusType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
@@ -177,7 +176,7 @@ async function loadList() {
       total.value = res.data.total || 0
     }
   } catch (e) {
-    console.error('加载企业需求列表失败', e)
+    console.error('加载项目合作资源列表失败', e)
   } finally {
     loading.value = false
   }

@@ -315,12 +315,12 @@
         </div>
       </div>
 
-      <!-- 企业需求 -->
+      <!-- 项目合作资源 -->
       <div v-if="activeTab === 'enterpriseDemands'" class="tab-panel">
         <div class="section">
-          <h3>企业需求</h3>
+          <h3>项目合作资源</h3>
           <p class="section-desc">
-            与本项目相关的企业需求（含项目经理推送或本人主动承接）。浏览更多需求请前往工作台「企业需求」。
+            与本项目相关的合作资源（含项目经理推送或本人主动承接）。浏览更多请前往工作台「项目合作资源」。
           </p>
           <ProjectEnterpriseDemandsPanel v-if="project" :project-id="project.id" />
         </div>
@@ -697,7 +697,7 @@ const tabs = computed(() => {
     baseTabs.push({ key: 'fundsUsage', label: '经费使用' })
   }
   if (showEnterpriseDemandTab.value) {
-    baseTabs.push({ key: 'enterpriseDemands', label: '企业需求' })
+    baseTabs.push({ key: 'enterpriseDemands', label: '项目合作资源' })
   }
   if (showIncubationAchievementTab.value) {
     baseTabs.push({ key: 'incubationAchievements', label: '活动成果' })
