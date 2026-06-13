@@ -37,11 +37,31 @@
           <h4 v-if="!sidebarCollapsed" class="nav-section-title">项目管理</h4>
           <router-link to="/projects/create" class="nav-link" active-class="active">
             <span class="nav-icon">📝</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">创建项目</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">申报新项目</span>
           </router-link>
           <router-link to="/projects" class="nav-link" active-class="active">
             <span class="nav-icon">📁</span>
             <span v-if="!sidebarCollapsed" class="nav-text">我的项目</span>
+          </router-link>
+        </div>
+
+        <div class="nav-section">
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">成果登记</h4>
+          <router-link to="/achievements/create" class="nav-link" active-class="active">
+            <span class="nav-icon">🏆</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">科研成果登记</span>
+          </router-link>
+          <router-link to="/incubation/achievement-submit" class="nav-link" active-class="active">
+            <span class="nav-icon">📦</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">活动成果登记</span>
+          </router-link>
+        </div>
+
+        <div class="nav-section">
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">企业需求</h4>
+          <router-link to="/applicant/enterprise-demands" class="nav-link" active-class="active">
+            <span class="nav-icon">🏢</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">企业需求</span>
           </router-link>
         </div>
 
@@ -267,15 +287,22 @@
                 <button class="action-card" @click="navigateTo('submit-achievement')">
                   <div class="action-icon">🏆</div>
                   <div class="action-content">
-                    <h4>提交成果</h4>
-                    <p>记录科研成果和产出</p>
+                    <h4>科研成果登记</h4>
+                    <p>登记论文、专利、报告等科研产出</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('incubation-achievement')">
                   <div class="action-icon">📦</div>
                   <div class="action-content">
-                    <h4>孵化成果</h4>
-                    <p>为已入库或孵化中项目登记成果</p>
+                    <h4>活动成果登记</h4>
+                    <p>记录项目推广对接类活动成果和产出</p>
+                  </div>
+                </button>
+                <button class="action-card" @click="navigateTo('enterprise-demands')">
+                  <div class="action-icon">🏢</div>
+                  <div class="action-content">
+                    <h4>企业需求</h4>
+                    <p>浏览企业需求并选择项目承接</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('service-request')">
@@ -789,6 +816,7 @@ const navigateTo = (action: string) => {
     'all-projects': '/projects',
     'submit-achievement': '/achievements/create',
     'incubation-achievement': '/incubation/achievement-submit',
+    'enterprise-demands': '/applicant/enterprise-demands',
     'service-request': '/incubation/service-request',
     notifications: '/notifications',
   }

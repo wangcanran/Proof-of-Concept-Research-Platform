@@ -38,11 +38,33 @@
 
           <div class="nav-section">
             <h4 v-if="!sidebarCollapsed" class="nav-section-title">项目管理</h4>
+            <router-link to="/assistant/applications" class="nav-link" active-class="active">
+              <span class="nav-icon">📋</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">领取项目</span>
+              <span v-if="!sidebarCollapsed && pendingStats.projects > 0" class="nav-badge">
+                {{ pendingStats.projects }}
+              </span>
+            </router-link>
             <router-link to="/assistant/projects" class="nav-link" active-class="active">
               <span class="nav-icon">📁</span>
               <span v-if="!sidebarCollapsed" class="nav-text">项目管理</span>
-              <span v-if="!sidebarCollapsed && pendingStats.projects > 0" class="nav-badge">
-                {{ pendingStats.projects }}
+            </router-link>
+          </div>
+
+          <div class="nav-section">
+            <h4 v-if="!sidebarCollapsed" class="nav-section-title">成果审核</h4>
+            <router-link to="/audit/achievements" class="nav-link" active-class="active">
+              <span class="nav-icon">🏆</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">科研成果审核</span>
+              <span v-if="!sidebarCollapsed && pendingStats.achievements > 0" class="nav-badge">
+                {{ pendingStats.achievements }}
+              </span>
+            </router-link>
+            <router-link to="/assistant/activity-achievements" class="nav-link" active-class="active">
+              <span class="nav-icon">📦</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">活动成果审核</span>
+              <span v-if="!sidebarCollapsed && pendingActivityAchievementCount > 0" class="nav-badge">
+                {{ pendingActivityAchievementCount }}
               </span>
             </router-link>
           </div>
@@ -312,8 +334,15 @@
                 <button class="action-card" @click="navigateTo('review-achievements')">
                   <div class="action-icon">🏆</div>
                   <div class="action-content">
-                    <h4>成果审核</h4>
-                    <p>审核科研成果</p>
+                    <h4>科研成果审核</h4>
+                    <p>审核论文、专利等科研产出</p>
+                  </div>
+                </button>
+                <button class="action-card" @click="navigateTo('review-activity-achievements')">
+                  <div class="action-icon">📦</div>
+                  <div class="action-content">
+                    <h4>活动成果审核</h4>
+                    <p>审核路演、交流等活动登记</p>
                   </div>
                 </button>
               </div>
@@ -519,6 +548,7 @@ const pendingStats = computed(() => ({
 
 // 待处理孵化服务申请数量
 const pendingIncubationCount = ref(0)
+const pendingActivityAchievementCount = ref(0)
 
 // 计算属性
 const userInitial = computed(() => {
@@ -616,6 +646,7 @@ const navigateTo = (action: string) => {
     notifications: '/notifications',
     'review-projects': '/audit/projects',
     'review-achievements': '/audit/achievements',
+    'review-activity-achievements': '/assistant/activity-achievements',
   }
   if (routes[action]) router.push(routes[action])
 }
@@ -894,6 +925,12 @@ const loadPendingTasksData = async () => {
     const incubationRes = await api.get('/incubation/pending-requests', { params: { status: 'pending' } })
     if (incubationRes.success && incubationRes.data) {
       pendingIncubationCount.value = incubationRes.data.length
+    }
+    const activityRes = await api.get('/assistant/incubation-achievements/list', {
+      params: { status: 'submitted', page: 1, page_size: 1 },
+    })
+    if (activityRes.success && activityRes.stats) {
+      pendingActivityAchievementCount.value = activityRes.stats.pending || 0
     }
   } catch (error) {
     console.error('加载待处理任务失败:', error)

@@ -4,8 +4,10 @@
       <el-skeleton :rows="4" animated />
     </div>
     <div v-else-if="items.length === 0" class="empty-state">
-      <p>暂无项目经理推送的企业需求</p>
-      <p class="empty-hint">项目经理将合适的企业需求推送给本项目后，可在此查看并选择是否承接。</p>
+      <p>暂无与本项目相关的企业需求</p>
+      <p class="empty-hint">
+        可前往「企业需求」浏览平台发布的需求并主动承接；项目经理推送的需求也会显示在此。
+      </p>
     </div>
     <div v-else class="demand-list">
       <div v-for="item in items" :key="item.id" class="demand-card">
@@ -17,6 +19,7 @@
           <span v-if="item.enterprise_name">企业：{{ item.enterprise_name }}</span>
           <span v-if="item.industry">行业：{{ item.industry }}</span>
           <span v-if="item.pushed_by_name">推送人：{{ item.pushed_by_name }}</span>
+          <span v-else-if="!item.pushed_by_name && item.status === 'claimed'">来源：项目主动申请</span>
           <span>推送时间：{{ formatDate(item.created_at) }}</span>
           <span v-if="item.deadline">截止：{{ item.deadline }}</span>
         </div>

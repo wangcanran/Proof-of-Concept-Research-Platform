@@ -1,4 +1,4 @@
-<!-- 孵化成果提交（快速操作入口） -->
+<!-- 活动成果登记（快速操作入口） -->
 <template>
   <div class="achievement-submit-page">
     <div class="page-header">
@@ -7,8 +7,8 @@
           <el-icon><ArrowLeft /></el-icon>
           <span>返回工作台</span>
         </button>
-        <h1>孵化成果提交</h1>
-        <div class="header-subtitle">为已入库或孵化中的项目登记孵化阶段成果</div>
+        <h1>活动成果登记</h1>
+        <div class="header-subtitle">为已入库或孵化中的项目登记路演、产业交流等活动情况，提交后由项目经理审批</div>
       </div>
     </div>
 
@@ -28,8 +28,8 @@
 
         <div v-else-if="eligibleProjects.length === 0" class="empty-state">
           <div class="empty-icon">📭</div>
-          <p>暂无可提交成果的项目</p>
-          <p class="empty-subtext">仅「已入库」「孵化中」状态的项目可提交孵化成果</p>
+          <p>暂无可登记活动的项目</p>
+          <p class="empty-subtext">仅「已入库」「孵化中」状态的项目可登记活动成果</p>
         </div>
 
         <div v-else class="projects-list">
@@ -53,8 +53,8 @@
                 批准日期: {{ formatDate(project.approval_date) }}
               </span>
               <span class="meta-item">
-                <span class="meta-icon">🏆</span>
-                已提交成果: {{ project.achievement_count || 0 }} 条
+                <span class="meta-icon">📦</span>
+                已登记活动: {{ project.achievement_count || 0 }} 条
               </span>
             </div>
           </div>
@@ -65,41 +65,42 @@
         <div class="section-header">
           <h3 class="section-title">
             <span class="section-icon">✏️</span>
-            填写成果信息
+            填写活动信息
           </h3>
           <span class="selected-project-tag">{{ selectedProject.title }}</span>
         </div>
 
         <form class="submit-form" @submit.prevent="submitAchievement">
           <div class="form-group">
-            <label class="form-label required">成果标题</label>
+            <label class="form-label required">活动标题</label>
             <input
               v-model="form.title"
               type="text"
               class="form-input"
               maxlength="200"
-              placeholder="请输入成果标题"
+              placeholder="请输入活动标题"
               required
             />
           </div>
 
           <div class="form-group">
-            <label class="form-label">成果日期</label>
-            <input v-model="form.recordDate" type="date" class="form-input" />
+            <label class="form-label required">活动日期</label>
+            <input v-model="form.recordDate" type="date" class="form-input" required />
           </div>
 
           <div class="form-group">
-            <label class="form-label">成果说明</label>
+            <label class="form-label required">活动说明</label>
             <textarea
               v-model="form.description"
               class="form-textarea"
               rows="5"
-              placeholder="描述成果内容、进展或应用情况等（可选）"
+              placeholder="描述项目参加路演、项目报告、产业交流等活动的情况"
+              required
             />
           </div>
 
           <div class="form-group">
-            <label class="form-label">附件（可选）</label>
+            <label class="form-label">附件</label>
             <div class="upload-area">
               <input
                 ref="fileInputRef"
@@ -112,7 +113,7 @@
                 <span class="upload-icon">📎</span>
                 选择文件
               </button>
-              <span class="upload-hint">支持任意类型文件，单个不超过 50MB</span>
+              <span class="upload-hint">提交活动照片、路演 PPT、项目报告、宣传材料等，单个不超过 50MB</span>
             </div>
             <div v-if="pendingFiles.length" class="file-list">
               <div v-for="(file, index) in pendingFiles" :key="index" class="file-item">
@@ -127,7 +128,7 @@
           <div class="form-actions">
             <button type="button" class="btn secondary" @click="cancelForm">取消</button>
             <button type="submit" class="btn primary" :disabled="submitting">
-              {{ submitting ? '提交中...' : '提交成果' }}
+              {{ submitting ? '提交中...' : '提交审批' }}
             </button>
           </div>
         </form>
@@ -255,7 +256,15 @@ async function submitAchievement() {
   }
   const title = form.value.title.trim()
   if (!title) {
-    ElMessage.warning('请填写成果标题')
+    ElMessage.warning('请填写活动标题')
+    return
+  }
+  if (!form.value.recordDate) {
+    ElMessage.warning('请选择活动日期')
+    return
+  }
+  if (!form.value.description.trim()) {
+    ElMessage.warning('请填写活动说明')
     return
   }
 
@@ -265,8 +274,8 @@ async function submitAchievement() {
       `/api/projects/${selectedProject.value.id}/incubation-achievements`,
       {
         title,
-        description: form.value.description.trim() || undefined,
-        record_date: form.value.recordDate || undefined,
+        description: form.value.description.trim(),
+        record_date: form.value.recordDate,
       },
     )
     if (!res.success) {
@@ -279,11 +288,11 @@ async function submitAchievement() {
         await uploadFiles(recordId)
       } catch (uploadErr: any) {
         ElMessage.warning(
-          uploadErr.response?.data?.error || '成果已保存，但部分附件上传失败',
+          uploadErr.response?.data?.error || '活动已保存，但部分附件上传失败',
         )
       }
     }
-    ElMessage.success('孵化成果已提交')
+    ElMessage.success('活动成果已提交，等待项目经理审批')
     cancelForm()
     await loadEligibleProjects()
   } catch (e: any) {

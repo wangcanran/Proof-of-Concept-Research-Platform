@@ -43,6 +43,10 @@
               {{ stats.pendingCount }}
             </span>
           </router-link>
+          <router-link to="/reviewer/projects/history" class="nav-link" active-class="active">
+            <span class="nav-icon">📊</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">评审历史</span>
+          </router-link>
         </div>
 
         <div class="nav-section">

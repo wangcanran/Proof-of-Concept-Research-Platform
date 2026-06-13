@@ -163,6 +163,27 @@ const routes: Array<RouteRecordRaw> = [
       role: 'APPLICANT',
     },
   },
+  {
+    path: '/applicant/enterprise-demands',
+    name: 'ApplicantEnterpriseDemands',
+    component: () => import('../views/applicant/EnterpriseDemands.vue'),
+    meta: {
+      title: '企业需求',
+      requiresAuth: true,
+      role: ['applicant'],
+    },
+  },
+  {
+    path: '/applicant/enterprise-demands/:id',
+    name: 'ApplicantEnterpriseDemandDetail',
+    component: () => import('../views/applicant/EnterpriseDemandDetail.vue'),
+    props: true,
+    meta: {
+      title: '企业需求详情',
+      requiresAuth: true,
+      role: ['applicant'],
+    },
+  },
 
   // ============ 成果管理模块 ============
   {
@@ -223,7 +244,7 @@ const routes: Array<RouteRecordRaw> = [
     name: 'IncubationAchievementSubmit',
     component: () => import('../views/incubation/IncubationAchievementSubmit.vue'),
     meta: {
-      title: '孵化成果提交',
+      title: '活动成果登记',
       requiresAuth: true,
       role: 'APPLICANT',
     },
@@ -454,10 +475,20 @@ const routes: Array<RouteRecordRaw> = [
     name: 'AssistantAchievements',
     component: () => import('@/views/assistant/Achievements.vue'),
     meta: {
-      title: '成果审核',
+      title: '科研成果审核',
       requiresAuth: true,
       role: ['project_manager'],
       permissions: ['view_achievements', 'review_achievements'],
+    },
+  },
+  {
+    path: '/assistant/activity-achievements',
+    name: 'ActivityAchievementReview',
+    component: () => import('@/views/assistant/ActivityAchievementReview.vue'),
+    meta: {
+      title: '活动成果审核',
+      requiresAuth: true,
+      role: ['project_manager'],
     },
   },
   {
@@ -616,9 +647,20 @@ const routes: Array<RouteRecordRaw> = [
     name: 'AuditAchievements',
     component: () => import('../views/assistant/Achievements.vue'),
     meta: {
+      title: '科研成果审核',
       requiresAuth: true,
       role: ['project_manager'],
       permissions: ['audit_achievements'],
+    },
+  },
+  {
+    path: '/audit/activity-achievements',
+    name: 'AuditActivityAchievements',
+    component: () => import('@/views/assistant/ActivityAchievementReview.vue'),
+    meta: {
+      title: '活动成果审核',
+      requiresAuth: true,
+      role: ['project_manager'],
     },
   },
   // 专家分配功能整合到项目管理中

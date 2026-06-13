@@ -3,7 +3,7 @@
     <!-- 页面头部 -->
     <div class="page-header">
       <div class="header-content">
-        <h2>{{ isEditMode ? '编辑成果' : '新增成果' }}</h2>
+        <h2>{{ pageTitle }}</h2>
         <div class="header-actions">
           <el-button @click="goBack">返回列表</el-button>
           <el-button type="primary" @click="handleSave" :loading="saving"> 保存 </el-button>
@@ -96,7 +96,7 @@
                 />
               </el-form-item>
             </el-col>
-            <el-col :span="12">
+            <el-col v-if="!isApplicant || isEditMode" :span="12">
               <el-form-item label="成果状态" prop="status">
                 <el-select
                   v-model="formData.status"
@@ -299,7 +299,7 @@
         <el-button @click="previousStep" :disabled="currentStep === 0"> 上一步 </el-button>
         <el-button v-if="currentStep < 2" type="primary" @click="nextStep"> 下一步 </el-button>
         <el-button v-else type="primary" @click="handleSave" :loading="saving">
-          {{ isEditMode ? '更新成果' : '创建成果' }}
+          {{ isEditMode ? '更新成果' : isApplicant ? '提交审批' : '创建成果' }}
         </el-button>
       </div>
     </div>
@@ -342,6 +342,14 @@ const API_BASE_URL = getApiBaseUrl()
 // 计算属性
 const isEditMode = computed(() => route.name === 'EditAchievement')
 const isViewing = computed(() => route.name === 'AchievementDetail')
+const isApplicant = computed(
+  () => (localStorage.getItem('userRole') || '').toUpperCase() === 'APPLICANT',
+)
+const pageTitle = computed(() => {
+  if (isEditMode.value) return '编辑科研成果'
+  if (isApplicant.value) return '科研成果登记'
+  return '新增成果'
+})
 const achievementId = computed(() => route.params.id)
 
 // 响应式数据
@@ -445,7 +453,7 @@ const formData = reactive({
   project_id: '',
   description: '',
   keywords: '',
-  status: 'draft',
+  status: 'submitted',
   achievement_date: '',
   authors: [], // 将存储为 JSON
   attachment_urls: [], // 将存储为 JSON
@@ -759,7 +767,7 @@ const handleSave = async () => {
       project_id: formData.project_id,
       description: fullDescription,
       keywords: formData.keywords,
-      status: formData.status,
+      status: isApplicant.value && !isEditMode.value ? 'submitted' : formData.status,
       achievement_date: formData.achievement_date,
       external_link: formData.external_link,
       // 处理 JSON 字段
@@ -793,7 +801,12 @@ const handleSave = async () => {
     }
 
     if (response.success) {
-      const message = isEditMode.value ? '成果更新成功' : '成果创建成功'
+      const message =
+        isEditMode.value
+          ? '成果更新成功'
+          : isApplicant.value
+            ? '科研成果已提交，等待项目经理审批'
+            : '成果创建成功'
       ElMessage.success(message)
 
       // 返回列表页面

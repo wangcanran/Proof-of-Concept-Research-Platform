@@ -220,14 +220,14 @@
                 <button class="action-card" @click="navigateToRequests('pending')">
                   <div class="action-icon">💰</div>
                   <div class="action-content">
-                    <h4>审核申请</h4>
+                    <h4>申请审核</h4>
                     <p>处理待反馈的经费申请</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateToRequests('feedback_given')">
                   <div class="action-icon">📊</div>
                   <div class="action-content">
-                    <h4>已反馈记录</h4>
+                    <h4>已反馈申请</h4>
                     <p>查看历史反馈与批准情况</p>
                   </div>
                 </button>

@@ -205,11 +205,11 @@
         <ProjectFundsUsagePanel v-if="project" :project-id="project.id" />
       </div>
 
-      <!-- 孵化成果 -->
+      <!-- 活动成果 -->
       <div v-if="activeTab === 'incubationAchievements'" class="tab-panel">
         <div class="section">
-          <h3>孵化成果</h3>
-          <p class="section-desc">申请人提交的孵化阶段成果与材料。</p>
+          <h3>活动成果</h3>
+          <p class="section-desc">已通过审批的活动成果记录（路演、产业交流等）。</p>
           <ProjectIncubationAchievementsPanel v-if="project" :project-id="project.id" />
         </div>
       </div>
@@ -523,7 +523,7 @@ const tabs = computed(() => {
     list.push({ key: 'fundsUsage', label: '经费使用' })
   }
   if (showIncubationAchievementTab.value) {
-    list.push({ key: 'incubationAchievements', label: '孵化成果' })
+    list.push({ key: 'incubationAchievements', label: '活动成果' })
   }
   list.push(
     { key: 'images', label: '图片与视频' },

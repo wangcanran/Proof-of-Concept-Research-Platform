@@ -166,7 +166,7 @@
                           {{ opt.label }}
                         </el-checkbox>
                       </el-checkbox-group>
-                      <p class="field-hint">可多选；参与项目评审须勾选「技术专家」。</p>
+                      <p class="field-hint">可多选；未设置类型仍可被分配，建议完善以便项目经理识别。</p>
                     </el-form-item>
                   </el-col>
                 </el-row>

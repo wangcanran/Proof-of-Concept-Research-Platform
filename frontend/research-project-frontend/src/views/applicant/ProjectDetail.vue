@@ -319,16 +319,18 @@
       <div v-if="activeTab === 'enterpriseDemands'" class="tab-panel">
         <div class="section">
           <h3>企业需求</h3>
-          <p class="section-desc">项目经理推送的企业合作需求，请选择是否承接。</p>
+          <p class="section-desc">
+            与本项目相关的企业需求（含项目经理推送或本人主动承接）。浏览更多需求请前往工作台「企业需求」。
+          </p>
           <ProjectEnterpriseDemandsPanel v-if="project" :project-id="project.id" />
         </div>
       </div>
 
-      <!-- 孵化成果 -->
+      <!-- 活动成果 -->
       <div v-if="activeTab === 'incubationAchievements'" class="tab-panel">
         <div class="section">
-          <h3>孵化成果</h3>
-          <p class="section-desc">本项目已登记的孵化阶段成果与材料。提交新成果请前往工作台「快速操作 → 孵化成果」。</p>
+          <h3>活动成果</h3>
+          <p class="section-desc">本项目已通过审批的活动成果记录。登记新活动请前往工作台「快速操作 → 活动成果登记」。</p>
           <ProjectIncubationAchievementsPanel v-if="project" :project-id="project.id" />
         </div>
       </div>
@@ -698,7 +700,7 @@ const tabs = computed(() => {
     baseTabs.push({ key: 'enterpriseDemands', label: '企业需求' })
   }
   if (showIncubationAchievementTab.value) {
-    baseTabs.push({ key: 'incubationAchievements', label: '孵化成果' })
+    baseTabs.push({ key: 'incubationAchievements', label: '活动成果' })
   }
   baseTabs.push(
     { key: 'images', label: '图片与视频' },

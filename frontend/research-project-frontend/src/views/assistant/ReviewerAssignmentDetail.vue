@@ -120,6 +120,19 @@
                   <div class="reviewer-name">{{ reviewer.name }}</div>
                   <div class="reviewer-department">{{ reviewer.department || '未填写' }}</div>
                   <div class="reviewer-title">{{ reviewer.title || '评审专家' }}</div>
+                  <div class="reviewer-expert-types">
+                    <el-tag
+                      v-for="t in getReviewerExpertTypes(reviewer)"
+                      :key="t"
+                      size="small"
+                      :class="['expert-type-tag', t]"
+                    >
+                      {{ expertTypeLabel(t) }}
+                    </el-tag>
+                    <el-tag v-if="!getReviewerExpertTypes(reviewer).length" size="small" type="info">
+                      专家类型未设置
+                    </el-tag>
+                  </div>
                 </div>
               </div>
 
@@ -175,8 +188,8 @@
             type="info"
             :closable="false"
             show-icon
-            class="technical-expert-tip"
-            title="项目评审仅可分配「技术专家」，投资专家与产业专家不会出现在列表中。"
+            class="expert-type-tip"
+            title="可分配全部评审专家；列表中会显示其专家类型，未设置类型者也会显示。"
           />
           <div class="assign-filters-row">
             <el-input
@@ -268,7 +281,22 @@
                 />
               </div>
               <div class="reviewer-select-info">
-                <div class="reviewer-select-name">{{ reviewer.name }}</div>
+                <div class="reviewer-select-name-row">
+                  <span class="reviewer-select-name">{{ reviewer.name }}</span>
+                  <span class="reviewer-type-tags">
+                    <el-tag
+                      v-for="t in getReviewerExpertTypes(reviewer)"
+                      :key="t"
+                      size="small"
+                      :class="['expert-type-tag', t]"
+                    >
+                      {{ expertTypeLabel(t) }}
+                    </el-tag>
+                    <el-tag v-if="!getReviewerExpertTypes(reviewer).length" size="small" type="info">
+                      未设置类型
+                    </el-tag>
+                  </span>
+                </div>
                 <div class="reviewer-select-department">{{ reviewer.department || '未填写' }}</div>
                 <div class="reviewer-select-email" v-if="reviewer.email">{{ reviewer.email }}</div>
                 <div class="reviewer-select-fields">
@@ -376,6 +404,21 @@ const reviewerSearchLoading = ref(false)
 
 // 获取项目ID
 const projectId = route.params.id as string
+
+const EXPERT_TYPE_LABELS: Record<string, string> = {
+  technical: '技术专家',
+  investment: '投资专家',
+  industry: '产业专家',
+}
+
+function getReviewerExpertTypes(reviewer: { expert_types?: string[]; expertTypes?: string[] }) {
+  const types = reviewer?.expert_types ?? reviewer?.expertTypes ?? []
+  return Array.isArray(types) ? types : []
+}
+
+function expertTypeLabel(type: string) {
+  return EXPERT_TYPE_LABELS[type] || type
+}
 
 // 格式化函数
 const formatDate = (dateStr: string) => {
@@ -1093,7 +1136,7 @@ onMounted(() => {
   border-bottom: 1px solid #f0f0f0;
 }
 
-.technical-expert-tip {
+.expert-type-tip {
   margin-bottom: 12px;
 }
 
@@ -1163,6 +1206,51 @@ onMounted(() => {
   gap: 12px;
 }
 
+.reviewer-select-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.reviewer-select-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.reviewer-type-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.reviewer-expert-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.expert-type-tag.technical {
+  --el-tag-bg-color: #ecf5ff;
+  --el-tag-border-color: #b3d8ff;
+  --el-tag-text-color: #409eff;
+}
+
+.expert-type-tag.investment {
+  --el-tag-bg-color: #fdf6ec;
+  --el-tag-border-color: #f5dab1;
+  --el-tag-text-color: #e6a23c;
+}
+
+.expert-type-tag.industry {
+  --el-tag-bg-color: #f0f9eb;
+  --el-tag-border-color: #c2e7b0;
+  --el-tag-text-color: #67c23a;
+}
+
 .reviewer-select-item {
   display: flex;
   align-items: center;
@@ -1191,11 +1279,6 @@ onMounted(() => {
 
 .reviewer-select-info {
   flex: 1;
-}
-
-.reviewer-select-name {
-  font-weight: 600;
-  margin-bottom: 4px;
 }
 
 .reviewer-select-department {

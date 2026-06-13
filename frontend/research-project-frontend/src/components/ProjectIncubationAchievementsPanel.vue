@@ -4,7 +4,7 @@
       <el-skeleton :rows="4" animated />
     </div>
     <div v-else-if="records.length === 0" class="empty-state">
-      <p>暂无孵化成果记录</p>
+      <p>暂无已通过审批的活动成果</p>
     </div>
     <div v-else class="record-list">
       <div v-for="record in records" :key="record.id" class="record-card">
@@ -14,7 +14,7 @@
         </div>
         <div class="record-meta">
           <span>提交人：{{ record.creator_name || '—' }}</span>
-          <span>提交时间：{{ formatDateTime(record.created_at) }}</span>
+          <span>活动日期：{{ formatRecordDate(record) }}</span>
         </div>
         <p v-if="record.description" class="record-desc">{{ record.description }}</p>
         <div v-if="record.files?.length" class="file-list">
@@ -66,22 +66,14 @@ const loading = ref(false)
 const downloadingId = ref('')
 const records = ref<AchievementRecord[]>([])
 
-function formatDateTime(d?: string) {
-  if (!d) return '—'
-  return new Date(d).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 function formatRecordDate(record: AchievementRecord) {
   if (record.record_date) {
     return String(record.record_date).slice(0, 10)
   }
-  return formatDateTime(record.created_at).slice(0, 10)
+  if (record.created_at) {
+    return new Date(record.created_at).toLocaleDateString('zh-CN')
+  }
+  return '—'
 }
 
 function formatFileSize(size?: number) {
@@ -125,7 +117,6 @@ async function downloadFile(file: AchievementFile) {
     window.URL.revokeObjectURL(url)
     ElMessage.success('下载成功')
   } catch (e: any) {
-    console.error('下载孵化成果附件失败', e)
     ElMessage.error(e.message || '下载失败')
   } finally {
     downloadingId.value = ''
@@ -141,11 +132,9 @@ async function loadRecords() {
       records.value = res.data || []
     } else {
       records.value = []
-      console.error('加载孵化成果失败', res.error)
     }
-  } catch (e: any) {
+  } catch {
     records.value = []
-    console.error('加载孵化成果失败', e.response?.data?.error || e)
   } finally {
     loading.value = false
   }
@@ -156,6 +145,8 @@ watch(
   () => loadRecords(),
   { immediate: true },
 )
+
+defineExpose({ loadRecords })
 </script>
 
 <style scoped>
@@ -266,12 +257,6 @@ watch(
   color: #2563eb;
   font-size: 12px;
   cursor: pointer;
-  transition: background 0.15s;
-}
-
-.download-btn:hover:not(:disabled) {
-  background: #eff6ff;
-  border-color: #93c5fd;
 }
 
 .download-btn:disabled {

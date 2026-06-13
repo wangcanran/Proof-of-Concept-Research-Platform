@@ -1,37 +1,44 @@
 <template>
   <div class="assigned-experts-display">
     <div v-if="!experts.length" class="empty-hint">暂未分配专家</div>
-    <div v-else class="expert-cards">
-      <div v-for="expert in experts" :key="expertKey(expert)" class="expert-card">
-        <div class="card-header">
-          <span class="expert-name">{{ expert.expert_name }}</span>
-          <span class="type-badge" :class="expert.expert_type">{{ typeLabel(expert.expert_type) }}</span>
-          <button
-            v-if="editable"
-            type="button"
-            class="btn-remove"
-            :disabled="removingKey === expertKey(expert)"
-            @click="onRemove(expert)"
-          >
-            移除
-          </button>
+    <div v-else class="expert-groups">
+      <div v-for="group in groupedExperts" :key="group.type" class="expert-group">
+        <div class="group-title">
+          {{ typeLabel(group.type) }}
+          <span class="group-count">({{ group.experts.length }})</span>
         </div>
-        <div class="info-rows">
-          <div v-if="expert.department" class="info-row">
-            <span class="label">单位</span>
-            <span class="value">{{ expert.department }}</span>
-          </div>
-          <div v-if="expert.title" class="info-row">
-            <span class="label">职称</span>
-            <span class="value">{{ expert.title }}</span>
-          </div>
-          <div class="info-row">
-            <span class="label">邮箱</span>
-            <span class="value">{{ expert.expert_email || '—' }}</span>
-          </div>
-          <div class="info-row">
-            <span class="label">电话</span>
-            <span class="value">{{ expert.expert_phone || '—' }}</span>
+        <div class="expert-cards">
+          <div v-for="expert in group.experts" :key="expertKey(expert)" class="expert-card">
+            <div class="card-header">
+              <span class="expert-name">{{ expert.expert_name }}</span>
+              <button
+                v-if="editable"
+                type="button"
+                class="btn-remove"
+                :disabled="removingKey === expertKey(expert)"
+                @click="onRemove(expert)"
+              >
+                移除
+              </button>
+            </div>
+            <div class="info-rows">
+              <div v-if="expert.department" class="info-row">
+                <span class="label">单位</span>
+                <span class="value">{{ expert.department }}</span>
+              </div>
+              <div v-if="expert.title" class="info-row">
+                <span class="label">职称</span>
+                <span class="value">{{ expert.title }}</span>
+              </div>
+              <div class="info-row">
+                <span class="label">邮箱</span>
+                <span class="value">{{ expert.expert_email || '—' }}</span>
+              </div>
+              <div class="info-row">
+                <span class="label">电话</span>
+                <span class="value">{{ expert.expert_phone || '—' }}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -40,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getApiBaseUrl } from '@/utils/request'
 import axios from 'axios'
@@ -54,6 +61,8 @@ export interface AssignedExpertInfo {
   expert_phone?: string
   department?: string
   title?: string
+  profile_types?: string[]
+  profileTypes?: string[]
 }
 
 const EXPERT_TYPE_LABELS: Record<string, string> = {
@@ -61,6 +70,8 @@ const EXPERT_TYPE_LABELS: Record<string, string> = {
   industry: '产业专家',
   investment: '投资专家',
 }
+
+const TYPE_ORDER = ['technical', 'industry', 'investment', '__unset__']
 
 const props = withDefaults(
   defineProps<{
@@ -92,10 +103,41 @@ api.interceptors.request.use((config) => {
 
 const removingKey = ref('')
 
-const typeLabel = (type: string) => EXPERT_TYPE_LABELS[type] || type
+const typeLabel = (type: string) =>
+  type === '__unset__' ? '未设置类型' : EXPERT_TYPE_LABELS[type] || type
 
 const expertKey = (expert: AssignedExpertInfo) =>
   expert.id || `${expert.expert_id}-${expert.expert_type}`
+
+const getProfileTypes = (expert: AssignedExpertInfo) => {
+  const types = expert.profile_types ?? expert.profileTypes ?? []
+  return Array.isArray(types) ? types : []
+}
+
+const getGroupKey = (expert: AssignedExpertInfo) => {
+  const profileTypes = getProfileTypes(expert)
+  if (!profileTypes.length) return '__unset__'
+  if (profileTypes.length === 1) return profileTypes[0]
+  if (profileTypes.includes(expert.expert_type)) return expert.expert_type
+  return profileTypes[0]
+}
+
+const groupedExperts = computed(() => {
+  const map = new Map<string, AssignedExpertInfo[]>()
+  for (const expert of props.experts) {
+    const key = getGroupKey(expert)
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(expert)
+  }
+  const orderedKeys = [
+    ...TYPE_ORDER.filter((t) => map.has(t)),
+    ...[...map.keys()].filter((k) => !TYPE_ORDER.includes(k)),
+  ]
+  return orderedKeys.map((type) => ({
+    type,
+    experts: map.get(type)!,
+  }))
+})
 
 const onRemove = async (expert: AssignedExpertInfo) => {
   if (props.progressId && expert.id) {
@@ -127,6 +169,24 @@ const onRemove = async (expert: AssignedExpertInfo) => {
   font-size: 14px;
 }
 
+.expert-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.group-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.group-count {
+  font-weight: 400;
+  color: #9ca3af;
+}
+
 .expert-cards {
   display: flex;
   flex-direction: column;
@@ -151,28 +211,6 @@ const onRemove = async (expert: AssignedExpertInfo) => {
   font-size: 16px;
   font-weight: 600;
   color: #333;
-}
-
-.type-badge {
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.type-badge.technical {
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
-.type-badge.industry {
-  background: #d1fae5;
-  color: #047857;
-}
-
-.type-badge.investment {
-  background: #fef3c7;
-  color: #b45309;
 }
 
 .btn-remove {
