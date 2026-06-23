@@ -4,9 +4,9 @@
       <el-skeleton :rows="4" animated />
     </div>
     <div v-else-if="items.length === 0" class="empty-state">
-      <p>暂无与本项目相关的项目合作资源</p>
+      <p>暂无与本项目相关的产业资源</p>
       <p class="empty-hint">
-        可前往「项目合作资源」浏览全部资源；项目经理推荐的资源会在列表中标注「推荐」并优先展示。
+        可前往「产业资源」浏览全部资源；项目经理推荐的资源会在列表中标注「推荐」并优先展示。
       </p>
     </div>
     <div v-else class="demand-list">
@@ -128,7 +128,7 @@ async function loadList() {
       })
     }
   } catch (e) {
-    console.error('加载项目合作资源失败', e)
+    console.error('加载产业资源失败', e)
   } finally {
     loading.value = false
   }

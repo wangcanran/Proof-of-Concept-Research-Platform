@@ -96,7 +96,7 @@
             </router-link>
             <router-link to="/assistant/enterprise-demands" class="nav-link" active-class="active">
               <span class="nav-icon">🏢</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">项目合作资源管理</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">产业资源管理</span>
             </router-link>
           </div>
 

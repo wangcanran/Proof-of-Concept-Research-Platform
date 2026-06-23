@@ -25,7 +25,7 @@
       <div v-else-if="projects.length === 0" class="empty-state">
         <div class="empty-icon">📭</div>
         <p>暂无可终止的项目</p>
-        <p class="empty-subtext">状态为已批准且有服务申请记录的项目将显示在这里</p>
+        <p class="empty-subtext">已入库或孵化中、且有服务申请记录的项目将显示在这里</p>
       </div>
 
       <!-- 项目列表 -->

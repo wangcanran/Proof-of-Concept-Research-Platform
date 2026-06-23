@@ -315,12 +315,12 @@
         </div>
       </div>
 
-      <!-- 项目合作资源 -->
+      <!-- 产业资源 -->
       <div v-if="activeTab === 'enterpriseDemands'" class="tab-panel">
         <div class="section">
-          <h3>项目合作资源</h3>
+          <h3>产业资源</h3>
           <p class="section-desc">
-            与本项目相关的合作资源（含项目经理推荐）。浏览全部资源请前往工作台「项目合作资源」，推荐项会优先展示。
+            与本项目相关的产业资源（含项目经理推荐）。浏览全部资源请前往工作台「产业资源」，推荐项会优先展示。
           </p>
           <ProjectEnterpriseDemandsPanel v-if="project" :project-id="project.id" />
         </div>
@@ -361,7 +361,7 @@
               <strong>修改建议：</strong>请根据评审意见修改后重新提交
             </p>
             <p v-if="project.status === 'incubating'">
-              <strong>孵化说明：</strong>项目已进入孵化阶段，请按照计划执行
+              <strong>孵化说明：</strong>孵化中为长期状态，申请服务、承接产业资源或登记经费后将保持孵化中，无需等待成果反馈即可再次申请服务。
             </p>
           </div>
         </div>
@@ -697,7 +697,7 @@ const tabs = computed(() => {
     baseTabs.push({ key: 'fundsUsage', label: '经费使用' })
   }
   if (showEnterpriseDemandTab.value) {
-    baseTabs.push({ key: 'enterpriseDemands', label: '项目合作资源' })
+    baseTabs.push({ key: 'enterpriseDemands', label: '产业资源' })
   }
   if (showIncubationAchievementTab.value) {
     baseTabs.push({ key: 'incubationAchievements', label: '活动成果' })
@@ -806,7 +806,7 @@ const getStatusDescription = (status?: string) => {
     revision: '需要根据评审意见修改后重新提交',
     batch_review: '项目进入集中评审环节',
     approved: '项目已通过评审，等待立项',
-    incubating: '项目已立项，正在孵化中',
+    incubating: '项目已进入长期孵化阶段，可继续申请服务、承接产业资源或登记经费',
     rejected: '项目未通过评审',
     completed: '项目已完成',
     terminated: '项目已终止',

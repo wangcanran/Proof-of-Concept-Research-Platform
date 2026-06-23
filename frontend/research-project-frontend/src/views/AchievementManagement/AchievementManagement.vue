@@ -27,14 +27,16 @@
             <el-option label="论文" value="paper" />
             <el-option label="专利" value="patent" />
             <el-option label="软件著作权" value="software" />
-            <el-option label="专著" value="monograph" />
+            <el-option label="技术标准" value="standard" />
             <el-option label="奖项" value="award" />
+            <el-option label="其他" value="other" />
           </el-select>
         </el-col>
         <el-col :span="6">
           <el-select v-model="filterStatus" placeholder="状态筛选" clearable @change="handleFilter">
-            <el-option label="待审核" value="pending" />
-            <el-option label="已通过" value="approved" />
+            <el-option label="草稿" value="draft" />
+            <el-option label="已提交" value="submitted" />
+            <el-option label="已核实" value="verified" />
             <el-option label="已驳回" value="rejected" />
           </el-select>
         </el-col>
@@ -102,7 +104,7 @@
               size="small"
               @click="handleEdit(row)"
               icon="Edit"
-              :disabled="row.status !== 'draft' && row.status !== 'pending'"
+              :disabled="row.status !== 'draft' && row.status !== 'submitted'"
             >
               编辑
             </el-button>
@@ -407,7 +409,10 @@ const fetchAchievementList = async () => {
     const response = await achievementAPI.getAchievements(params)
 
     if (response.success) {
-      achievementList.value = response.data || []
+      achievementList.value = (response.data || []).map((item) => ({
+        ...item,
+        description: item.description || item.abstract || item.content || '',
+      }))
       totalAchievements.value = response.total || achievementList.value.length
       console.log('✅ 成果列表加载成功:', achievementList.value.length, '条记录')
     } else {
@@ -423,29 +428,15 @@ const fetchAchievementList = async () => {
   }
 }
 
-// 获取项目列表
+// 获取项目列表（列表页不再使用模拟数据）
 const fetchProjectList = async () => {
   try {
-    const response = await achievementAPI.getUserProjects()
-
-    if (response.success && response.data) {
-      projectList.value = response.data
-      console.log('✅ 项目列表加载成功:', projectList.value.length, '个项目')
-    } else {
-      console.warn('获取项目列表失败:', response.error)
-      // 使用模拟数据作为后备
-      projectList.value = [
-        { id: '1', title: '人工智能算法研究', project_code: 'PROJ-2024-001' },
-        { id: '2', title: '大数据分析平台', project_code: 'PROJ-2024-002' },
-      ]
-    }
-  } catch (error) {
-    console.error('获取项目列表失败:', error)
-    // 使用模拟数据作为后备
-    projectList.value = [
-      { id: '1', title: '人工智能算法研究', project_code: 'PROJ-2024-001' },
-      { id: '2', title: '大数据分析平台', project_code: 'PROJ-2024-002' },
-    ]
+    const { projectAPI } = await import('@/api/projects')
+    const response = await projectAPI.getProjectsList({ limit: 100 })
+    const raw = response.data
+    projectList.value = Array.isArray(raw) ? raw : raw?.list || []
+  } catch {
+    projectList.value = []
   }
 }
 

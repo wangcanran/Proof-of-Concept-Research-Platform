@@ -5,8 +5,8 @@
         <el-button class="back-btn" @click="goDashboard">
           <el-icon><ArrowLeft /></el-icon> 返回工作台
         </el-button>
-        <h1 class="page-title">项目合作资源</h1>
-        <div class="page-description">浏览平台发布的项目合作资源；项目经理推荐的资源会标注「推荐」并优先展示。</div>
+        <h1 class="page-title">产业资源</h1>
+        <div class="page-description">浏览平台发布的产业资源；项目经理推荐的资源会标注「推荐」并优先展示。</div>
       </div>
     </div>
 
@@ -148,7 +148,7 @@ async function loadList() {
       total.value = res.data.total || 0
     }
   } catch (e) {
-    console.error('加载项目合作资源列表失败', e)
+    console.error('加载产业资源列表失败', e)
   } finally {
     loading.value = false
   }

@@ -8,7 +8,7 @@
 
     <div class="page-header">
       <div class="header-left">
-        <h1 class="page-title">{{ isEdit ? '编辑项目合作资源' : '创建项目合作资源' }}</h1>
+        <h1 class="page-title">{{ isEdit ? '编辑产业资源' : '创建产业资源' }}</h1>
       </div>
       <div class="header-right">
         <template v-if="form.status === 'draft'">
@@ -142,7 +142,7 @@ const toolbarConfig: Partial<IToolbarConfig> = {
 }
 
 const editorConfig: Partial<IEditorConfig> = {
-  placeholder: '请输入项目合作资源正文（支持图文、音视频）...',
+  placeholder: '请输入产业资源正文（支持图文、音视频）...',
   MENU_CONF: {
     uploadImage: {
       customUpload: async (file: File, insertFn: (url: string, alt?: string, href?: string) => void) => {

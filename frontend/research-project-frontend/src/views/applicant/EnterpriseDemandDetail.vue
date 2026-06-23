@@ -87,10 +87,10 @@
       </div>
     </div>
     <div v-else class="detail-empty">
-      <el-empty description="项目合作资源不存在或已不可报名" />
+      <el-empty description="产业资源不存在或已不可报名" />
     </div>
 
-    <el-dialog v-model="applyDialogVisible" title="报名参与项目合作资源" width="520px" destroy-on-close>
+    <el-dialog v-model="applyDialogVisible" title="报名参与产业资源" width="520px" destroy-on-close>
       <el-alert
         type="info"
         :closable="false"
@@ -121,7 +121,7 @@
             v-model="applyForm.remark"
             type="textarea"
             :rows="3"
-            placeholder="可选：简要说明项目与合作资源的匹配情况"
+            placeholder="可选：简要说明项目与产业资源的匹配情况"
             maxlength="500"
             show-word-limit
           />

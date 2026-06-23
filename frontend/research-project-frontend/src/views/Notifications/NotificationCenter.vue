@@ -654,6 +654,7 @@ const viewNotification = (notification) => {
         router.push(`/projects/detail/${notification.related_id}`)
         break
       case 'achievement':
+      case 'ProjectAchievement':
         router.push(`/achievements/${notification.related_id}/detail`)
         break
       case 'funding':

@@ -5,12 +5,12 @@
         <el-button class="back-btn" @click="goDashboard">
           <el-icon><ArrowLeft /></el-icon> 返回工作台
         </el-button>
-        <h1 class="page-title">项目合作资源管理</h1>
-        <div class="page-description">发布、转载项目合作资源，推荐给负责的项目并在资源列表中优先展示</div>
+        <h1 class="page-title">产业资源管理</h1>
+        <div class="page-description">发布、转载产业资源，推荐给负责的项目并在资源列表中优先展示</div>
       </div>
       <div class="header-right">
         <el-button type="primary" class="ruc-btn-primary" :icon="Plus" @click="goCreate">
-          新建项目合作资源
+          新建产业资源
         </el-button>
       </div>
     </div>
@@ -176,7 +176,7 @@ async function loadList() {
       total.value = res.data.total || 0
     }
   } catch (e) {
-    console.error('加载项目合作资源列表失败', e)
+    console.error('加载产业资源列表失败', e)
   } finally {
     loading.value = false
   }

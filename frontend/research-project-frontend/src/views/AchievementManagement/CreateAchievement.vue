@@ -5,15 +5,13 @@
       <div class="header-content">
         <h2>{{ pageTitle }}</h2>
         <div class="header-actions">
-          <el-button @click="goBack">返回列表</el-button>
-          <el-button type="primary" @click="handleSave" :loading="saving"> 保存 </el-button>
+          <el-button @click="goBack">返回工作台</el-button>
+          <el-button type="primary" @click="handleSave" :loading="saving">
+            {{ isEditMode ? '更新成果' : isApplicant ? '提交审批' : '创建成果' }}
+          </el-button>
         </div>
       </div>
-      <el-steps :active="currentStep" finish-status="success" simple>
-        <el-step title="基本信息" />
-        <el-step title="成果内容" />
-        <el-step title="附件材料" />
-      </el-steps>
+      <p v-if="isApplicant" class="page-subtitle">登记论文、专利、报告等科研产出；仅限已入库或孵化中的项目，提交后由项目经理审核</p>
     </div>
 
     <!-- 表单内容 -->
@@ -25,8 +23,8 @@
         label-width="120px"
         :disabled="isViewing"
       >
-        <!-- 步骤1：基本信息 -->
-        <div v-show="currentStep === 0" class="form-step">
+        <!-- 基本信息 -->
+        <div class="form-step">
           <h3>基本信息</h3>
           <el-row :gutter="20">
             <el-col :span="12">
@@ -135,8 +133,8 @@
           </el-form-item>
         </div>
 
-        <!-- 步骤2：成果内容 -->
-        <div v-show="currentStep === 1" class="form-step">
+        <!-- 成果内容 -->
+        <div class="form-step">
           <h3>成果内容</h3>
 
           <!-- 类型特有信息 - 存储在 description 字段中 -->
@@ -258,8 +256,8 @@
           </el-form-item>
         </div>
 
-        <!-- 步骤3：附件材料 -->
-        <div v-show="currentStep === 2" class="form-step">
+        <!-- 附件材料 -->
+        <div class="form-step">
           <h3>附件材料</h3>
 
           <!-- 附件上传 -->
@@ -294,50 +292,24 @@
         </div>
       </el-form>
 
-      <!-- 步骤导航 -->
-      <div class="step-navigation">
-        <el-button @click="previousStep" :disabled="currentStep === 0"> 上一步 </el-button>
-        <el-button v-if="currentStep < 2" type="primary" @click="nextStep"> 下一步 </el-button>
-        <el-button v-else type="primary" @click="handleSave" :loading="saving">
+      <div class="form-footer">
+        <el-button type="primary" size="large" @click="handleSave" :loading="saving">
           {{ isEditMode ? '更新成果' : isApplicant ? '提交审批' : '创建成果' }}
         </el-button>
       </div>
     </div>
   </div>
-  <el-col :span="12">
-    <el-form-item label="所属项目" prop="project_id">
-      <el-select
-        v-model="formData.project_id"
-        placeholder="请选择所属项目"
-        filterable
-        style="width: 100%"
-        @change="handleProjectChange"
-        :loading="loading"
-      >
-        <el-option
-          v-for="project in projectList"
-          :key="project.id"
-          :label="`${project.title} [${project.project_code}]`"
-          :value="project.id"
-        />
-      </el-select>
-    </el-form-item>
-  </el-col>
 </template>
 
 <script setup lang="ts">
-import { getApiBaseUrl } from '@/utils/request'
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Close } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { projectAPI } from '@/api/projects'
+import { achievementAPI } from '@/api/achievements'
 
 const route = useRoute()
 const router = useRouter()
-
-// API基础URL
-const API_BASE_URL = getApiBaseUrl()
 
 // 计算属性
 const isEditMode = computed(() => route.name === 'EditAchievement')
@@ -353,7 +325,6 @@ const pageTitle = computed(() => {
 const achievementId = computed(() => route.params.id)
 
 // 响应式数据
-const currentStep = ref(0)
 const saving = ref(false)
 const loading = ref(false)
 const formRef = ref()
@@ -374,63 +345,6 @@ const paperInfo = reactive({
   doi: '',
   volume: '',
   publishDate: '',
-})
-// 测试项目API连接
-const testProjectAPI = async () => {
-  console.log('开始测试项目API...')
-  console.log('Token:', localStorage.getItem('token'))
-  console.log('API Base URL:', API_BASE_URL)
-
-  try {
-    // 测试基本连接
-    const healthCheck = await fetch(`${API_BASE_URL}/health`)
-    console.log('健康检查:', healthCheck.ok)
-
-    // 测试项目API
-    const endpoints = ['/projects']
-
-    for (const endpoint of endpoints) {
-      try {
-        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('token')}`,
-          },
-        })
-        console.log(`${endpoint}:`, {
-          status: response.status,
-          ok: response.ok,
-        })
-
-        if (response.ok) {
-          const data = await response.json()
-          console.log(`${endpoint} 数据格式:`, {
-            type: typeof data,
-            isArray: Array.isArray(data),
-            keys: Object.keys(data || {}),
-            data: data,
-          })
-        }
-      } catch (error) {
-        console.log(`${endpoint} 失败:`, error.message)
-      }
-    }
-  } catch (error) {
-    console.error('API测试失败:', error)
-  }
-}
-
-// 在 mounted 中可选调用测试
-onMounted(() => {
-  console.log('CreateAchievement 组件已加载')
-
-  // 可选：测试API连接
-  // testProjectAPI()
-
-  loadProjects()
-
-  if (isEditMode.value || isViewing.value) {
-    loadAchievementData()
-  }
 })
 const patentInfo = reactive({
   number: '',
@@ -473,162 +387,34 @@ const formRules = {
   description: [{ required: true, message: '请输入成果描述', trigger: 'blur' }],
 }
 
-// API请求函数
-const apiRequest = async (url, options = {}) => {
-  const token = localStorage.getItem('token')
-  const headers = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
-    ...options.headers,
-  }
-
-  try {
-    const response = await fetch(`${API_BASE_URL}${url}`, {
-      ...options,
-      headers,
-    })
-
-    const data = await response.json()
-
-    if (data.success === false) {
-      throw new Error(data.error || '请求失败')
-    }
-
-    return data
-  } catch (error) {
-    console.error('API请求失败:', error)
-    throw error
-  }
-}
+const ACHIEVEMENT_ELIGIBLE_STATUSES = ['approved', 'incubating']
 
 // 获取项目列表
 const loadProjects = async () => {
-  console.log('开始加载项目列表...')
   loading.value = true
-
   try {
-    // 方法1：先尝试获取当前用户的项目
-    let response
-    try {
-      // 直接调用后端API获取项目列表
-      const token = localStorage.getItem('token')
-      console.log('Token:', token ? '存在' : '不存在')
-
-      // 尝试多个可能的端点
-      const endpoints = ['/projects']
-
-      let projects = []
-
-      for (const endpoint of endpoints) {
-        try {
-          console.log(`尝试端点: ${endpoint}`)
-          const res = await fetch(`${API_BASE_URL}${endpoint}`, {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-          })
-
-          if (res.ok) {
-            const data = await res.json()
-            console.log(`端点 ${endpoint} 响应:`, data)
-
-            // 解析项目数据
-            if (data.success !== false) {
-              const projectData = data.data || data
-
-              if (Array.isArray(projectData)) {
-                projects = projectData
-              } else if (projectData.projects && Array.isArray(projectData.projects)) {
-                projects = projectData.projects
-              } else if (projectData.list && Array.isArray(projectData.list)) {
-                projects = projectData.list
-              } else if (projectData.items && Array.isArray(projectData.items)) {
-                projects = projectData.items
-              }
-
-              if (projects.length > 0) {
-                console.log(`从 ${endpoint} 获取到 ${projects.length} 个项目`)
-                break
-              }
-            }
-          }
-        } catch (endpointError) {
-          console.log(`端点 ${endpoint} 失败:`, endpointError.message)
-        }
-      }
-
-      if (projects.length > 0) {
-        // 格式化项目数据
-        projectList.value = projects.map((project) => {
-          console.log('项目原始数据:', project)
-
-          return {
-            id: project.id,
-            title: project.title || project.name || '未命名项目',
-            project_code:
-              project.project_code ||
-              project.code ||
-              project.projectCode ||
-              project.project_code ||
-              '无编号',
-            status: project.status || 'unknown',
-            applicant_name: project.applicant_name || project.applicant || '未知',
-            start_date: project.start_date || project.startDate,
-            end_date: project.end_date || project.endDate,
-            created_at: project.created_at || project.createdAt,
-          }
-        })
-
-        console.log('格式化后的项目列表:', projectList.value)
-        ElMessage.success(`成功加载 ${projectList.value.length} 个项目`)
-      } else {
-        console.warn('所有端点都返回空项目列表')
-        // 显示友好的提示
-        ElMessageBox.confirm(
-          '没有找到可用的项目。可能原因：\n' +
-            '1. 您还没有创建任何项目\n' +
-            '2. 您的项目尚未批准\n' +
-            '3. 需要刷新页面或重新登录\n\n' +
-            '您可以选择：',
-          '提示',
-          {
-            confirmButtonText: '创建新项目',
-            cancelButtonText: '稍后再说',
-            type: 'warning',
-          },
-        )
-          .then(() => {
-            router.push('/projects/create')
-          })
-          .catch(() => {
-            // 用户取消
-          })
-      }
-    } catch (error) {
-      console.error('获取项目列表失败:', error)
-      throw error
+    const res = await projectAPI.getProjectsList({ limit: 200 })
+    if (!res.success) {
+      throw new Error(res.error || '加载项目失败')
     }
-  } catch (error) {
-    console.error('加载项目失败:', error)
-
-    // 更详细的错误处理
-    if (error.message.includes('401')) {
-      ElMessage.error('认证已过期，请重新登录')
-      router.push('/login')
-    } else if (error.message.includes('403')) {
-      ElMessage.error('权限不足，无法访问项目列表')
-    } else if (error.message.includes('Network Error')) {
-      ElMessage.error('网络连接失败，请检查服务器是否运行')
-    } else {
-      ElMessage.error('加载项目失败: ' + error.message)
+    const raw = res.data
+    const projects = Array.isArray(raw) ? raw : raw?.list || raw?.projects || []
+    projectList.value = projects
+      .filter((p: { status?: string }) =>
+        p.status && ACHIEVEMENT_ELIGIBLE_STATUSES.includes(p.status),
+      )
+      .map((project: Record<string, unknown>) => ({
+        id: project.id,
+        title: project.title || project.name || '未命名项目',
+        project_code: project.project_code || project.code || '无编号',
+        status: project.status,
+      }))
+    if (!projectList.value.length) {
+      ElMessage.warning('暂无已入库或孵化中的项目，无法登记科研成果')
     }
-
-    // 显示一个帮助信息
-    console.log('调试信息：')
-    console.log('1. 检查后端服务器是否运行')
-    console.log('2. 检查API端点是否正确')
-    console.log('3. 检查用户权限')
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : '加载项目失败'
+    ElMessage.error(msg)
   } finally {
     loading.value = false
   }
@@ -678,35 +464,16 @@ const handleFileChange = (file) => {
   return true
 }
 
-const handleFileRemove = (file) => {
-  const index = formData.attachment_urls.indexOf(file.name)
-  if (index > -1) {
-    formData.attachment_urls.splice(index, 1)
-  }
-}
-
-// 步骤导航
-const nextStep = async () => {
-  if (currentStep.value === 0) {
+const handleFileRemove = async (file: { id?: string; raw?: File }) => {
+  if (file.id) {
     try {
-      await formRef.value.validateField(['type', 'title', 'project_id', 'achievement_date'])
-      currentStep.value++
-    } catch (error) {
-      ElMessage.warning('请先完成基本信息填写')
+      await achievementAPI.deleteFile(file.id)
+      ElMessage.success('附件已删除')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '删除附件失败'
+      ElMessage.error(msg)
+      return false
     }
-  } else if (currentStep.value === 1) {
-    try {
-      await formRef.value.validateField(['description'])
-      currentStep.value++
-    } catch (error) {
-      ElMessage.warning('请先填写成果描述')
-    }
-  }
-}
-
-const previousStep = () => {
-  if (currentStep.value > 0) {
-    currentStep.value--
   }
 }
 
@@ -752,15 +519,15 @@ const buildDescription = () => {
 // 保存处理
 const handleSave = async () => {
   try {
-    const valid = await formRef.value.validate()
-    if (!valid) return
+    await formRef.value.validate()
+  } catch {
+    ElMessage.warning('请完善必填项后再提交')
+    return
+  }
 
+  try {
     saving.value = true
-
-    // 构建完整的描述
     const fullDescription = buildDescription()
-
-    // 准备提交数据
     const submitData = {
       type: formData.type,
       title: formData.title,
@@ -770,53 +537,34 @@ const handleSave = async () => {
       status: isApplicant.value && !isEditMode.value ? 'submitted' : formData.status,
       achievement_date: formData.achievement_date,
       external_link: formData.external_link,
-      // 处理 JSON 字段
-      authors: formData.authors.length > 0 ? JSON.stringify(formData.authors) : null,
-      attachment_urls:
-        fileList.value.length > 0
-          ? JSON.stringify(
-              fileList.value.map((file) => ({
-                name: file.name,
-                url: file.url || file.raw?.name || file.name,
-              })),
-            )
-          : null,
+      authors: formData.authors.length > 0 ? JSON.stringify(formData.authors) : undefined,
     }
 
-    console.log('提交数据:', submitData)
-
-    let response
+    let savedId = achievementId.value as string
     if (isEditMode.value) {
-      // 更新现有成果
-      response = await apiRequest(`/achievements/${achievementId.value}`, {
-        method: 'PUT',
-        body: JSON.stringify(submitData),
-      })
+      await achievementAPI.updateAchievement(savedId, submitData)
     } else {
-      // 创建新成果
-      response = await apiRequest('/achievements', {
-        method: 'POST',
-        body: JSON.stringify(submitData),
-      })
+      const res = await achievementAPI.createAchievement(submitData as never)
+      savedId = res.data?.id || ''
+      if (!savedId) throw new Error('创建成果失败')
     }
 
-    if (response.success) {
-      const message =
-        isEditMode.value
-          ? '成果更新成功'
-          : isApplicant.value
-            ? '科研成果已提交，等待项目经理审批'
-            : '成果创建成功'
-      ElMessage.success(message)
-
-      // 返回列表页面
-      router.push('/achievements')
-    } else {
-      ElMessage.error(response.error || '保存失败')
+    const pendingUploads = fileList.value.filter((f: { raw?: File }) => f.raw)
+    for (const item of pendingUploads) {
+      await achievementAPI.uploadFile(savedId, item.raw as File)
     }
-  } catch (error) {
-    console.error('保存失败:', error)
-    ElMessage.error('保存失败: ' + error.message)
+
+    ElMessage.success(
+      isEditMode.value
+        ? '成果更新成功'
+        : isApplicant.value
+          ? '科研成果已提交，等待项目经理审批'
+          : '成果创建成功',
+    )
+    router.push('/applicant/dashboard')
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : '保存失败'
+    ElMessage.error(msg)
   } finally {
     saving.value = false
   }
@@ -828,59 +576,32 @@ const loadAchievementData = async () => {
 
   loading.value = true
   try {
-    const response = await apiRequest(`/achievements/${achievementId.value}`)
-    if (response.data) {
-      const data = response.data
+    const response = await achievementAPI.getAchievement(achievementId.value as string)
+    const data = response.data
+    if (!data) throw new Error('成果不存在')
 
-      // 填充表单数据
-      Object.keys(formData).forEach((key) => {
-        if (data[key] !== undefined && data[key] !== null) {
-          formData[key] = data[key]
-        }
-      })
+    formData.type = data.type || ''
+    formData.title = data.title || ''
+    formData.project_id = data.project_id || ''
+    formData.description = data.description || data.abstract || data.content || ''
+    formData.keywords = ''
+    formData.status = data.status || 'draft'
+    formData.achievement_date = data.achievement_date || ''
+    formData.external_link = ''
 
-      // 处理作者数据
-      if (data.authors) {
-        try {
-          formData.authors = JSON.parse(data.authors)
-          authorsInput.value = formData.authors.join(', ')
-        } catch (e) {
-          console.warn('解析作者失败:', e)
-          formData.authors = []
-          authorsInput.value = data.authors || ''
-        }
-      }
+    parseDescriptionDetails(formData.description)
 
-      // 处理关键词
-      if (data.keywords) {
-        keywordTags.value = data.keywords
-          .split(',')
-          .map((k) => k.trim())
-          .filter((k) => k)
-        keywordsInput.value = keywordTags.value.join(', ')
-      }
-
-      // 处理附件
-      if (data.attachment_urls) {
-        try {
-          const attachments = JSON.parse(data.attachment_urls)
-          fileList.value = attachments.map((att, index) => ({
-            name: att.name || `附件${index + 1}`,
-            url: att.url || att,
-          }))
-        } catch (e) {
-          console.warn('解析附件失败:', e)
-        }
-      }
-
-      // 解析描述中的详细信息
-      parseDescriptionDetails(data.description)
-
-      ElMessage.success('数据加载成功')
+    if (data.files?.length) {
+      fileList.value = data.files.map((f) => ({
+        id: f.id,
+        name: f.file_name,
+        url: f.file_path,
+        status: 'success',
+      }))
     }
-  } catch (error) {
-    console.error('加载成果数据失败:', error)
-    ElMessage.error('加载成果数据失败')
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : '加载成果数据失败'
+    ElMessage.error(msg)
   } finally {
     loading.value = false
   }
@@ -929,53 +650,23 @@ const parseDescriptionDetails = (description) => {
 
 // 返回列表
 const goBack = () => {
-  router.push('/achievements')
+  router.push('/applicant/dashboard')
 }
 
-// 监听成果类型变化
-watch(
-  () => formData.type,
-  (newType) => {
-    // 清空类型特有信息
-    if (newType !== 'paper') {
-      Object.keys(paperInfo).forEach((key) => {
-        paperInfo[key] = ''
-      })
-    }
-    if (newType !== 'patent') {
-      Object.keys(patentInfo).forEach((key) => {
-        patentInfo[key] = ''
-      })
-    }
-    if (newType !== 'award') {
-      Object.keys(awardInfo).forEach((key) => {
-        awardInfo[key] = ''
-      })
-    }
-  },
-)
-
-// 初始化
-onMounted(() => {
-  loadProjects()
-
-  if (isEditMode.value || isViewing.value) {
+onMounted(async () => {
+  await loadProjects()
+  if (isEditMode.value) {
     loadAchievementData()
   }
+  const qProjectId = route.query.project_id
+  if (typeof qProjectId === 'string' && qProjectId) {
+    if (projectList.value.some((p) => p.id === qProjectId)) {
+      formData.project_id = qProjectId
+    } else {
+      ElMessage.warning('当前项目未入库或不在孵化中，无法登记科研成果')
+    }
+  }
 })
-const showProjectDetails = () => {
-  console.log('当前项目列表详情:', projectList.value)
-  ElMessageBox.alert(
-    `已加载 ${projectList.value.length} 个项目\n` +
-      `第一个项目: ${projectList.value[0]?.title}\n` +
-      `项目ID: ${projectList.value[0]?.id}`,
-    '项目详情',
-    {
-      confirmButtonText: '确定',
-      callback: () => {},
-    },
-  )
-}
 </script>
 
 <style scoped>
@@ -1014,6 +705,12 @@ const showProjectDetails = () => {
   color: #303133;
 }
 
+.page-subtitle {
+  margin: 12px 0 0;
+  color: #909399;
+  font-size: 14px;
+}
+
 .form-container {
   background: white;
   padding: 30px;
@@ -1022,7 +719,8 @@ const showProjectDetails = () => {
 }
 
 .form-step {
-  min-height: 400px;
+  min-height: auto;
+  margin-bottom: 32px;
 }
 
 .form-step h3 {
@@ -1050,15 +748,11 @@ const showProjectDetails = () => {
   border: 1px solid #ebeef5;
 }
 
-.step-navigation {
-  margin-top: 30px;
-  padding-top: 20px;
+.form-footer {
+  margin-top: 24px;
+  padding-top: 24px;
   border-top: 1px solid #ebeef5;
   text-align: center;
-}
-
-.el-steps {
-  margin-bottom: 20px;
 }
 
 .upload-demo {

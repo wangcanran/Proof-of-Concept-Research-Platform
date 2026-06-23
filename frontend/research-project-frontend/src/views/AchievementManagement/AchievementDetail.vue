@@ -50,10 +50,10 @@
           {{ getStatusLabel(achievementData.status) }}
         </el-tag>
         <span class="status-text">
-          <template v-if="achievementData.status === 'pending'">
-            待审核，预计1-3个工作日内完成审核
+          <template v-if="achievementData.status === 'submitted'">
+            已提交，等待项目经理审核
           </template>
-          <template v-else-if="achievementData.status === 'approved'">
+          <template v-else-if="achievementData.status === 'verified'">
             已通过审核 {{ achievementData.approvalDate ? `(${achievementData.approvalDate})` : '' }}
           </template>
           <template v-else-if="achievementData.status === 'rejected'">
@@ -812,13 +812,13 @@ const loadAchievementData = async () => {
         type: data.type,
         status: data.status,
         projectId: data.project_id,
-        projectName: data.project_title,
+        projectName: data.project?.title || data.project_title || '',
         date: data.achievement_date || '',
         firstAuthor: data.created_by_name || '未知作者',
         correspondingAuthor: '',
         otherAuthors: '',
-        keywords: data.keywords || '',
-        abstract: data.description || '',
+        keywords: '',
+        abstract: data.abstract || data.description || data.content || '',
         journal: data.publication_source || '',
         volume: data.volume || '',
         doi: data.doi || '',
@@ -828,7 +828,7 @@ const loadAchievementData = async () => {
         remarks: '',
         createTime: data.created_at || '',
         updateTime: data.updated_at || data.created_at || '',
-        approvalDate: data.verified_at,
+        approvalDate: data.verified_date,
         rejectionReason: data.verification_comment,
         attachment: '',
         attachmentSize: 0,
@@ -836,58 +836,39 @@ const loadAchievementData = async () => {
         relatedLinks: [],
       }
 
-      // 尝试处理附件
-      if (data.attachment_urls) {
-        try {
-          const attachments = JSON.parse(data.attachment_urls)
-          if (attachments.length > 0) {
-            achievementData.value.attachment = attachments[0]
-            achievementData.value.proofAttachments = attachments.slice(1).map((url, idx) => ({
-              id: `att-${idx}`,
-              name: `附件${idx + 1}`,
-              url: url,
-              size: 0,
-              uploadTime: data.created_at || '',
-            }))
-          }
-        } catch (e) {
-          console.warn('附件处理失败:', e)
-        }
+      if (data.files?.length) {
+        achievementData.value.proofAttachments = data.files.map((f) => ({
+          id: f.id,
+          name: f.file_name,
+          url: f.file_path,
+          size: f.file_size,
+          uploadTime: f.created_at || data.created_at || '',
+        }))
+        achievementData.value.attachment = data.files[0].file_path
+        achievementData.value.attachmentSize = data.files[0].file_size
       }
 
-      // 尝试处理作者
-      if (data.authors) {
-        try {
-          const authors = JSON.parse(data.authors)
-          if (authors.length > 0) {
-            achievementData.value.firstAuthor = authors[0]
-            achievementData.value.correspondingAuthor = authors.length > 1 ? authors[1] : ''
-            achievementData.value.otherAuthors =
-              authors.length > 2 ? authors.slice(2).join(', ') : ''
-          }
-        } catch (e) {
-          console.warn('作者处理失败:', e)
+      const contentText = data.content || data.abstract || ''
+      const authorLine = contentText.split('\n').find((l: string) => l.startsWith('作者：'))
+      if (authorLine) {
+        const names = authorLine.replace('作者：', '').split(/[、,，]/).map((s: string) => s.trim()).filter(Boolean)
+        if (names.length) {
+          achievementData.value.firstAuthor = names[0]
+          achievementData.value.otherAuthors = names.slice(1).join('、')
         }
       }
-
-      // 尝试处理相关链接
-      if (data.related_urls) {
-        try {
-          achievementData.value.relatedLinks = JSON.parse(data.related_urls)
-        } catch (e) {
-          console.warn('链接处理失败:', e)
-        }
+      const kwLine = contentText.split('\n').find((l: string) => l.startsWith('关键词：'))
+      if (kwLine) {
+        achievementData.value.keywords = kwLine.replace('关键词：', '').trim()
       }
 
-      console.log('加载成果成功:', achievementData.value)
-      ElMessage.success('成果详情加载成功')
+      await loadAuditLogs(achievementData.value)
     } else {
-      console.warn('API返回失败，使用模拟数据')
-      loadMockData()
+      ElMessage.error('加载成果详情失败')
     }
   } catch (error) {
     console.error('加载失败:', error)
-    loadMockData()
+    ElMessage.error(error instanceof Error ? error.message : '加载成果详情失败')
   } finally {
     loading.value = false
   }

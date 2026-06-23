@@ -32,7 +32,7 @@
         <div v-else-if="eligibleProjects.length === 0" class="empty-state">
           <div class="empty-icon">📭</div>
           <p>暂无可申请服务的项目</p>
-          <p class="empty-subtext">只有状态为「已批准」的项目才能发起服务申请</p>
+          <p class="empty-subtext">已入库或孵化中的项目均可发起服务申请</p>
         </div>
 
         <div v-else class="projects-list">

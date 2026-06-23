@@ -58,10 +58,10 @@
         </div>
 
         <div class="nav-section">
-          <h4 v-if="!sidebarCollapsed" class="nav-section-title">项目合作资源</h4>
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">产业资源</h4>
           <router-link to="/applicant/enterprise-demands" class="nav-link" active-class="active">
             <span class="nav-icon">🏢</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">项目合作资源</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">产业资源</span>
           </router-link>
         </div>
 
@@ -301,15 +301,15 @@
                 <button class="action-card" @click="navigateTo('enterprise-demands')">
                   <div class="action-icon">🏢</div>
                   <div class="action-content">
-                    <h4>项目合作资源</h4>
-                    <p>浏览项目合作资源并选择项目报名参与</p>
+                    <h4>产业资源</h4>
+                    <p>浏览产业资源并选择项目报名参与</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('service-request')">
                   <div class="action-icon">🛎️</div>
                   <div class="action-content">
                     <h4>服务申请</h4>
-                    <p>为已批准项目发起孵化服务申请</p>
+                    <p>为已入库或孵化中项目发起孵化服务申请</p>
                   </div>
                 </button>
               </div>

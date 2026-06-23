@@ -190,8 +190,32 @@ function sqlProjectBudgetTotal(alias = 'p') {
 const FUNDS_REQUEST_UPLOADS_DIR = path.join(__dirname, 'uploads', 'funds-requests');
 const INCUBATION_UPLOADS_DIR = path.join(__dirname, 'uploads', 'incubation');
 const INCUBATION_ACHIEVEMENT_UPLOADS_DIR = path.join(__dirname, 'uploads', 'incubation-achievements');
+const PROJECT_ACHIEVEMENT_UPLOADS_DIR = path.join(__dirname, 'uploads', 'project-achievements');
 /** 申请人可随时提交孵化成果的项目状态 */
 const INCUBATION_ACHIEVEMENT_SUBMIT_PROJECT_STATUSES = ['approved', 'incubating'];
+
+/** 科研成果登记仅限已入库或孵化中的项目 */
+const PROJECT_ACHIEVEMENT_ELIGIBLE_STATUSES = ['approved', 'incubating'];
+
+async function assertProjectEligibleForAchievement(pool, projectId) {
+  const [rows] = await pool.query('SELECT id, status FROM `Project` WHERE id = ?', [projectId]);
+  if (!rows.length) {
+    return { ok: false, status: 404, error: '项目不存在' };
+  }
+  if (!PROJECT_ACHIEVEMENT_ELIGIBLE_STATUSES.includes(rows[0].status)) {
+    return { ok: false, status: 400, error: '仅已入库或孵化中的项目可登记科研成果' };
+  }
+  return { ok: true, project: rows[0] };
+}
+
+/** 项目进入长期孵化中（已入库或已在孵化中的项目） */
+async function markProjectIncubating(pool, projectId) {
+  if (!projectId) return;
+  await pool.query(
+    "UPDATE `Project` SET status = 'incubating', updated_at = NOW() WHERE id = ? AND status IN ('approved', 'incubating')",
+    [projectId],
+  );
+}
 
 /** 入库用相对路径（相对 backend 根目录），便于迁移部署 */
 function uploadFileStoredPath(absoluteDiskPath, fallbackRelativeDir) {
@@ -431,7 +455,7 @@ const newsUpload = multer({
 });
 
 const ENTERPRISE_DEMAND_UPLOADS_DIR = path.join(__dirname, 'uploads', 'enterprise-demand');
-/** 项目合作资源可推送的项目状态：已入库(approved)、孵化中(incubating) */
+/** 产业资源可推送的项目状态：已入库(approved)、孵化中(incubating) */
 const ENTERPRISE_DEMAND_PUSH_PROJECT_STATUSES = ['approved', 'incubating'];
 
 function enterpriseDemandMediaStoredPath(absoluteDiskPath) {
@@ -1157,6 +1181,112 @@ async function userIsApplicantOrTeamMember(pool, projectId, userId) {
     [projectId, userId]
   );
   return m.length > 0;
+}
+
+function projectAchievementFileStoredPath(absoluteDiskPath) {
+  return uploadFileStoredPath(absoluteDiskPath, 'uploads/project-achievements');
+}
+
+function resolveProjectAchievementFileDiskPath(storedPath) {
+  return resolveUploadDiskPath(storedPath, PROJECT_ACHIEVEMENT_UPLOADS_DIR);
+}
+
+function projectAchievementFilePublicPath(storedPath) {
+  if (!storedPath) return '';
+  let p = String(storedPath).trim().replace(/\\/g, '/');
+  if (/^https?:\/\//i.test(p)) {
+    try {
+      p = new URL(p).pathname;
+    } catch { /* keep p */ }
+  }
+  return p.startsWith('/') ? p : `/${p}`;
+}
+
+function mapProjectAchievementFileRow(row) {
+  if (!row) return row;
+  return {
+    id: row.id,
+    achievement_id: row.achievement_id,
+    file_name: row.file_name,
+    file_path: projectAchievementFilePublicPath(row.file_path),
+    file_size: row.file_size,
+    mime_type: row.mime_type,
+    sort_order: row.sort_order,
+    uploaded_by: row.uploaded_by,
+    created_at: row.created_at,
+  };
+}
+
+async function loadProjectAchievementFilesMap(pool, achievementIds) {
+  const map = {};
+  if (!achievementIds || !achievementIds.length) return map;
+  const [rows] = await pool.query(
+    `SELECT * FROM \`ProjectAchievementFile\`
+     WHERE achievement_id IN (?)
+     ORDER BY sort_order ASC, created_at ASC`,
+    [achievementIds],
+  );
+  rows.forEach((r) => {
+    if (!map[r.achievement_id]) map[r.achievement_id] = [];
+    map[r.achievement_id].push(mapProjectAchievementFileRow(r));
+  });
+  return map;
+}
+
+function buildProjectAchievementText(body) {
+  const desc = (body.description && String(body.description).trim()) || '';
+  const abstract =
+    (body.abstract && String(body.abstract).trim()) ||
+    (desc.length > 500 ? `${desc.slice(0, 500)}…` : desc) ||
+    '（无摘要）';
+  let content = (body.content && String(body.content).trim()) || desc || abstract;
+  const extras = [];
+  if (body.authors) {
+    try {
+      let authors = body.authors;
+      if (typeof authors === 'string' && authors.trim().startsWith('[')) {
+        authors = JSON.parse(authors);
+      }
+      const authorStr = Array.isArray(authors) ? authors.join('、') : String(authors).trim();
+      if (authorStr) extras.push(`作者：${authorStr}`);
+    } catch { /* ignore */ }
+  }
+  if (body.keywords && String(body.keywords).trim()) {
+    extras.push(`关键词：${String(body.keywords).trim()}`);
+  }
+  if (body.external_link && String(body.external_link).trim()) {
+    extras.push(`外部链接：${String(body.external_link).trim()}`);
+  }
+  if (extras.length) {
+    content = content + (content ? '\n\n' : '') + extras.join('\n');
+  }
+  return { abstract, content };
+}
+
+function formatProjectAchievementRow(row, files = []) {
+  const achievementDate = row.achievement_date
+    ? (row.achievement_date.toISOString?.().slice(0, 10) || row.achievement_date)
+    : null;
+  return {
+    ...row,
+    achievement_date: achievementDate,
+    description: row.abstract || row.content || '',
+    project: row.project_title
+      ? { id: row.project_id, title: row.project_title, project_code: row.project_code }
+      : null,
+    files,
+    file_count: files.length,
+  };
+}
+
+async function userMayAccessProjectAchievement(pool, achievement, user) {
+  const uid = user.userId || user.id;
+  if (String(achievement.created_by) === String(uid)) return true;
+  if (checkPermission(user.role, ['admin', 'project_manager'])) return true;
+  if (achievement.project_id) {
+    return userIsApplicantOrTeamMember(pool, achievement.project_id, uid);
+  }
+  return false;
 }
 
 /**
@@ -1971,7 +2101,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ==================== 项目合作资源管理 API（项目经理） ====================
+    // ==================== 产业资源管理 API（项目经理） ====================
 
     if (pathname === '/api/enterprise-demands' && req.method === 'GET') {
       try {
@@ -2022,8 +2152,8 @@ const server = http.createServer(async (req, res) => {
           },
         });
       } catch (error) {
-        console.error('获取项目合作资源列表失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取项目合作资源列表失败' });
+        console.error('获取产业资源列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取产业资源列表失败' });
       }
       return;
     }
@@ -2081,8 +2211,8 @@ const server = http.createServer(async (req, res) => {
           message: '创建成功',
         });
       } catch (error) {
-        console.error('创建项目合作资源失败:', error);
-        sendResponse(res, 500, { success: false, error: '创建项目合作资源失败' });
+        console.error('创建产业资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '创建产业资源失败' });
       }
       return;
     }
@@ -2147,7 +2277,7 @@ const server = http.createServer(async (req, res) => {
           });
         });
       } catch (error) {
-        console.error('项目合作资源上传失败:', error);
+        console.error('产业资源上传失败:', error);
         sendResponse(res, 500, { errno: 1, success: false, error: '上传失败' });
       }
       return;
@@ -2171,7 +2301,7 @@ const server = http.createServer(async (req, res) => {
           [demandId],
         );
         if (!rows.length) {
-          sendResponse(res, 404, { success: false, error: '项目合作资源不存在' });
+          sendResponse(res, 404, { success: false, error: '产业资源不存在' });
           return;
         }
         const [media] = await pool.query(
@@ -2207,8 +2337,8 @@ const server = http.createServer(async (req, res) => {
           },
         });
       } catch (error) {
-        console.error('获取项目合作资源详情失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取项目合作资源详情失败' });
+        console.error('获取产业资源详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取产业资源详情失败' });
       }
       return;
     }
@@ -2230,7 +2360,7 @@ const server = http.createServer(async (req, res) => {
         const body = await parseRequestBody(req);
         const [check] = await pool.query(`SELECT status FROM \`EnterpriseDemand\` WHERE id = ?`, [demandId]);
         if (!check.length) {
-          sendResponse(res, 404, { success: false, error: '项目合作资源不存在' });
+          sendResponse(res, 404, { success: false, error: '产业资源不存在' });
           return;
         }
         const currentStatus = check[0].status;
@@ -2280,8 +2410,8 @@ const server = http.createServer(async (req, res) => {
           message: '更新成功',
         });
       } catch (error) {
-        console.error('更新项目合作资源失败:', error);
-        sendResponse(res, 500, { success: false, error: '更新项目合作资源失败' });
+        console.error('更新产业资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '更新产业资源失败' });
       }
       return;
     }
@@ -2300,8 +2430,8 @@ const server = http.createServer(async (req, res) => {
         );
         sendResponse(res, 200, { success: true, message: '发布成功' });
       } catch (error) {
-        console.error('发布项目合作资源失败:', error);
-        sendResponse(res, 500, { success: false, error: '发布项目合作资源失败' });
+        console.error('发布产业资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '发布产业资源失败' });
       }
       return;
     }
@@ -2317,8 +2447,8 @@ const server = http.createServer(async (req, res) => {
         await pool.query(`UPDATE \`EnterpriseDemand\` SET status = 'offline' WHERE id = ?`, [demandId]);
         sendResponse(res, 200, { success: true, message: '下架成功' });
       } catch (error) {
-        console.error('下架项目合作资源失败:', error);
-        sendResponse(res, 500, { success: false, error: '下架项目合作资源失败' });
+        console.error('下架产业资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '下架产业资源失败' });
       }
       return;
     }
@@ -2334,8 +2464,8 @@ const server = http.createServer(async (req, res) => {
         await pool.query(`UPDATE \`EnterpriseDemand\` SET status = 'closed' WHERE id = ?`, [demandId]);
         sendResponse(res, 200, { success: true, message: '已关闭' });
       } catch (error) {
-        console.error('关闭项目合作资源失败:', error);
-        sendResponse(res, 500, { success: false, error: '关闭项目合作资源失败' });
+        console.error('关闭产业资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '关闭产业资源失败' });
       }
       return;
     }
@@ -2364,13 +2494,13 @@ const server = http.createServer(async (req, res) => {
         await pool.query(`DELETE FROM \`EnterpriseDemand\` WHERE id = ?`, [demandId]);
         sendResponse(res, 200, { success: true, message: '删除成功' });
       } catch (error) {
-        console.error('删除项目合作资源失败:', error);
-        sendResponse(res, 500, { success: false, error: '删除项目合作资源失败' });
+        console.error('删除产业资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '删除产业资源失败' });
       }
       return;
     }
 
-    // 项目合作资源推送给项目 / 项目方承接
+    // 产业资源推送给项目
     if (pathname.match(/^\/api\/enterprise-demands\/[\w-]+\/pushes$/) && req.method === 'GET') {
       const demandId = pathname.replace('/api/enterprise-demands/', '').replace('/pushes', '');
       try {
@@ -2384,7 +2514,7 @@ const server = http.createServer(async (req, res) => {
           [demandId],
         );
         if (!demandRows.length) {
-          sendResponse(res, 404, { success: false, error: '项目合作资源不存在' });
+          sendResponse(res, 404, { success: false, error: '产业资源不存在' });
           return;
         }
         const [rows] = await pool.query(
@@ -2434,7 +2564,7 @@ const server = http.createServer(async (req, res) => {
           [demandId],
         );
         if (!demandRows.length) {
-          sendResponse(res, 404, { success: false, error: '项目合作资源不存在' });
+          sendResponse(res, 404, { success: false, error: '产业资源不存在' });
           return;
         }
         if (demandRows[0].status !== 'published') {
@@ -2461,7 +2591,7 @@ const server = http.createServer(async (req, res) => {
           if (!ENTERPRISE_DEMAND_PUSH_PROJECT_STATUSES.includes(projRows[0].status)) {
             skipped.push({
               project_id: projectId,
-              reason: '仅可向已入库或孵化中的项目推荐项目合作资源',
+              reason: '仅可向已入库或孵化中的项目推荐产业资源',
             });
             continue;
           }
@@ -2506,8 +2636,8 @@ const server = http.createServer(async (req, res) => {
           data: { created_count: created.length, skipped },
         });
       } catch (error) {
-        console.error('推送项目合作资源失败:', error);
-        sendResponse(res, 500, { success: false, error: '推送项目合作资源失败' });
+        console.error('推送产业资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '推送产业资源失败' });
       }
       return;
     }
@@ -2561,7 +2691,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ==================== 项目合作资源（项目申请人浏览与申请） ====================
+    // ==================== 产业资源（项目申请人浏览与申请） ====================
 
     if (pathname === '/api/applicant/enterprise-demands/eligible-projects' && req.method === 'GET') {
       try {
@@ -2683,8 +2813,8 @@ const server = http.createServer(async (req, res) => {
           },
         });
       } catch (error) {
-        console.error('获取项目合作资源列表失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取项目合作资源列表失败' });
+        console.error('获取产业资源列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取产业资源列表失败' });
       }
       return;
     }
@@ -2722,7 +2852,7 @@ const server = http.createServer(async (req, res) => {
           [uid, uid, demandId],
         );
         if (!rows.length) {
-          sendResponse(res, 404, { success: false, error: '项目合作资源不存在或不可报名' });
+          sendResponse(res, 404, { success: false, error: '产业资源不存在或不可报名' });
           return;
         }
         await pool.query(
@@ -2777,8 +2907,8 @@ const server = http.createServer(async (req, res) => {
           },
         });
       } catch (error) {
-        console.error('获取项目合作资源详情失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取项目合作资源详情失败' });
+        console.error('获取产业资源详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取产业资源详情失败' });
       }
       return;
     }
@@ -2808,11 +2938,11 @@ const server = http.createServer(async (req, res) => {
           [demandId],
         );
         if (!demandRows.length) {
-          sendResponse(res, 404, { success: false, error: '项目合作资源不存在' });
+          sendResponse(res, 404, { success: false, error: '产业资源不存在' });
           return;
         }
         if (demandRows[0].status !== 'published') {
-          sendResponse(res, 400, { success: false, error: '该项目合作资源当前不可报名' });
+          sendResponse(res, 400, { success: false, error: '该产业资源当前不可报名' });
           return;
         }
         if (demandRows[0].deadline) {
@@ -2820,7 +2950,7 @@ const server = http.createServer(async (req, res) => {
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           if (dl < today) {
-            sendResponse(res, 400, { success: false, error: '该项目合作资源已过截止日期' });
+            sendResponse(res, 400, { success: false, error: '该产业资源已过截止日期' });
             return;
           }
         }
@@ -2844,7 +2974,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         if (!ENTERPRISE_DEMAND_PUSH_PROJECT_STATUSES.includes(projRows[0].status)) {
-          sendResponse(res, 400, { success: false, error: '仅已入库或孵化中的项目可报名参与项目合作资源' });
+          sendResponse(res, 400, { success: false, error: '仅已入库或孵化中的项目可报名参与产业资源' });
           return;
         }
 
@@ -2855,7 +2985,7 @@ const server = http.createServer(async (req, res) => {
         if (existing.length) {
           const st = existing[0].status;
           if (st === 'claimed') {
-            sendResponse(res, 400, { success: false, error: '该项目已报名此项目合作资源' });
+            sendResponse(res, 400, { success: false, error: '该项目已报名此产业资源' });
             return;
           }
           if (st === 'pushed') {
@@ -2866,9 +2996,10 @@ const server = http.createServer(async (req, res) => {
                WHERE id = ?`,
               [remark, userId, pushId],
             );
+            await markProjectIncubating(pool, projectId);
             sendResponse(res, 200, {
               success: true,
-              message: '已成功报名参与该项目合作资源',
+              message: '已成功报名参与该产业资源',
               data: { push_id: pushId },
             });
             return;
@@ -2880,9 +3011,10 @@ const server = http.createServer(async (req, res) => {
              WHERE id = ?`,
             [remark, userId, pushId],
           );
+          await markProjectIncubating(pool, projectId);
           sendResponse(res, 200, {
             success: true,
-            message: '已成功报名参与该项目合作资源',
+            message: '已成功报名参与该产业资源',
             data: { push_id: pushId },
           });
           return;
@@ -2895,13 +3027,14 @@ const server = http.createServer(async (req, res) => {
            VALUES (?, ?, ?, NULL, ?, 'claimed', ?, NOW())`,
           [pushId, projectId, demandId, remark, userId],
         );
+        await markProjectIncubating(pool, projectId);
         sendResponse(res, 201, {
           success: true,
-          message: '已成功报名参与该项目合作资源',
+          message: '已成功报名参与该产业资源',
           data: { push_id: pushId },
         });
       } catch (error) {
-        console.error('报名参与项目合作资源失败:', error);
+        console.error('报名参与产业资源失败:', error);
         sendResponse(res, 500, { success: false, error: '报名失败' });
       }
       return;
@@ -2972,7 +3105,7 @@ const server = http.createServer(async (req, res) => {
         }
         sendResponse(res, 200, { success: true, message: '已取消报名' });
       } catch (error) {
-        console.error('取消报名项目合作资源失败:', error);
+        console.error('取消报名产业资源失败:', error);
         sendResponse(res, 500, { success: false, error: '取消报名失败' });
       }
       return;
@@ -2997,8 +3130,9 @@ const server = http.createServer(async (req, res) => {
           sendResponse(res, 404, { success: false, error: '项目不存在' });
           return;
         }
-        if (String(projRows[0].applicant_id) !== String(user.id || user.userId)) {
-          sendResponse(res, 403, { success: false, error: '只能查看本人项目的合作资源' });
+        const uid = user.id || user.userId;
+        if (!(await userIsApplicantOrTeamMember(pool, projectId, uid))) {
+          sendResponse(res, 403, { success: false, error: '只能查看本人参与项目的产业资源' });
           return;
         }
         const [rows] = await pool.query(
@@ -3046,116 +3180,8 @@ const server = http.createServer(async (req, res) => {
           })),
         });
       } catch (error) {
-        console.error('获取项目合作资源失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取项目合作资源失败' });
-      }
-      return;
-    }
-
-    if (
-      pathname.match(/^\/api\/applicant\/projects\/[\w-]+\/enterprise-demands\/[\w-]+\/claim$/) &&
-      req.method === 'PUT'
-    ) {
-      const m = pathname.match(
-        /^\/api\/applicant\/projects\/([\w-]+)\/enterprise-demands\/([\w-]+)\/claim$/,
-      );
-      const projectId = m[1];
-      const pushId = m[2];
-      try {
-        const user = await verifyToken(req.headers.authorization);
-        if (!user || user.role !== 'applicant') {
-          sendResponse(res, 403, { success: false, error: '无权操作' });
-          return;
-        }
-        const userId = user.id || user.userId;
-        const [projRows] = await pool.query(
-          'SELECT applicant_id FROM `Project` WHERE id = ?',
-          [projectId],
-        );
-        if (!projRows.length) {
-          sendResponse(res, 404, { success: false, error: '项目不存在' });
-          return;
-        }
-        if (String(projRows[0].applicant_id) !== String(userId)) {
-          sendResponse(res, 403, { success: false, error: '只能操作本人项目' });
-          return;
-        }
-        const [pushRows] = await pool.query(
-          'SELECT id, status FROM `ProjectEnterpriseDemand` WHERE id = ? AND project_id = ?',
-          [pushId, projectId],
-        );
-        if (!pushRows.length) {
-          sendResponse(res, 404, { success: false, error: '推送记录不存在' });
-          return;
-        }
-        if (pushRows[0].status !== 'pushed') {
-          sendResponse(res, 400, { success: false, error: '当前状态不可承接' });
-          return;
-        }
-        await pool.query(
-          `UPDATE \`ProjectEnterpriseDemand\`
-           SET status = 'claimed', claimed_by = ?, claimed_at = NOW(), updated_at = NOW()
-           WHERE id = ?`,
-          [userId, pushId],
-        );
-        sendResponse(res, 200, { success: true, message: '已确认承接该项目合作资源' });
-      } catch (error) {
-        console.error('承接项目合作资源失败:', error);
-        sendResponse(res, 500, { success: false, error: '承接项目合作资源失败' });
-      }
-      return;
-    }
-
-    if (
-      pathname.match(/^\/api\/applicant\/projects\/[\w-]+\/enterprise-demands\/[\w-]+\/decline$/) &&
-      req.method === 'PUT'
-    ) {
-      const m = pathname.match(
-        /^\/api\/applicant\/projects\/([\w-]+)\/enterprise-demands\/([\w-]+)\/decline$/,
-      );
-      const projectId = m[1];
-      const pushId = m[2];
-      try {
-        const user = await verifyToken(req.headers.authorization);
-        if (!user || user.role !== 'applicant') {
-          sendResponse(res, 403, { success: false, error: '无权操作' });
-          return;
-        }
-        const userId = user.id || user.userId;
-        const [projRows] = await pool.query(
-          'SELECT applicant_id FROM `Project` WHERE id = ?',
-          [projectId],
-        );
-        if (!projRows.length) {
-          sendResponse(res, 404, { success: false, error: '项目不存在' });
-          return;
-        }
-        if (String(projRows[0].applicant_id) !== String(userId)) {
-          sendResponse(res, 403, { success: false, error: '只能操作本人项目' });
-          return;
-        }
-        const [pushRows] = await pool.query(
-          'SELECT id, status FROM `ProjectEnterpriseDemand` WHERE id = ? AND project_id = ?',
-          [pushId, projectId],
-        );
-        if (!pushRows.length) {
-          sendResponse(res, 404, { success: false, error: '推送记录不存在' });
-          return;
-        }
-        if (pushRows[0].status !== 'pushed') {
-          sendResponse(res, 400, { success: false, error: '当前状态不可操作' });
-          return;
-        }
-        await pool.query(
-          `UPDATE \`ProjectEnterpriseDemand\`
-           SET status = 'declined', claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
-           WHERE id = ?`,
-          [pushId],
-        );
-        sendResponse(res, 200, { success: true, message: '已拒绝承接' });
-      } catch (error) {
-        console.error('拒绝承接失败:', error);
-        sendResponse(res, 500, { success: false, error: '拒绝承接失败' });
+        console.error('获取产业资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取产业资源失败' });
       }
       return;
     }
@@ -8465,6 +8491,7 @@ const server = http.createServer(async (req, res) => {
           );
 
           await connection.commit();
+          await markProjectIncubating(pool, projectId);
           sendResponse(res, 200, {
             success: true,
             message: '经费登记成功，已同步至项目申请人',
@@ -8925,6 +8952,10 @@ const server = http.createServer(async (req, res) => {
             requestId,
           ],
         );
+
+        if (['approved', 'partial_approved'].includes(feedbackAction)) {
+          await markProjectIncubating(pool, reqRow[0]?.project_id);
+        }
 
         if (applicantId) {
           const actionText = {
@@ -11641,7 +11672,13 @@ const server = http.createServer(async (req, res) => {
     `, [...queryParams, pageSize, offset]);
 
         // 格式化数据
-        const formattedAchievements = achievements.map(ach => ({
+        const achFilesMap = await loadProjectAchievementFilesMap(
+          pool,
+          achievements.map((a) => a.id),
+        );
+        const formattedAchievements = achievements.map(ach => {
+          const files = achFilesMap[ach.id] || [];
+          return {
           id: ach.id,
           project_id: ach.project_id,
           type: ach.type,
@@ -11653,7 +11690,9 @@ const server = http.createServer(async (req, res) => {
           status: ach.status,
           achievement_date: ach.achievement_date ? ach.achievement_date.toISOString().split('T')[0] : null,
           authors: [],
-          attachment_urls: [],
+          files,
+          file_count: files.length,
+          attachment_urls: files,
           external_link: null,
           verified_by: ach.verified_by,
           verified_date: ach.verified_date ? ach.verified_date.toISOString().split('T')[0] : null,
@@ -11675,7 +11714,8 @@ const server = http.createServer(async (req, res) => {
             id: ach.verified_by,
             name: ach.verifier_name
           } : null
-        }));
+        };
+        });
 
         // 获取统计数据
         const [statsResult] = await pool.query(`
@@ -11815,6 +11855,9 @@ const server = http.createServer(async (req, res) => {
       ORDER BY created_at DESC
     `, [achievementId]);
 
+        const detailFilesMap = await loadProjectAchievementFilesMap(pool, [achievementId]);
+        const detailFiles = detailFilesMap[achievementId] || [];
+
         sendResponse(res, 200, {
           success: true,
           data: {
@@ -11830,7 +11873,9 @@ const server = http.createServer(async (req, res) => {
               status: achievement.status,
               achievement_date: achievement.achievement_date ? achievement.achievement_date.toISOString().split('T')[0] : null,
               authors: [],
-              attachment_urls: [],
+              files: detailFiles,
+              file_count: detailFiles.length,
+              attachment_urls: detailFiles,
               external_link: null,
               verified_by: achievement.verified_by,
               verified_date: achievement.verified_date ? achievement.verified_date.toISOString().split('T')[0] : null,
@@ -14556,7 +14601,7 @@ const server = http.createServer(async (req, res) => {
           if (notif.type === 'project') icon = '📋';
           if (notif.type === 'review') icon = '⭐';
           if (notif.type === 'funding') icon = '💰';
-          if (notif.type === 'achievement') icon = '🏆';
+          if (notif.related_type === 'ProjectAchievement') icon = '🏆';
           if (notif.type === 'reminder') icon = '⏰';
 
           return {
@@ -19734,6 +19779,170 @@ const server = http.createServer(async (req, res) => {
 
     // ==================== 成果管理API ====================
 
+    // 上传科研成果附件（写入 ProjectAchievementFile）
+    if (pathname === '/api/achievements/upload' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+
+      if (!fs.existsSync(PROJECT_ACHIEVEMENT_UPLOADS_DIR)) {
+        fs.mkdirSync(PROJECT_ACHIEVEMENT_UPLOADS_DIR, { recursive: true });
+      }
+
+      const form = formidable({
+        uploadDir: PROJECT_ACHIEVEMENT_UPLOADS_DIR,
+        keepExtensions: true,
+        maxFileSize: 50 * 1024 * 1024,
+        filename: (name, ext) => `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`,
+      });
+
+      form.parse(req, async (err, fields, files) => {
+        if (err) {
+          console.error('科研成果附件上传失败:', err);
+          sendResponse(res, 500, { success: false, error: '文件上传失败' });
+          return;
+        }
+
+        const file = files.file;
+        if (!file) {
+          sendResponse(res, 400, { success: false, error: '未找到上传文件' });
+          return;
+        }
+
+        try {
+          let achievementId = fields.achievement_id;
+          if (Array.isArray(achievementId)) achievementId = achievementId[0];
+          if (!achievementId) {
+            sendResponse(res, 400, { success: false, error: '缺少成果ID' });
+            return;
+          }
+
+          const [achRows] = await pool.query(
+            'SELECT * FROM `ProjectAchievement` WHERE id = ?',
+            [achievementId],
+          );
+          if (!achRows.length) {
+            sendResponse(res, 404, { success: false, error: '成果不存在' });
+            return;
+          }
+          const achievement = achRows[0];
+          const uid = user.userId || user.id;
+          const mayAccess = await userMayAccessProjectAchievement(pool, achievement, user);
+          if (!mayAccess) {
+            sendResponse(res, 403, { success: false, error: '没有权限上传此成果附件' });
+            return;
+          }
+          if (
+            !checkPermission(user.role, ['admin', 'project_manager']) &&
+            !['draft', 'submitted', 'rejected'].includes(achievement.status)
+          ) {
+            sendResponse(res, 409, { success: false, error: '当前状态不可上传附件' });
+            return;
+          }
+
+          const fileData = Array.isArray(file) ? file[0] : file;
+          const filePath = fileData.filepath || fileData.path;
+          const fileName = fileData.originalFilename || fileData.name;
+          const fileSize = fileData.size;
+          const mimeType = fileData.mimetype || fileData.type || 'application/octet-stream';
+          const absPath = path.resolve(filePath);
+          if (!fs.existsSync(absPath)) {
+            sendResponse(res, 500, { success: false, error: '上传文件保存失败' });
+            return;
+          }
+
+          const [sortRow] = await pool.query(
+            'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort FROM `ProjectAchievementFile` WHERE achievement_id = ?',
+            [achievementId],
+          );
+          const sortOrder = sortRow[0]?.next_sort ?? 0;
+          const fileId = randomUUID();
+          const storedPath = projectAchievementFileStoredPath(absPath);
+
+          await pool.query(
+            `INSERT INTO \`ProjectAchievementFile\`
+             (id, achievement_id, file_name, file_path, file_size, mime_type, sort_order, uploaded_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [fileId, achievementId, fileName, storedPath, fileSize, mimeType, sortOrder, uid],
+          );
+
+          sendResponse(res, 200, {
+            success: true,
+            message: '文件上传成功',
+            data: mapProjectAchievementFileRow({
+              id: fileId,
+              achievement_id: achievementId,
+              file_name: fileName,
+              file_path: storedPath,
+              file_size: fileSize,
+              mime_type: mimeType,
+              sort_order: sortOrder,
+              uploaded_by: uid,
+              created_at: new Date(),
+            }),
+          });
+        } catch (dbError) {
+          console.error('保存科研成果附件失败:', dbError);
+          sendResponse(res, 500, { success: false, error: '保存文件记录失败: ' + dbError.message });
+        }
+      });
+      return;
+    }
+
+    // 删除科研成果附件
+    if (pathname.match(/^\/api\/achievements\/files\/[\w-]+$/) && req.method === 'DELETE') {
+      const fileId = pathname.replace('/api/achievements/files/', '');
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+      try {
+        const [fileRows] = await pool.query(
+          `SELECT f.*, pa.created_by, pa.project_id, pa.status
+           FROM \`ProjectAchievementFile\` f
+           INNER JOIN \`ProjectAchievement\` pa ON pa.id = f.achievement_id
+           WHERE f.id = ?`,
+          [fileId],
+        );
+        if (!fileRows.length) {
+          sendResponse(res, 404, { success: false, error: '附件不存在' });
+          return;
+        }
+        const fileRow = fileRows[0];
+        const uid = user.userId || user.id;
+        const isCreator = String(fileRow.created_by) === String(uid);
+        const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
+        if (!isCreator && !isAdmin) {
+          sendResponse(res, 403, { success: false, error: '没有权限删除此附件' });
+          return;
+        }
+        if (!isAdmin && !['draft', 'submitted', 'rejected'].includes(fileRow.status)) {
+          sendResponse(res, 409, { success: false, error: '当前状态不可删除附件' });
+          return;
+        }
+
+        const diskPath = resolveProjectAchievementFileDiskPath(fileRow.file_path);
+        if (diskPath && fs.existsSync(diskPath)) {
+          try {
+            fs.unlinkSync(diskPath);
+          } catch (e) {
+            console.warn('删除科研成果附件磁盘文件失败:', e.message);
+          }
+        }
+        await pool.query('DELETE FROM `ProjectAchievementFile` WHERE id = ?', [fileId]);
+        sendResponse(res, 200, { success: true, message: '附件已删除' });
+      } catch (error) {
+        console.error('删除科研成果附件失败:', error);
+        sendResponse(res, 500, { success: false, error: '删除附件失败' });
+      }
+      return;
+    }
+
     // 1. 获取成果列表
     if (pathname === '/api/achievements' && req.method === 'GET') {
       const token = req.headers.authorization;
@@ -19751,6 +19960,7 @@ const server = http.createServer(async (req, res) => {
       const offset = (page - 1) * limit;
 
       try {
+        const uid = user.userId || user.id;
         let sql = `
           SELECT pa.*, p.title as project_title, p.project_code,
                  u1.name as created_by_name, u2.name as verified_by_name
@@ -19758,18 +19968,41 @@ const server = http.createServer(async (req, res) => {
           LEFT JOIN \`Project\` p ON pa.project_id = p.id
           LEFT JOIN \`User\` u1 ON pa.created_by = u1.id
           LEFT JOIN \`User\` u2 ON pa.verified_by = u2.id
-          WHERE pa.created_by = ?
+          WHERE (pa.created_by = ? OR pa.project_id IN (
+            SELECT p2.id FROM \`Project\` p2
+            WHERE p2.applicant_id = ?
+               OR EXISTS (
+                 SELECT 1 FROM \`ProjectMember\` pm
+                 WHERE pm.project_id = p2.id AND pm.user_id = ?
+               )
+          ))
         `;
-        let countSql = 'SELECT COUNT(*) as total FROM `ProjectAchievement` WHERE created_by = ?';
-        const params = [user.id];
-        const countParams = [user.id];
+        let countSql = `
+          SELECT COUNT(*) as total FROM \`ProjectAchievement\` pa
+          WHERE (pa.created_by = ? OR pa.project_id IN (
+            SELECT p2.id FROM \`Project\` p2
+            WHERE p2.applicant_id = ?
+               OR EXISTS (
+                 SELECT 1 FROM \`ProjectMember\` pm
+                 WHERE pm.project_id = p2.id AND pm.user_id = ?
+               )
+          ))
+        `;
+        const params = [uid, uid, uid];
+        const countParams = [uid, uid, uid];
 
         // 管理员可以查看所有成果
         if (checkPermission(user.role, ['admin', 'project_manager'])) {
-          sql = sql.replace('WHERE pa.created_by = ?', 'WHERE 1=1');
-          countSql = countSql.replace('WHERE created_by = ?', 'WHERE 1=1');
-          params.shift();
-          countParams.shift();
+          sql = sql.replace(
+            /WHERE \(pa\.created_by = \? OR pa\.project_id IN \([\s\S]*?\)\)/,
+            'WHERE 1=1',
+          );
+          countSql = countSql.replace(
+            /WHERE \(pa\.created_by = \? OR pa\.project_id IN \([\s\S]*?\)\)/,
+            'WHERE 1=1',
+          );
+          params.length = 0;
+          countParams.length = 0;
         }
 
         // 类型过滤
@@ -19803,10 +20036,16 @@ const server = http.createServer(async (req, res) => {
         const [rows] = await pool.query(sql, params);
         const [totalResult] = await pool.query(countSql, countParams);
         const total = totalResult[0].total;
+        const filesMap = await loadProjectAchievementFilesMap(
+          pool,
+          rows.map((r) => r.id),
+        );
 
         sendResponse(res, 200, {
           success: true,
-          data: rows,
+          data: rows.map((row) =>
+            formatProjectAchievementRow(row, filesMap[row.id] || []),
+          ),
           total: total,
           page: parseInt(page),
           limit: parseInt(limit),
@@ -19850,11 +20089,18 @@ const server = http.createServer(async (req, res) => {
           });
           return;
         }
+        if (!body.project_id) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '请选择所属项目'
+          });
+          return;
+        }
 
-        // 验证项目是否存在（如果有项目ID）
+        // 验证项目是否存在
         if (body.project_id) {
           const [projects] = await pool.query(
-            'SELECT id, applicant_id FROM `Project` WHERE id = ?',
+            'SELECT id, applicant_id, status FROM `Project` WHERE id = ?',
             [body.project_id]
           );
 
@@ -19867,6 +20113,14 @@ const server = http.createServer(async (req, res) => {
           }
 
           const project = projects[0];
+
+          if (!PROJECT_ACHIEVEMENT_ELIGIBLE_STATUSES.includes(project.status)) {
+            sendResponse(res, 400, {
+              success: false,
+              error: '仅已入库或孵化中的项目可登记科研成果',
+            });
+            return;
+          }
 
           // 检查权限：只有项目成员或管理员可以创建成果
           const isOwner = project.applicant_id === user.id;
@@ -19887,16 +20141,7 @@ const server = http.createServer(async (req, res) => {
 
         // 生成成果ID
         const achievementId = randomUUID();
-
-        // 插入成果记录
-        const abs =
-          (body.abstract && String(body.abstract).trim()) ||
-          (body.description && String(body.description).trim()) ||
-          '（无摘要）';
-        const cont =
-          (body.content && String(body.content).trim()) ||
-          (body.description && String(body.description).trim()) ||
-          abs;
+        const { abstract: abs, content: cont } = buildProjectAchievementText(body);
         const sql = `
           INSERT INTO \`ProjectAchievement\` (
             id, project_id, type, title, abstract, content, achievement_date,
@@ -19906,7 +20151,7 @@ const server = http.createServer(async (req, res) => {
 
         const params = [
           achievementId,
-          body.project_id || null,
+          body.project_id,
           body.type,
           body.title,
           abs,
@@ -19929,7 +20174,7 @@ const server = http.createServer(async (req, res) => {
           if (projNotify.length && projNotify[0].manager_id) {
             await pool.query(
               `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
-               VALUES (?, ?, 'achievement', ?, ?, ?, 'ProjectAchievement', NOW())`,
+               VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', NOW())`,
               [
                 randomUUID(),
                 projNotify[0].manager_id,
@@ -19951,11 +20196,12 @@ const server = http.createServer(async (req, res) => {
            WHERE pa.id = ?`,
           [achievementId]
         );
+        const filesMap = await loadProjectAchievementFilesMap(pool, [achievementId]);
 
         sendResponse(res, 201, {
           success: true,
           message: '成果创建成功',
-          data: achievements[0]
+          data: formatProjectAchievementRow(achievements[0], filesMap[achievementId] || []),
         });
 
       } catch (error) {
@@ -19971,7 +20217,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 3. 获取单个成果详情
-    if (pathname.startsWith('/api/achievements/') && req.method === 'GET') {
+    if (
+      pathname.startsWith('/api/achievements/') &&
+      req.method === 'GET' &&
+      pathname !== '/api/achievements/stats'
+    ) {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
 
@@ -20050,27 +20300,17 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // 解析附件URL
-        let attachments = [];
-        if (achievement.attachment_urls) {
-          try {
-            attachments = JSON.parse(achievement.attachment_urls);
-          } catch (e) {
-            console.error('解析附件失败:', e);
-            attachments = [];
-          }
-        }
+        const filesMap = await loadProjectAchievementFilesMap(pool, [achievementId]);
+        const files = filesMap[achievementId] || [];
 
-        // 构建响应数据
         const responseData = {
-          ...achievement,
-          attachments: attachments,
+          ...formatProjectAchievementRow(achievement, files),
           permissions: {
             can_edit: isOwner || isAdmin,
-            can_delete: isOwner || isAdmin,
+            can_delete: (isOwner || isAdmin) && achievement.status === 'draft',
             can_verify: isAdmin,
-            can_comment: true
-          }
+            can_comment: true,
+          },
         };
 
         console.log('✅ 成功获取成果详情');
@@ -20153,6 +20393,21 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
+        const targetProjectId =
+          body.project_id !== undefined ? body.project_id : achievement.project_id;
+        const willSubmit =
+          body.status === 'submitted' || body.submit_for_review === true;
+        if (body.project_id !== undefined || willSubmit) {
+          const eligibility = await assertProjectEligibleForAchievement(pool, targetProjectId);
+          if (!eligibility.ok) {
+            sendResponse(res, eligibility.status, {
+              success: false,
+              error: eligibility.error,
+            });
+            return;
+          }
+        }
+
         // 构建更新字段
         const updateFields = [];
         const updateValues = [];
@@ -20160,15 +20415,16 @@ const server = http.createServer(async (req, res) => {
         const allowedFields = [
           'type', 'title', 'abstract', 'content', 'achievement_date', 'status', 'project_id',
         ];
-        const legacyAbstract =
-          body.abstract !== undefined ? body.abstract : body.description;
+        const textUpdate = buildProjectAchievementText(body);
+        if (body.description !== undefined || body.abstract !== undefined || body.content !== undefined
+          || body.authors !== undefined || body.keywords !== undefined || body.external_link !== undefined) {
+          updateFields.push('abstract = ?');
+          updateFields.push('content = ?');
+          updateValues.push(textUpdate.abstract, textUpdate.content);
+        }
 
         allowedFields.forEach((field) => {
-          if (field === 'abstract' && legacyAbstract !== undefined) {
-            updateFields.push('abstract = ?');
-            updateValues.push(legacyAbstract);
-            return;
-          }
+          if (field === 'abstract' || field === 'content') return;
           if (body[field] !== undefined) {
             updateFields.push(`${field} = ?`);
             updateValues.push(body[field]);
@@ -20351,6 +20607,15 @@ const server = http.createServer(async (req, res) => {
             success: false,
             error: '当前状态不允许提交审核',
             current_status: achievement.status
+          });
+          return;
+        }
+
+        const eligibility = await assertProjectEligibleForAchievement(pool, achievement.project_id);
+        if (!eligibility.ok) {
+          sendResponse(res, eligibility.status, {
+            success: false,
+            error: eligibility.error,
           });
           return;
         }
@@ -23888,7 +24153,7 @@ const server = http.createServer(async (req, res) => {
             SUM(CASE WHEN type = 'review' THEN 1 ELSE 0 END) as review,
             SUM(CASE WHEN type = 'funding' THEN 1 ELSE 0 END) as funding,
             SUM(CASE WHEN type = 'expenditure' THEN 1 ELSE 0 END) as expenditure,
-            SUM(CASE WHEN type = 'achievement' THEN 1 ELSE 0 END) as achievement,
+            SUM(CASE WHEN related_type = 'ProjectAchievement' THEN 1 ELSE 0 END) as achievement,
             SUM(CASE WHEN type = 'reminder' THEN 1 ELSE 0 END) as reminder,
             SUM(CASE WHEN expires_at IS NOT NULL AND expires_at < NOW() THEN 1 ELSE 0 END) as expired
           FROM \`Notification\`
@@ -24197,13 +24462,14 @@ const server = http.createServer(async (req, res) => {
                 break;
 
               case 'achievement':
+              case 'ProjectAchievement':
                 const [achievements] = await pool.query(
                   'SELECT id, title, type FROM `ProjectAchievement` WHERE id = ?',
                   [notification.related_id]
                 );
                 if (achievements.length > 0) {
                   related_data = {
-                    type: 'achievement',
+                    type: 'ProjectAchievement',
                     data: achievements[0]
                   };
                 }
@@ -26548,13 +26814,13 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       try {
-        // 获取申请人已被批准的项目（只有approved状态才能提交服务申请）
+        // 获取申请人已入库或孵化中的项目（均可发起服务申请）
         const [projects] = await pool.query(`
           SELECT p.id, p.project_code, p.title, p.status, p.approval_date,
                  (SELECT COUNT(*) FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id) as service_count,
                  (SELECT ip.status FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id ORDER BY ip.created_at DESC LIMIT 1) as latest_service_status
           FROM \`Project\` p
-          WHERE p.status = 'approved'
+          WHERE p.status IN ('approved', 'incubating')
             AND (
               p.applicant_id = ?
               OR p.id IN (SELECT pm.project_id FROM \`ProjectMember\` pm WHERE pm.user_id = ?)
@@ -26562,10 +26828,9 @@ const server = http.createServer(async (req, res) => {
           ORDER BY p.updated_at DESC
         `, [user.id, user.id]);
 
-        // 对每个项目添加是否可终止的标识
         const projectsWithFlag = projects.map(p => ({
           ...p,
-          can_terminate: p.service_count > 0 && p.status === 'approved'
+          can_terminate: p.service_count > 0 && ['approved', 'incubating'].includes(p.status),
         }));
 
         sendResponse(res, 200, { success: true, data: projectsWithFlag });
@@ -26679,9 +26944,8 @@ const server = http.createServer(async (req, res) => {
         }
 
         const project = projects[0];
-        // 只有项目状态为approved的才能提交服务申请
-        if (project.status !== 'approved') {
-          sendResponse(res, 400, { success: false, error: '只有已批准的项目才能提交服务申请' });
+        if (!['approved', 'incubating'].includes(project.status)) {
+          sendResponse(res, 400, { success: false, error: '仅已入库或孵化中的项目可提交服务申请' });
           return;
         }
 
@@ -26695,11 +26959,7 @@ const server = http.createServer(async (req, res) => {
           [progressId, project_id, user.id, service_requirement, serviceCategoriesStr]
         );
 
-        // 更新项目状态为incubating
-        await pool.query(
-          "UPDATE \`Project\` SET status = 'incubating', updated_at = NOW() WHERE id = ?",
-          [project_id]
-        );
+        await markProjectIncubating(pool, project_id);
 
         // 发送通知给项目经理
         if (project.manager_id) {
@@ -26732,7 +26992,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       try {
-        // 获取状态为approved且至少有一条服务申请记录的项目
+        // 获取已入库或孵化中、且至少有一条服务申请记录的项目
         const [projects] = await pool.query(`
           SELECT 
             p.id, p.project_code, p.title, p.status,
@@ -26742,7 +27002,7 @@ const server = http.createServer(async (req, res) => {
             (SELECT COUNT(*) FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id AND ip.feedback_action = 'rejected') as rejected_requests
           FROM \`Project\` p
           LEFT JOIN \`User\` u ON p.applicant_id = u.id
-          WHERE p.status = 'approved'
+          WHERE p.status IN ('approved', 'incubating')
             AND EXISTS (SELECT 1 FROM \`IncubationProgress\` ip WHERE ip.project_id = p.id)
           ORDER BY p.updated_at DESC
         `);
@@ -26857,14 +27117,7 @@ const server = http.createServer(async (req, res) => {
           [user.id, feedback_action, feedback_comment || null, progressId]
         );
 
-        // 如果rejected，将项目状态改回approved
-        if (feedback_action === 'rejected') {
-          await pool.query(
-            "UPDATE \`Project\` SET status = 'approved', updated_at = NOW() WHERE id = ?",
-            [progress.project_id]
-          );
-        }
-        // 如果approved，项目状态保持incubating
+        // 孵化中为长期状态：不因服务反馈结果回退为已入库
 
         let assignedExperts = [];
         if (feedback_action === 'approved' && Array.isArray(expert_assignments) && expert_assignments.length) {
@@ -26952,11 +27205,7 @@ const server = http.createServer(async (req, res) => {
           [result_description, progressId]
         );
 
-        // 更新项目状态为approved
-        await pool.query(
-          "UPDATE \`Project\` SET status = 'approved', updated_at = NOW() WHERE id = ?",
-          [progress.project_id]
-        );
+        // 孵化中为长期状态：提交成果反馈后仍保持孵化中
 
         // 发送通知给项目经理
         if (progress.manager_id) {
@@ -27020,8 +27269,8 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        if (project.status !== 'approved') {
-          sendResponse(res, 400, { success: false, error: '只有状态为已批准的项目才能终止' });
+        if (!['approved', 'incubating'].includes(project.status)) {
+          sendResponse(res, 400, { success: false, error: '仅已入库或孵化中的项目可终止' });
           return;
         }
 
