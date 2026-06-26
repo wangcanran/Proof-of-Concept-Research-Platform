@@ -1263,6 +1263,13 @@ function buildProjectAchievementText(body) {
   return { abstract, content };
 }
 
+function formatAchievementDateField(val) {
+  if (!val) return null;
+  if (val instanceof Date) return val.toISOString().slice(0, 10);
+  const s = String(val);
+  return s.length >= 10 ? s.slice(0, 10) : s;
+}
+
 function formatProjectAchievementRow(row, files = []) {
   const achievementDate = row.achievement_date
     ? (row.achievement_date.toISOString?.().slice(0, 10) || row.achievement_date)
@@ -11728,14 +11735,14 @@ const server = http.createServer(async (req, res) => {
           description: ach.abstract,
           keywords: [],
           status: ach.status,
-          achievement_date: ach.achievement_date ? ach.achievement_date.toISOString().split('T')[0] : null,
+          achievement_date: formatAchievementDateField(ach.achievement_date),
           authors: [],
           files,
           file_count: files.length,
           attachment_urls: files,
           external_link: null,
           verified_by: ach.verified_by,
-          verified_date: ach.verified_date ? ach.verified_date.toISOString().split('T')[0] : null,
+          verified_date: formatAchievementDateField(ach.verified_date),
           verification_comment: ach.verification_comment,
           published_date: null,
           publish_link: null,
@@ -11801,6 +11808,7 @@ const server = http.createServer(async (req, res) => {
           success: true,
           data: {
             list: formattedAchievements,
+            total,
             pagination: {
               current: page,
               pageSize,

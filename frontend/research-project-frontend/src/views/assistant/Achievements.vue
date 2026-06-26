@@ -1,226 +1,119 @@
 <!-- src/views/assistant/AuditAchievements.vue -->
 <template>
   <div class="audit-achievements-page assistant-ruc-theme">
-    <!-- 页面标题和操作栏 -->
     <div class="page-header">
-      <div class="header-left">
-        <h1 class="page-title">科研成果审核管理</h1>
-        <div class="breadcrumb">
-          <span>工作台</span>
-          <span class="separator">/</span>
-          <span class="current">成果审核</span>
-        </div>
+      <el-button class="back-btn" @click="goDashboard">
+        <el-icon><ArrowLeft /></el-icon>
+        返回工作台
+      </el-button>
+      <h1 class="page-title">科研成果审核</h1>
+      <div class="page-description">审核本人负责项目下申请人提交的论文、专利、软著等科研成果</div>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card pending">
+        <div class="stat-num">{{ stats.pending || 0 }}</div>
+        <div class="stat-label">待审核</div>
       </div>
-      <div class="header-right">
-        <div class="filter-bar">
-          <el-input
-            v-model="searchQuery"
-            placeholder="搜索成果标题、关键词、项目..."
-            class="search-input"
-            clearable
-            @clear="handleSearch"
-            @keyup.enter="handleSearch"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-
-          <el-select
-            v-model="filterStatus"
-            placeholder="审核状态"
-            clearable
-            class="status-filter"
-            @change="handleFilter"
-          >
-            <el-option label="全部" value="all" />
-            <el-option label="待审核" value="submitted" />
-            <el-option label="审核中" value="under_review" />
-            <el-option label="已核实" value="verified" />
-            <el-option label="已驳回" value="rejected" />
-          </el-select>
-
-          <el-select
-            v-model="filterType"
-            placeholder="成果类型"
-            clearable
-            class="type-filter"
-            @change="handleFilter"
-          >
-            <el-option label="论文" value="paper" />
-            <el-option label="专利" value="patent" />
-            <el-option label="软件著作权" value="software" />
-            <el-option label="研究报告" value="report" />
-            <el-option label="原型样机" value="prototype" />
-            <el-option label="技术标准" value="standard" />
-            <el-option label="其他" value="other" />
-          </el-select>
-
-          <el-select
-            v-model="filterYear"
-            placeholder="成果年份"
-            clearable
-            class="year-filter"
-            @change="handleFilter"
-          >
-            <el-option v-for="year in years" :key="year" :label="year + '年'" :value="year" />
-          </el-select>
-
-          <el-button type="primary" @click="handleSearch" :loading="loading">
-            <el-icon><Search /></el-icon>
-            搜索
-          </el-button>
-
-          <el-button @click="handleReset">
-            <el-icon><Refresh /></el-icon>
-            重置
-          </el-button>
-        </div>
+      <div class="stat-card verified">
+        <div class="stat-num">{{ stats.verified || 0 }}</div>
+        <div class="stat-label">已核实</div>
+      </div>
+      <div class="stat-card rejected">
+        <div class="stat-num">{{ stats.rejected || 0 }}</div>
+        <div class="stat-label">已驳回</div>
       </div>
     </div>
 
-    <!-- 统计卡片 -->
-    <div class="stats-cards" v-if="!loading">
-      <el-row :gutter="20">
-        <el-col :xs="12" :sm="6" :md="6" :lg="6" :xl="6">
-          <div class="stat-card pending">
-            <div class="stat-content">
-              <div class="stat-number">{{ stats.pending || 0 }}</div>
-              <div class="stat-label">待审核</div>
-            </div>
-            <div class="stat-icon">
-              <span class="icon">⏳</span>
-            </div>
-          </div>
-        </el-col>
-        <el-col :xs="12" :sm="6" :md="6" :lg="6" :xl="6">
-          <div class="stat-card reviewing">
-            <div class="stat-content">
-              <div class="stat-number">{{ stats.reviewing || 0 }}</div>
-              <div class="stat-label">审核中</div>
-            </div>
-            <div class="stat-icon">
-              <span class="icon">📝</span>
-            </div>
-          </div>
-        </el-col>
-        <el-col :xs="12" :sm="6" :md="6" :lg="6" :xl="6">
-          <div class="stat-card verified">
-            <div class="stat-content">
-              <div class="stat-number">{{ stats.verified || 0 }}</div>
-              <div class="stat-label">已核实</div>
-            </div>
-            <div class="stat-icon">
-              <span class="icon">✅</span>
-            </div>
-          </div>
-        </el-col>
-        <el-col :xs="12" :sm="6" :md="6" :lg="6" :xl="6">
-          <div class="stat-card rejected">
-            <div class="stat-content">
-              <div class="stat-number">{{ stats.rejected || 0 }}</div>
-              <div class="stat-label">已驳回</div>
-            </div>
-            <div class="stat-icon">
-              <span class="icon">❌</span>
-            </div>
-          </div>
-        </el-col>
-      </el-row>
-
-      <!-- 类型统计 -->
-      <el-row :gutter="20" style="margin-top: 20px">
-        <el-col :xs="12" :sm="6" :md="6" :lg="6" :xl="6">
-          <div class="stat-card paper">
-            <div class="stat-content">
-              <div class="stat-number">{{ stats.by_type?.paper || 0 }}</div>
-              <div class="stat-label">论文成果</div>
-            </div>
-            <div class="stat-icon">
-              <span class="icon">📄</span>
-            </div>
-          </div>
-        </el-col>
-        <el-col :xs="12" :sm="6" :md="6" :lg="6" :xl="6">
-          <div class="stat-card patent">
-            <div class="stat-content">
-              <div class="stat-number">{{ stats.by_type?.patent || 0 }}</div>
-              <div class="stat-label">专利成果</div>
-            </div>
-            <div class="stat-icon">
-              <span class="icon">📜</span>
-            </div>
-          </div>
-        </el-col>
-        <el-col :xs="12" :sm="6" :md="6" :lg="6" :xl="6">
-          <div class="stat-card software">
-            <div class="stat-content">
-              <div class="stat-number">{{ stats.by_type?.software || 0 }}</div>
-              <div class="stat-label">软件著作权</div>
-            </div>
-            <div class="stat-icon">
-              <span class="icon">💻</span>
-            </div>
-          </div>
-        </el-col>
-        <el-col :xs="12" :sm="6" :md="6" :lg="6" :xl="6">
-          <div class="stat-card others">
-            <div class="stat-content">
-              <div class="stat-number">{{ stats.by_type?.others || 0 }}</div>
-              <div class="stat-label">其他成果</div>
-            </div>
-            <div class="stat-icon">
-              <span class="icon">📊</span>
-            </div>
-          </div>
-        </el-col>
-      </el-row>
-    </div>
-
-    <!-- 加载状态 -->
-    <div v-if="loading" class="loading-container">
-      <el-skeleton :rows="8" animated />
-    </div>
-
-    <!-- 主要表格 -->
-    <div v-else class="main-content">
-      <el-card class="table-card">
-        <template #header>
-          <div class="table-header">
-            <span class="table-title">科研成果列表</span>
-            <div class="table-actions">
-              <el-button type="info" size="small" @click="exportToExcel">
-                <el-icon><Download /></el-icon>
-                导出
-              </el-button>
-              <el-button
-                type="success"
-                size="small"
-                @click="batchVerify"
-                :disabled="selectedIds.length === 0"
-              >
-                <el-icon><Check /></el-icon>
-                批量核实
-              </el-button>
-              <el-button
-                type="warning"
-                size="small"
-                @click="batchReject"
-                :disabled="selectedIds.length === 0"
-              >
-                <el-icon><Close /></el-icon>
-                批量驳回
-              </el-button>
-            </div>
-          </div>
+    <div class="filter-toolbar">
+      <el-input
+        v-model="searchQuery"
+        placeholder="搜索成果标题、项目、提交人"
+        class="search-input"
+        clearable
+        @clear="handleSearch"
+        @keyup.enter="handleSearch"
+      >
+        <template #prefix>
+          <el-icon><Search /></el-icon>
         </template>
+      </el-input>
+      <el-select
+        v-model="filterStatus"
+        placeholder="审核状态"
+        clearable
+        class="filter-select"
+        @change="handleFilter"
+      >
+        <el-option label="全部" value="all" />
+        <el-option label="待审核" value="submitted" />
+        <el-option label="已核实" value="verified" />
+        <el-option label="已驳回" value="rejected" />
+      </el-select>
+      <el-select
+        v-model="filterType"
+        placeholder="成果类型"
+        clearable
+        class="filter-select"
+        @change="handleFilter"
+      >
+        <el-option label="论文" value="paper" />
+        <el-option label="专利" value="patent" />
+        <el-option label="软件著作权" value="software" />
+        <el-option label="研究报告" value="report" />
+        <el-option label="原型样机" value="prototype" />
+        <el-option label="技术标准" value="standard" />
+        <el-option label="其他" value="other" />
+      </el-select>
+      <el-select
+        v-model="filterYear"
+        placeholder="成果年份"
+        clearable
+        class="filter-select filter-select--year"
+        @change="handleFilter"
+      >
+        <el-option v-for="year in years" :key="year" :label="year + '年'" :value="year" />
+      </el-select>
+      <el-button type="primary" @click="handleSearch" :loading="tableLoading">搜索</el-button>
+      <el-button @click="handleReset">重置</el-button>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-toolbar">
+        <span class="table-toolbar-title">成果列表</span>
+        <div class="table-toolbar-actions">
+          <el-button size="small" @click="exportToExcel">
+            <el-icon><Download /></el-icon>
+            导出
+          </el-button>
+          <el-button
+            type="success"
+            size="small"
+            @click="batchVerify"
+            :disabled="selectedIds.length === 0"
+          >
+            <el-icon><Check /></el-icon>
+            批量核实
+          </el-button>
+          <el-button
+            type="danger"
+            size="small"
+            plain
+            @click="batchReject"
+            :disabled="selectedIds.length === 0"
+          >
+            <el-icon><Close /></el-icon>
+            批量驳回
+          </el-button>
+        </div>
+      </div>
 
         <el-table
           v-loading="tableLoading"
           :data="achievementList"
+          stripe
           @selection-change="handleSelectionChange"
           style="width: 100%"
-          :header-cell-style="{ background: '#f5f7fa', color: '#333' }"
         >
           <el-table-column type="selection" width="55" align="center" />
 
@@ -232,7 +125,9 @@
                   <el-tag :type="getTypeTagType(row.type)" size="small">
                     {{ getTypeText(row.type) }}
                   </el-tag>
-                  <span class="achievement-keywords">{{ formatKeywords(row.keywords) }}</span>
+                  <span v-if="row.creator_info?.name" class="achievement-submitter">
+                    {{ row.creator_info.name }}
+                  </span>
                 </div>
               </div>
             </template>
@@ -247,10 +142,13 @@
             </template>
           </el-table-column>
 
-          <el-table-column prop="authors" label="作者" width="120">
+          <el-table-column prop="creator_info.name" label="提交人" width="120">
             <template #default="{ row }">
               <div class="authors-cell">
-                {{ formatAuthors(row.authors) }}
+                {{ row.creator_info?.name || '--' }}
+                <div v-if="row.creator_info?.department" class="sub-info">
+                  {{ row.creator_info.department }}
+                </div>
               </div>
             </template>
           </el-table-column>
@@ -290,7 +188,7 @@
                 </el-button>
 
                 <el-button
-                  v-if="row.status === 'submitted' || row.status === 'under_review'"
+                  v-if="row.status === 'submitted'"
                   size="small"
                   type="success"
                   plain
@@ -301,7 +199,7 @@
                 </el-button>
 
                 <el-button
-                  v-if="row.status === 'submitted' || row.status === 'under_review'"
+                  v-if="row.status === 'submitted'"
                   size="small"
                   type="danger"
                   plain
@@ -316,7 +214,7 @@
         </el-table>
 
         <!-- 分页 -->
-        <div class="pagination-container">
+        <div class="pagination-wrap">
           <el-pagination
             v-model:current-page="pagination.current"
             v-model:page-size="pagination.size"
@@ -327,7 +225,6 @@
             @current-change="handleCurrentChange"
           />
         </div>
-      </el-card>
     </div>
 
     <!-- 详情对话框 -->
@@ -530,10 +427,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search,
-  Refresh,
   Download,
   Check,
   Close,
@@ -542,8 +439,15 @@ import {
   Picture,
   Document,
   Files,
+  ArrowLeft,
 } from '@element-plus/icons-vue'
 import request from '@/utils/request'
+
+const router = useRouter()
+
+const goDashboard = () => {
+  router.push('/assistant/dashboard')
+}
 
 interface ProjectAchievement {
   id: string
@@ -580,8 +484,8 @@ interface ProjectAchievement {
 }
 
 // 响应式数据
-const loading = ref(true)
-const tableLoading = ref(false)
+const loading = ref(false)
+const tableLoading = ref(true)
 const achievementList = ref<ProjectAchievement[]>([])
 const selectedIds = ref<string[]>([])
 const searchQuery = ref('')
@@ -719,15 +623,20 @@ const parseAuthors = (authors: any) => {
   }
 }
 
-const formatKeywords = (keywords: string) => {
-  if (!keywords) return '--'
-  const keywordArray = keywords.split(/[,，;；]/).filter((k) => k.trim())
+const formatKeywords = (keywords: string | string[] | null | undefined) => {
+  if (!keywords || (Array.isArray(keywords) && keywords.length === 0)) return ''
+  if (Array.isArray(keywords)) {
+    return keywords.slice(0, 3).join('，') + (keywords.length > 3 ? '...' : '')
+  }
+  const keywordArray = String(keywords).split(/[,，;；]/).filter((k) => k.trim())
+  if (!keywordArray.length) return ''
   return keywordArray.slice(0, 3).join('，') + (keywordArray.length > 3 ? '...' : '')
 }
 
-const formatKeywordsArray = (keywords: string) => {
+const formatKeywordsArray = (keywords: string | string[] | null | undefined) => {
   if (!keywords) return []
-  return keywords
+  if (Array.isArray(keywords)) return keywords.filter(Boolean).slice(0, 10)
+  return String(keywords)
     .split(/[,，;；]/)
     .filter((k) => k.trim())
     .slice(0, 10)
@@ -781,8 +690,18 @@ const loadAchievementData = async () => {
 
     if (response.success) {
       achievementList.value = response.data.list || []
-      pagination.value.total = response.data.total || 0
-      stats.value = response.data.stats || stats.value
+      pagination.value.total =
+        response.data.pagination?.total ?? response.data.total ?? achievementList.value.length
+      if (response.data.stats) {
+        stats.value = {
+          ...stats.value,
+          ...response.data.stats,
+          pending: Number(response.data.stats.pending) || 0,
+          verified: Number(response.data.stats.verified) || 0,
+          rejected: Number(response.data.stats.rejected) || 0,
+          by_type: response.data.stats.by_type || stats.value.by_type,
+        }
+      }
     } else {
       ElMessage.error(response.error || '加载数据失败')
     }
@@ -794,19 +713,6 @@ const loadAchievementData = async () => {
     loading.value = false
   }
 }
-
-const loadStats = async () => {
-  try {
-    const response = await request.get('/api/assistant/achievements/stats')
-    if (response.success) {
-      stats.value = response.data.summary || stats.value
-    }
-  } catch (error) {
-    console.error('加载统计数据失败:', error)
-  }
-}
-
-// 事件处理
 const handleSearch = () => {
   pagination.value.current = 1
   loadAchievementData()
@@ -1055,170 +961,132 @@ const exportToExcel = async () => {
   }
 }
 
-// 生命周期
 onMounted(() => {
   loadAchievementData()
-  loadStats()
 })
 </script>
 
 <style scoped>
-/* 复用之前的样式基础，添加科研成果特有样式 */
 .audit-achievements-page {
-  padding: 20px;
+  padding: 24px;
   min-height: 100vh;
-  background: #f0f2f5;
+  background: #f5f7fa;
 }
 
-/* 页面标题样式 */
 .page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-  flex-wrap: wrap;
-  gap: 16px;
+  margin-bottom: 20px;
 }
 
-.header-left {
-  flex: 1;
-  min-width: 300px;
+.back-btn {
+  margin-bottom: 12px;
 }
 
 .page-title {
-  margin: 0;
+  margin: 0 0 6px;
   font-size: 24px;
   font-weight: 600;
-  color: #1d2129;
-  margin-bottom: 8px;
+  color: #1a1a2e;
 }
 
-.breadcrumb {
+.page-description {
+  color: #6b7280;
   font-size: 14px;
-  color: #86909c;
 }
 
-.breadcrumb .separator {
-  margin: 0 8px;
-}
-
-.breadcrumb .current {
-  color: #b31b1b;
-  font-weight: 500;
-}
-
-/* 筛选栏 */
-.filter-bar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.search-input {
-  width: 300px;
-}
-
-.status-filter,
-.type-filter,
-.year-filter {
-  width: 140px;
-}
-
-/* 统计卡片 */
-.stats-cards {
-  margin-bottom: 24px;
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
 }
 
 .stat-card {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px;
-  border-radius: 12px;
-  color: white;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  transition: transform 0.3s ease;
-  height: 100px;
+  background: #fff;
+  border-radius: 10px;
+  padding: 16px 20px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
-.stat-card:hover {
-  transform: translateY(-4px);
-}
-
-.stat-card.pending {
-  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
-}
-
-.stat-card.reviewing {
-  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
-}
-
-.stat-card.verified {
-  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
-}
-
-.stat-card.rejected {
-  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
-}
-
-.stat-card.paper {
-  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
-}
-
-.stat-card.patent {
-  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
-}
-
-.stat-card.software {
-  background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
-}
-
-.stat-card.others {
-  background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
-}
-
-.stat-content {
-  flex: 1;
-}
-
-.stat-number {
-  font-size: 24px;
+.stat-num {
+  font-size: 28px;
   font-weight: 700;
-  margin-bottom: 4px;
+  line-height: 1.2;
 }
 
 .stat-label {
-  font-size: 14px;
-  opacity: 0.9;
+  margin-top: 4px;
+  font-size: 13px;
+  color: #6b7280;
 }
 
-.stat-icon .icon {
-  font-size: 40px;
-  opacity: 0.8;
+.stat-card.pending .stat-num {
+  color: #d97706;
 }
 
-/* 表格卡片 */
-.table-card {
-  border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+.stat-card.verified .stat-num {
+  color: #059669;
 }
 
-.table-header {
+.stat-card.rejected .stat-num {
+  color: #dc2626;
+}
+
+.filter-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 16px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.search-input {
+  width: 280px;
+}
+
+.filter-select {
+  width: 130px;
+}
+
+.filter-select--year {
+  width: 110px;
+}
+
+.table-wrap {
+  background: #fff;
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.table-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-.table-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: #1d2129;
-}
-
-.table-actions {
-  display: flex;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.table-toolbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a2e;
+}
+
+.table-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 /* 单元格样式 */
@@ -1242,7 +1110,7 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
-.achievement-keywords {
+.achievement-submitter {
   font-size: 12px;
   color: #86909c;
   line-height: 1.4;
@@ -1293,12 +1161,7 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
-/* 分页样式 */
-.pagination-container {
-  margin-top: 24px;
-  display: flex;
-  justify-content: flex-end;
-}
+/* 分页样式 - 保留兼容 */
 
 /* 详情对话框样式 */
 .detail-content {
@@ -1515,34 +1378,25 @@ onMounted(() => {
   text-align: center;
 }
 
-/* 加载状态 */
-.loading-container {
-  padding: 40px;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-}
-
 /* 响应式设计 */
 @media (max-width: 768px) {
-  .page-header {
-    flex-direction: column;
-    align-items: stretch;
+  .audit-achievements-page {
+    padding: 16px;
   }
 
-  .header-left {
-    margin-bottom: 16px;
-  }
-
-  .filter-bar {
-    flex-direction: column;
+  .stats-row {
+    grid-template-columns: 1fr;
   }
 
   .search-input,
-  .status-filter,
-  .type-filter,
-  .year-filter {
+  .filter-select,
+  .filter-select--year {
     width: 100%;
+  }
+
+  .table-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .action-buttons {
