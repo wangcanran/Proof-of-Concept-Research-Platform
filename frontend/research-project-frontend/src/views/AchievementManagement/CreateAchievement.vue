@@ -1,21 +1,36 @@
 <template>
-  <div class="create-achievement">
-    <!-- 页面头部 -->
+  <div class="achievement-register-page">
     <div class="page-header">
-      <div class="header-content">
-        <h2>{{ pageTitle }}</h2>
-        <div class="header-actions">
-          <el-button @click="goBack">返回工作台</el-button>
-          <el-button type="primary" @click="handleSave" :loading="saving">
-            {{ isEditMode ? '更新成果' : isApplicant ? '提交审批' : '创建成果' }}
-          </el-button>
+      <div class="header-left">
+        <button type="button" class="back-btn" @click="goBack">
+          <el-icon><ArrowLeft /></el-icon>
+          <span>返回工作台</span>
+        </button>
+        <h1>{{ pageTitle }}</h1>
+        <div v-if="isApplicant && !isEditMode" class="header-subtitle">
+          查看已登记成果及审核状态；在下方填写表单提交新成果。仅限已入库或孵化中的项目。
+        </div>
+        <div v-else-if="isApplicant" class="header-subtitle">
+          登记论文、专利、报告等科研产出；提交后由项目经理审核
         </div>
       </div>
-      <p v-if="isApplicant" class="page-subtitle">登记论文、专利、报告等科研产出；仅限已入库或孵化中的项目，提交后由项目经理审核</p>
     </div>
 
-    <!-- 表单内容 -->
-    <div class="form-container">
+    <div class="content-wrapper">
+      <ApplicantAchievementList
+        v-if="isApplicant && !isEditMode"
+        ref="achievementListRef"
+      />
+
+      <div class="section-card" :class="{ 'form-section': isApplicant && !isEditMode }">
+        <div v-if="isApplicant && !isEditMode" class="section-header">
+          <h3 class="section-title">
+            <span class="section-icon">✏️</span>
+            登记新成果
+          </h3>
+        </div>
+
+        <div class="form-body">
       <el-form
         ref="formRef"
         :model="formData"
@@ -103,10 +118,8 @@
                 >
                   <el-option label="草稿" value="draft" />
                   <el-option label="已提交" value="submitted" />
-                  <el-option label="已验证" value="verified" />
-                  <el-option label="已发布" value="published" />
-                  <el-option label="已转化" value="transferred" />
-                  <el-option label="已应用" value="applied" />
+                  <el-option label="已核实" value="verified" />
+                  <el-option label="已驳回" value="rejected" />
                 </el-select>
               </el-form-item>
             </el-col>
@@ -293,9 +306,12 @@
       </el-form>
 
       <div class="form-footer">
-        <el-button type="primary" size="large" @click="handleSave" :loading="saving">
-          {{ isEditMode ? '更新成果' : isApplicant ? '提交审批' : '创建成果' }}
-        </el-button>
+        <button type="button" class="btn secondary" @click="goBack">取消</button>
+        <button type="button" class="btn primary" :disabled="saving" @click="handleSave">
+          {{ saving ? '提交中...' : isEditMode ? '更新成果' : isApplicant ? '提交审批' : '创建成果' }}
+        </button>
+      </div>
+        </div>
       </div>
     </div>
   </div>
@@ -305,8 +321,10 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import { projectAPI } from '@/api/projects'
 import { achievementAPI } from '@/api/achievements'
+import ApplicantAchievementList from './ApplicantAchievementList.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -329,6 +347,7 @@ const saving = ref(false)
 const loading = ref(false)
 const formRef = ref()
 const uploadRef = ref()
+const achievementListRef = ref<InstanceType<typeof ApplicantAchievementList> | null>(null)
 
 // 项目列表
 const projectList = ref([])
@@ -561,7 +580,14 @@ const handleSave = async () => {
           ? '科研成果已提交，等待项目经理审批'
           : '成果创建成功',
     )
-    router.push('/applicant/dashboard')
+    if (isEditMode.value) {
+      router.push('/achievements/create')
+    } else if (isApplicant.value) {
+      resetForm()
+      achievementListRef.value?.refresh()
+    } else {
+      router.push('/applicant/dashboard')
+    }
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : '保存失败'
     ElMessage.error(msg)
@@ -648,9 +674,32 @@ const parseDescriptionDetails = (description) => {
   })
 }
 
-// 返回列表
+// 返回
 const goBack = () => {
-  router.push('/applicant/dashboard')
+  if (isEditMode.value && isApplicant.value) {
+    router.push('/achievements/create')
+  } else {
+    router.push('/applicant/dashboard')
+  }
+}
+
+const resetForm = () => {
+  formRef.value?.resetFields()
+  formData.type = ''
+  formData.title = ''
+  formData.project_id = ''
+  formData.description = ''
+  formData.keywords = ''
+  formData.achievement_date = ''
+  formData.external_link = ''
+  formData.authors = []
+  authorsInput.value = ''
+  keywordsInput.value = ''
+  keywordTags.value = []
+  fileList.value = []
+  Object.assign(paperInfo, { journal: '', doi: '', volume: '', publishDate: '' })
+  Object.assign(patentInfo, { number: '', type: '', authority: '' })
+  Object.assign(awardInfo, { name: '', level: '', date: '', organization: '' })
 }
 
 onMounted(async () => {
@@ -670,52 +719,96 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.debug-info {
-  margin-top: 5px;
-  font-size: 12px;
-  color: #909399;
+.achievement-register-page {
+  min-height: 100vh;
   background: #f5f7fa;
-  padding: 5px;
-  border-radius: 3px;
-  border-left: 3px solid #409eff;
-}
-.create-achievement {
-  padding: 20px;
-  background: #f5f7fa;
-  min-height: calc(100vh - 60px);
+  --ruc-primary: #b31b1b;
+  --ruc-primary-hover: #8b1515;
+  --ruc-primary-light: rgba(179, 27, 27, 0.06);
 }
 
 .page-header {
   background: white;
-  padding: 20px;
-  border-radius: 4px;
-  margin-bottom: 20px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  padding: 20px 24px;
+  border-bottom: 1px solid #e8e8e8;
 }
 
-.header-content {
-  display: flex;
-  justify-content: space-between;
+.header-left {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.back-btn {
+  display: inline-flex;
   align-items: center;
-  margin-bottom: 20px;
-}
-
-.header-content h2 {
-  margin: 0;
-  color: #303133;
-}
-
-.page-subtitle {
-  margin: 12px 0 0;
-  color: #909399;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 8px 16px;
+  background: #f5f5f5;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  color: #666;
+  cursor: pointer;
   font-size: 14px;
 }
 
-.form-container {
+.back-btn:hover {
+  background: #e8e8e8;
+  color: #333;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 24px;
+  color: #2c3e50;
+  font-weight: 600;
+}
+
+.header-subtitle {
+  margin-top: 6px;
+  color: #999;
+  font-size: 14px;
+}
+
+.content-wrapper {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.section-card {
   background: white;
-  padding: 30px;
-  border-radius: 4px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+
+.section-card.form-section {
+  border: 2px solid var(--ruc-primary);
+}
+
+.section-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 18px;
+  color: #2c3e50;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.form-body {
+  padding: 24px;
 }
 
 .form-step {
@@ -724,16 +817,19 @@ onMounted(async () => {
 }
 
 .form-step h3 {
-  color: #409eff;
+  color: #2c3e50;
   margin-bottom: 20px;
   padding-bottom: 10px;
-  border-bottom: 1px solid #ebeef5;
+  border-bottom: 2px solid var(--ruc-primary-light);
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .form-step h4 {
-  color: #67c23a;
+  color: var(--ruc-primary);
   margin: 15px 0;
   font-size: 14px;
+  font-weight: 600;
 }
 
 .tags-container {
@@ -741,18 +837,52 @@ onMounted(async () => {
 }
 
 .type-fields {
-  background: #f8f9fa;
+  background: var(--ruc-primary-light);
   padding: 15px;
-  border-radius: 4px;
+  border-radius: 8px;
   margin-bottom: 20px;
-  border: 1px solid #ebeef5;
+  border: 1px solid rgba(179, 27, 27, 0.12);
 }
 
 .form-footer {
-  margin-top: 24px;
+  margin-top: 8px;
   padding-top: 24px;
-  border-top: 1px solid #ebeef5;
-  text-align: center;
+  border-top: 1px solid #f0f0f0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.btn {
+  padding: 10px 24px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  border: none;
+}
+
+.btn.secondary {
+  background: #f5f5f5;
+  color: #666;
+  border: 1px solid #e8e8e8;
+}
+
+.btn.secondary:hover {
+  background: #e8e8e8;
+}
+
+.btn.primary {
+  background: var(--ruc-primary);
+  color: white;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--ruc-primary-hover);
+}
+
+.btn.primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .upload-demo {
@@ -765,26 +895,57 @@ onMounted(async () => {
   font-size: 12px;
 }
 
-/* 响应式设计 */
+/* Element Plus 主题色统一为人大红 */
+.achievement-register-page :deep(.el-button--primary) {
+  --el-button-bg-color: #b31b1b;
+  --el-button-border-color: #b31b1b;
+  --el-button-hover-bg-color: #8b1515;
+  --el-button-hover-border-color: #8b1515;
+  --el-button-active-bg-color: #8b1515;
+  --el-button-active-border-color: #8b1515;
+}
+
+.achievement-register-page :deep(.el-button--primary.is-link) {
+  --el-button-text-color: #b31b1b;
+  --el-button-hover-text-color: #8b1515;
+  background: transparent;
+  border-color: transparent;
+}
+
+.achievement-register-page :deep(.el-input__wrapper:focus-within),
+.achievement-register-page :deep(.el-textarea__inner:focus) {
+  box-shadow: 0 0 0 1px #b31b1b inset;
+}
+
+.achievement-register-page :deep(.el-select .el-input.is-focus .el-input__wrapper) {
+  box-shadow: 0 0 0 1px #b31b1b inset;
+}
+
+.achievement-register-page :deep(.el-tag) {
+  --el-tag-text-color: #b31b1b;
+  --el-tag-bg-color: rgba(179, 27, 27, 0.06);
+  --el-tag-border-color: rgba(179, 27, 27, 0.2);
+}
+
+.achievement-register-page :deep(.el-pagination.is-background .el-pager li.is-active) {
+  background-color: #b31b1b;
+}
+
 @media (max-width: 768px) {
-  .create-achievement {
-    padding: 10px;
+  .content-wrapper {
+    padding: 16px;
   }
 
-  .form-container {
-    padding: 20px 15px;
+  .form-body {
+    padding: 16px;
   }
 
-  .header-content {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 15px;
+  .form-footer {
+    flex-direction: column-reverse;
   }
 
-  .header-actions {
+  .btn {
     width: 100%;
-    display: flex;
-    justify-content: flex-end;
   }
 
   .el-row {

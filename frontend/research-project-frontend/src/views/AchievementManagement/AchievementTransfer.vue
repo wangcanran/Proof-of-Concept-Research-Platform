@@ -996,7 +996,7 @@ const handleDialogClose = () => {
 }
 
 const goBack = () => {
-  router.push('/achievements')
+  router.push('/achievements/create')
 }
 
 // 初始化

@@ -4,7 +4,7 @@
       <el-skeleton :rows="4" animated />
     </div>
     <div v-else-if="records.length === 0" class="empty-state">
-      <p>暂无已通过审批的活动成果</p>
+      <p>暂无已通过审批的活动</p>
     </div>
     <div v-else class="record-list">
       <div v-for="record in records" :key="record.id" class="record-card">

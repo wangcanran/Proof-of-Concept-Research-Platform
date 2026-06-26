@@ -37,8 +37,6 @@
             <el-option label="待审核" value="submitted" />
             <el-option label="审核中" value="under_review" />
             <el-option label="已核实" value="verified" />
-            <el-option label="已发布" value="published" />
-            <el-option label="已转化" value="transferred" />
             <el-option label="已驳回" value="rejected" />
           </el-select>
 
@@ -118,13 +116,13 @@
           </div>
         </el-col>
         <el-col :xs="12" :sm="6" :md="6" :lg="6" :xl="6">
-          <div class="stat-card published">
+          <div class="stat-card rejected">
             <div class="stat-content">
-              <div class="stat-number">{{ stats.published || 0 }}</div>
-              <div class="stat-label">已发布</div>
+              <div class="stat-number">{{ stats.rejected || 0 }}</div>
+              <div class="stat-label">已驳回</div>
             </div>
             <div class="stat-icon">
-              <span class="icon">📢</span>
+              <span class="icon">❌</span>
             </div>
           </div>
         </el-col>
@@ -213,15 +211,6 @@
                 <el-icon><Close /></el-icon>
                 批量驳回
               </el-button>
-              <el-button
-                type="primary"
-                size="small"
-                @click="batchPublish"
-                :disabled="selectedIds.length === 0"
-              >
-                <el-icon><Promotion /></el-icon>
-                批量发布
-              </el-button>
             </div>
           </div>
         </template>
@@ -292,7 +281,7 @@
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="220" fixed="right">
+          <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
               <div class="action-buttons">
                 <el-button size="small" type="primary" plain @click="viewDetail(row)">
@@ -320,28 +309,6 @@
                 >
                   <el-icon><Close /></el-icon>
                   驳回
-                </el-button>
-
-                <el-button
-                  v-if="row.status === 'verified'"
-                  size="small"
-                  type="warning"
-                  plain
-                  @click="handlePublish(row)"
-                >
-                  <el-icon><Promotion /></el-icon>
-                  发布
-                </el-button>
-
-                <el-button
-                  v-if="row.status === 'verified' || row.status === 'published'"
-                  size="small"
-                  type="info"
-                  plain
-                  @click="handleTransfer(row)"
-                >
-                  <el-icon><Transfer /></el-icon>
-                  转化
                 </el-button>
               </div>
             </template>
@@ -497,79 +464,10 @@
                       {{ currentDetail.verification_comment || '无' }}
                     </div>
                   </el-descriptions-item>
-                  <el-descriptions-item
-                    label="发布日期"
-                    v-if="currentDetail.status === 'published'"
-                  >
-                    {{
-                      currentDetail.published_date ? formatDate(currentDetail.published_date) : '--'
-                    }}
-                  </el-descriptions-item>
-                  <el-descriptions-item
-                    label="发布链接"
-                    v-if="currentDetail.status === 'published' && currentDetail.publish_link"
-                  >
-                    <el-link :href="currentDetail.publish_link" target="_blank" type="primary">
-                      {{ currentDetail.publish_link }}
-                    </el-link>
-                  </el-descriptions-item>
                 </el-descriptions>
               </div>
               <div v-else>
                 <el-empty description="尚未审核" />
-              </div>
-            </div>
-          </el-tab-pane>
-
-          <!-- 转化信息标签页 -->
-          <el-tab-pane label="转化信息" name="transfer">
-            <div class="transfer-info">
-              <div
-                v-if="currentDetail.transfer_records && currentDetail.transfer_records.length > 0"
-              >
-                <h4>成果转化记录</h4>
-                <div class="transfer-list">
-                  <div
-                    v-for="transfer in currentDetail.transfer_records"
-                    :key="transfer.id"
-                    class="transfer-item"
-                  >
-                    <el-descriptions :column="2" border size="small">
-                      <el-descriptions-item label="转化类型">
-                        {{ getTransferTypeText(transfer.transfer_type) }}
-                      </el-descriptions-item>
-                      <el-descriptions-item label="转化状态">
-                        <el-tag
-                          :type="getTransferStatusTagType(transfer.transfer_status)"
-                          size="small"
-                        >
-                          {{ getTransferStatusText(transfer.transfer_status) }}
-                        </el-tag>
-                      </el-descriptions-item>
-                      <el-descriptions-item label="受让方">
-                        {{ transfer.transferee }}
-                      </el-descriptions-item>
-                      <el-descriptions-item label="转化日期">
-                        {{ formatDate(transfer.transfer_date) }}
-                      </el-descriptions-item>
-                      <el-descriptions-item label="合同金额">
-                        ¥{{ formatCurrency(transfer.contract_amount) }}
-                      </el-descriptions-item>
-                      <el-descriptions-item label="实际金额">
-                        ¥{{ formatCurrency(transfer.actual_amount) }}
-                      </el-descriptions-item>
-                      <el-descriptions-item label="合同编号" :span="2">
-                        {{ transfer.contract_no || '--' }}
-                      </el-descriptions-item>
-                      <el-descriptions-item label="转化描述" :span="2">
-                        <div class="transfer-description">{{ transfer.description || '无' }}</div>
-                      </el-descriptions-item>
-                    </el-descriptions>
-                  </div>
-                </div>
-              </div>
-              <div v-else>
-                <el-empty description="暂无转化记录" />
               </div>
             </div>
           </el-tab-pane>
@@ -605,142 +503,6 @@
             </el-form-item>
           </el-form>
         </div>
-
-        <!-- 发布操作 -->
-        <div v-if="currentDetail.status === 'verified'" class="publish-actions">
-          <h4>发布操作</h4>
-          <el-form :model="publishForm" label-width="80px">
-            <el-form-item label="发布链接">
-              <el-input
-                v-model="publishForm.publish_link"
-                placeholder="请输入成果发布链接（如期刊网址、专利号链接等）"
-              />
-            </el-form-item>
-            <el-form-item label="发布日期">
-              <el-date-picker
-                v-model="publishForm.publish_date"
-                type="date"
-                placeholder="选择发布日期"
-                value-format="YYYY-MM-DD"
-              />
-            </el-form-item>
-            <el-form-item label="备注说明">
-              <el-input
-                v-model="publishForm.remark"
-                type="textarea"
-                :rows="3"
-                placeholder="可输入发布相关备注"
-              />
-            </el-form-item>
-            <el-form-item>
-              <el-button type="warning" @click="submitPublish" :loading="publishLoading">
-                确认发布
-              </el-button>
-              <el-button @click="activeTab = 'basic'">取消</el-button>
-            </el-form-item>
-          </el-form>
-        </div>
-
-        <!-- 转化操作 -->
-        <div
-          v-if="currentDetail.status === 'verified' || currentDetail.status === 'published'"
-          class="transfer-actions"
-        >
-          <h4>成果转化</h4>
-          <el-button type="info" @click="openTransferDialog">
-            <el-icon><Transfer /></el-icon>
-            新建转化记录
-          </el-button>
-        </div>
-      </div>
-    </el-dialog>
-
-    <!-- 转化对话框 -->
-    <el-dialog v-model="transferDialogVisible" title="新建成果转化记录" width="600px">
-      <div v-if="currentDetail" class="transfer-dialog-content">
-        <el-form
-          :model="transferForm"
-          label-width="100px"
-          :rules="transferRules"
-          ref="transferFormRef"
-        >
-          <el-form-item label="转化类型" prop="transfer_type">
-            <el-select v-model="transferForm.transfer_type" placeholder="请选择转化类型">
-              <el-option label="专利转让" value="patent_transfer" />
-              <el-option label="专利许可" value="license" />
-              <el-option label="技术合作" value="cooperation" />
-              <el-option label="自主实施" value="self_implementation" />
-              <el-option label="其他" value="other" />
-            </el-select>
-          </el-form-item>
-
-          <el-form-item label="受让方" prop="transferee">
-            <el-input v-model="transferForm.transferee" placeholder="请输入受让方/合作方名称" />
-          </el-form-item>
-
-          <el-form-item label="转化日期" prop="transfer_date">
-            <el-date-picker
-              v-model="transferForm.transfer_date"
-              type="date"
-              placeholder="选择转化日期"
-              value-format="YYYY-MM-DD"
-            />
-          </el-form-item>
-
-          <el-form-item label="合同编号">
-            <el-input v-model="transferForm.contract_no" placeholder="请输入合同编号（如有）" />
-          </el-form-item>
-
-          <el-form-item label="合同金额">
-            <el-input-number
-              v-model="transferForm.contract_amount"
-              :min="0"
-              :step="1000"
-              placeholder="合同金额"
-              style="width: 100%"
-            >
-              <template #prefix>¥</template>
-            </el-input-number>
-          </el-form-item>
-
-          <el-form-item label="实际金额">
-            <el-input-number
-              v-model="transferForm.actual_amount"
-              :min="0"
-              :step="1000"
-              placeholder="实际到账金额"
-              style="width: 100%"
-            >
-              <template #prefix>¥</template>
-            </el-input-number>
-          </el-form-item>
-
-          <el-form-item label="转化状态" prop="transfer_status">
-            <el-select v-model="transferForm.transfer_status" placeholder="请选择转化状态">
-              <el-option label="洽谈中" value="negotiating" />
-              <el-option label="已签约" value="contracted" />
-              <el-option label="实施中" value="implementing" />
-              <el-option label="已完成" value="completed" />
-              <el-option label="已终止" value="terminated" />
-            </el-select>
-          </el-form-item>
-
-          <el-form-item label="转化描述" prop="description">
-            <el-input
-              v-model="transferForm.description"
-              type="textarea"
-              :rows="4"
-              placeholder="请输入转化相关描述"
-            />
-          </el-form-item>
-
-          <el-form-item>
-            <el-button type="primary" @click="submitTransfer" :loading="transferLoading">
-              确认创建
-            </el-button>
-            <el-button @click="transferDialogVisible = false">取消</el-button>
-          </el-form-item>
-        </el-form>
       </div>
     </el-dialog>
 
@@ -776,7 +538,6 @@ import {
   Check,
   Close,
   View,
-  Promotion,
   Link,
   Picture,
   Document,
@@ -816,20 +577,6 @@ interface ProjectAchievement {
     id: string
     name: string
   }
-  transfer_records?: AchievementTransfer[]
-}
-
-interface AchievementTransfer {
-  id: string
-  achievement_id: string
-  transfer_type: string
-  transferee: string
-  transfer_date: string
-  contract_no?: string
-  contract_amount: number
-  actual_amount: number
-  transfer_status: string
-  description?: string
 }
 
 // 响应式数据
@@ -845,7 +592,6 @@ const stats = ref({
   pending: 0,
   reviewing: 0,
   verified: 0,
-  published: 0,
   rejected: 0,
   by_type: {
     paper: 0,
@@ -872,35 +618,6 @@ const reviewForm = ref({
 })
 const reviewLoading = ref(false)
 
-// 发布表单
-const publishForm = ref({
-  publish_link: '',
-  publish_date: new Date().toISOString().split('T')[0],
-  remark: '',
-})
-const publishLoading = ref(false)
-
-// 转化对话框
-const transferDialogVisible = ref(false)
-const transferForm = ref({
-  transfer_type: '',
-  transferee: '',
-  transfer_date: new Date().toISOString().split('T')[0],
-  contract_no: '',
-  contract_amount: 0,
-  actual_amount: 0,
-  transfer_status: 'negotiating',
-  description: '',
-})
-const transferFormRef = ref()
-const transferLoading = ref(false)
-const transferRules = {
-  transfer_type: [{ required: true, message: '请选择转化类型', trigger: 'blur' }],
-  transferee: [{ required: true, message: '请输入受让方', trigger: 'blur' }],
-  transfer_date: [{ required: true, message: '请选择转化日期', trigger: 'blur' }],
-  transfer_status: [{ required: true, message: '请选择转化状态', trigger: 'blur' }],
-}
-
 // 预览对话框
 const previewDialogVisible = ref(false)
 const previewFileUrl = ref('')
@@ -923,10 +640,6 @@ const selectedAchievements = computed(() => {
 })
 
 // 工具函数
-const formatCurrency = (amount: number) => {
-  return amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })
-}
-
 const formatDate = (dateString: string) => {
   if (!dateString) return '--'
   return new Date(dateString).toLocaleDateString('zh-CN', {
@@ -968,8 +681,6 @@ const getStatusText = (status: string) => {
     submitted: '待审核',
     under_review: '审核中',
     verified: '已核实',
-    published: '已发布',
-    transferred: '已转化',
     rejected: '已驳回',
   }
   return statusMap[status] || status
@@ -981,42 +692,7 @@ const getStatusTagType = (status: string) => {
     submitted: 'warning',
     under_review: 'primary',
     verified: 'success',
-    published: 'warning',
-    transferred: '',
     rejected: 'danger',
-  }
-  return typeMap[status] || 'info'
-}
-
-const getTransferTypeText = (type: string) => {
-  const typeMap: Record<string, string> = {
-    patent_transfer: '专利转让',
-    license: '专利许可',
-    cooperation: '技术合作',
-    self_implementation: '自主实施',
-    other: '其他',
-  }
-  return typeMap[type] || type
-}
-
-const getTransferStatusText = (status: string) => {
-  const statusMap: Record<string, string> = {
-    negotiating: '洽谈中',
-    contracted: '已签约',
-    implementing: '实施中',
-    completed: '已完成',
-    terminated: '已终止',
-  }
-  return statusMap[status] || status
-}
-
-const getTransferStatusTagType = (status: string) => {
-  const typeMap: Record<string, string> = {
-    negotiating: 'info',
-    contracted: 'primary',
-    implementing: 'warning',
-    completed: 'success',
-    terminated: 'danger',
   }
   return typeMap[status] || 'info'
 }
@@ -1176,11 +852,6 @@ const viewDetail = async (row: ProjectAchievement) => {
         recommendation: 'verify',
         comment: '',
       }
-      publishForm.value = {
-        publish_link: currentDetail.value.publish_link || '',
-        publish_date: currentDetail.value.published_date || new Date().toISOString().split('T')[0],
-        remark: '',
-      }
     }
   } catch (error) {
     console.error('获取详情失败:', error)
@@ -1206,28 +877,12 @@ const handleReject = (row: ProjectAchievement) => {
   detailDialogVisible.value = true
 }
 
-const handlePublish = (row: ProjectAchievement) => {
-  currentDetail.value = row
-  detailDialogVisible.value = true
-  activeTab.value = 'basic'
-}
-
-const handleTransfer = (row: ProjectAchievement) => {
-  currentDetail.value = row
-  openTransferDialog()
-}
-
 const handleDialogClosed = () => {
   currentDetail.value = null
   activeTab.value = 'basic'
   reviewForm.value = {
     recommendation: 'verify',
     comment: '',
-  }
-  publishForm.value = {
-    publish_link: '',
-    publish_date: new Date().toISOString().split('T')[0],
-    remark: '',
   }
 }
 
@@ -1300,93 +955,6 @@ const submitReview = async () => {
   }
 }
 
-// 发布操作
-const submitPublish = async () => {
-  if (!currentDetail.value) return
-
-  if (!publishForm.value.publish_link.trim()) {
-    ElMessage.warning('请填写发布链接')
-    return
-  }
-
-  publishLoading.value = true
-  try {
-    const response = await request.post(
-      `/api/assistant/achievements/${currentDetail.value.id}/publish`,
-      {
-        publish_link: publishForm.value.publish_link,
-        publish_date: publishForm.value.publish_date,
-        remark: publishForm.value.remark,
-      },
-    )
-
-    if (response.success) {
-      ElMessage.success('发布成功')
-      detailDialogVisible.value = false
-      loadAchievementData()
-      loadStats()
-    } else {
-      ElMessage.error(response.error || '发布失败')
-    }
-  } catch (error) {
-    console.error('发布失败:', error)
-    ElMessage.error('发布失败')
-  } finally {
-    publishLoading.value = false
-  }
-}
-
-// 转化操作
-const openTransferDialog = () => {
-  transferForm.value = {
-    transfer_type: '',
-    transferee: '',
-    transfer_date: new Date().toISOString().split('T')[0],
-    contract_no: '',
-    contract_amount: 0,
-    actual_amount: 0,
-    transfer_status: 'negotiating',
-    description: '',
-  }
-  transferDialogVisible.value = true
-}
-
-const submitTransfer = async () => {
-  if (!currentDetail.value) return
-
-  if (!transferFormRef.value) return
-  const valid = await transferFormRef.value.validate()
-  if (!valid) return
-
-  transferLoading.value = true
-  try {
-    const response = await request.post(
-      `/api/assistant/achievements/${currentDetail.value.id}/transfer`,
-      transferForm.value,
-    )
-
-    if (response.success) {
-      ElMessage.success('转化记录创建成功')
-      transferDialogVisible.value = false
-      // 重新加载详情
-      const detailResponse = await request.get(
-        `/api/assistant/achievements/${currentDetail.value.id}`,
-      )
-      if (detailResponse.success) {
-        currentDetail.value = detailResponse.data.achievement
-        activeTab.value = 'transfer'
-      }
-    } else {
-      ElMessage.error(response.error || '创建转化记录失败')
-    }
-  } catch (error) {
-    console.error('创建转化记录失败:', error)
-    ElMessage.error('创建转化记录失败')
-  } finally {
-    transferLoading.value = false
-  }
-}
-
 // 批量操作
 const batchVerify = async () => {
   if (selectedIds.value.length === 0) return
@@ -1451,37 +1019,6 @@ const batchReject = async () => {
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('批量驳回失败')
-    }
-  }
-}
-
-const batchPublish = async () => {
-  if (selectedIds.value.length === 0) return
-
-  try {
-    await ElMessageBox.confirm(
-      `确定要批量发布选中的 ${selectedIds.value.length} 项已核实成果吗？`,
-      '批量发布',
-      {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
-        type: 'warning',
-      },
-    )
-
-    const response = await request.post('/api/assistant/achievements/batch-publish', {
-      ids: selectedIds.value,
-    })
-
-    if (response.success) {
-      ElMessage.success('批量发布成功')
-      selectedIds.value = []
-      loadAchievementData()
-      loadStats()
-    }
-  } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error('批量发布失败')
     }
   }
 }
@@ -1621,7 +1158,7 @@ onMounted(() => {
   background: linear-gradient(135deg, #c44747 0%, #b31b1b 100%);
 }
 
-.stat-card.published {
+.stat-card.rejected {
   background: linear-gradient(135deg, #b31b1b 0%, #8b1515 100%);
 }
 

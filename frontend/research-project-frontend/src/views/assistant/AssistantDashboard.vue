@@ -62,7 +62,7 @@
             </router-link>
             <router-link to="/assistant/activity-achievements" class="nav-link" active-class="active">
               <span class="nav-icon">📦</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">活动成果审核</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">活动审核</span>
               <span v-if="!sidebarCollapsed && pendingActivityAchievementCount > 0" class="nav-badge">
                 {{ pendingActivityAchievementCount }}
               </span>
@@ -341,7 +341,7 @@
                 <button class="action-card" @click="navigateTo('review-activity-achievements')">
                   <div class="action-icon">📦</div>
                   <div class="action-content">
-                    <h4>活动成果审核</h4>
+                    <h4>活动审核</h4>
                     <p>审核路演、交流等活动登记</p>
                   </div>
                 </button>

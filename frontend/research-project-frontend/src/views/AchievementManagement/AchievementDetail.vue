@@ -63,7 +63,6 @@
           <template v-else-if="achievementData.status === 'draft'">
             草稿状态，尚未提交审核
           </template>
-          <template v-else-if="achievementData.status === 'published'"> 已公开发布 </template>
         </span>
       </div>
       <div class="status-meta">
@@ -533,9 +532,8 @@ const statusMap = {
   pending: { label: '待审核', type: 'warning' },
   approved: { label: '已通过', type: 'success' },
   rejected: { label: '已驳回', type: 'danger' },
-  published: { label: '已发布', type: 'success' },
   submitted: { label: '已提交', type: 'primary' },
-  verified: { label: '已验证', type: 'success' },
+  verified: { label: '已核实', type: 'success' },
 }
 
 const typeMap = {
@@ -965,7 +963,7 @@ const loadMockData = () => {
 
 // 操作处理
 const goBack = () => {
-  router.push('/achievements')
+  router.push('/achievements/create')
 }
 
 const handleEdit = () => {
@@ -985,7 +983,7 @@ const handleDelete = async () => {
 
     if (response.success) {
       ElMessage.success('成果已删除')
-      router.push('/achievements')
+      router.push('/achievements/create')
     } else {
       ElMessage.error(response.error || '删除失败')
     }

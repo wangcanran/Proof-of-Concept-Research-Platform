@@ -6,8 +6,8 @@
           <el-icon><ArrowLeft /></el-icon>
           返回工作台
         </el-button>
-        <h1 class="page-title">活动成果审核</h1>
-        <div class="page-description">审核项目申请人提交的路演、产业交流等活动成果登记</div>
+        <h1 class="page-title">活动审核</h1>
+        <div class="page-description">审核项目申请人提交的路演、产业交流等活动登记</div>
       </div>
     </div>
 
@@ -105,7 +105,7 @@
       </div>
     </div>
 
-    <el-dialog v-model="detailVisible" title="活动成果详情" width="640px" destroy-on-close>
+    <el-dialog v-model="detailVisible" title="活动详情" width="640px" destroy-on-close>
       <template v-if="currentRow">
         <div class="detail-block">
           <div class="detail-label">活动标题</div>
@@ -255,7 +255,7 @@ async function review(row: any, action: 'approve' | 'reject') {
   let comment = ''
   if (action === 'reject') {
     try {
-      const { value } = await ElMessageBox.prompt('请填写驳回意见（可选）', '驳回活动成果', {
+      const { value } = await ElMessageBox.prompt('请填写驳回意见（可选）', '驳回活动', {
         confirmButtonText: '确认驳回',
         cancelButtonText: '取消',
         inputType: 'textarea',

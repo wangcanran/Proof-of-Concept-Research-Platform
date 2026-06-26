@@ -1,4 +1,4 @@
-<!-- 活动成果登记（快速操作入口） -->
+<!-- 活动登记（快速操作入口） -->
 <template>
   <div class="achievement-submit-page">
     <div class="page-header">
@@ -7,7 +7,7 @@
           <el-icon><ArrowLeft /></el-icon>
           <span>返回工作台</span>
         </button>
-        <h1>活动成果登记</h1>
+        <h1>活动登记</h1>
         <div class="header-subtitle">为已入库或孵化中的项目登记路演、产业交流等活动情况，提交后由项目经理审批</div>
       </div>
     </div>
@@ -29,7 +29,7 @@
         <div v-else-if="eligibleProjects.length === 0" class="empty-state">
           <div class="empty-icon">📭</div>
           <p>暂无可登记活动的项目</p>
-          <p class="empty-subtext">仅「已入库」「孵化中」状态的项目可登记活动成果</p>
+          <p class="empty-subtext">仅「已入库」「孵化中」状态的项目可登记活动</p>
         </div>
 
         <div v-else class="projects-list">
@@ -292,7 +292,7 @@ async function submitAchievement() {
         )
       }
     }
-    ElMessage.success('活动成果已提交，等待项目经理审批')
+    ElMessage.success('活动已提交，等待项目经理审批')
     cancelForm()
     await loadEligibleProjects()
   } catch (e: any) {

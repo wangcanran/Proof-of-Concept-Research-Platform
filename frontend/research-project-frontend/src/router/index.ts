@@ -188,13 +188,7 @@ const routes: Array<RouteRecordRaw> = [
   // ============ 成果管理模块 ============
   {
     path: '/achievements',
-    name: 'AchievementManagement',
-    component: () => import('../views/AchievementManagement/AchievementManagement.vue'),
-    meta: {
-      requiresAuth: true,
-      role: 'APPLICANT',
-      permissions: ['view_achievements'],
-    },
+    redirect: '/achievements/create',
   },
   {
     path: '/achievements/create',
@@ -244,7 +238,7 @@ const routes: Array<RouteRecordRaw> = [
     name: 'IncubationAchievementSubmit',
     component: () => import('../views/incubation/IncubationAchievementSubmit.vue'),
     meta: {
-      title: '活动成果登记',
+      title: '活动登记',
       requiresAuth: true,
       role: 'APPLICANT',
     },
@@ -486,7 +480,7 @@ const routes: Array<RouteRecordRaw> = [
     name: 'ActivityAchievementReview',
     component: () => import('@/views/assistant/ActivityAchievementReview.vue'),
     meta: {
-      title: '活动成果审核',
+      title: '活动审核',
       requiresAuth: true,
       role: ['project_manager'],
     },
@@ -658,7 +652,7 @@ const routes: Array<RouteRecordRaw> = [
     name: 'AuditActivityAchievements',
     component: () => import('@/views/assistant/ActivityAchievementReview.vue'),
     meta: {
-      title: '活动成果审核',
+      title: '活动审核',
       requiresAuth: true,
       role: ['project_manager'],
     },

@@ -326,11 +326,11 @@
         </div>
       </div>
 
-      <!-- 活动成果 -->
+      <!-- 活动 -->
       <div v-if="activeTab === 'incubationAchievements'" class="tab-panel">
         <div class="section">
-          <h3>活动成果</h3>
-          <p class="section-desc">本项目已通过审批的活动成果记录。登记新活动请前往工作台「快速操作 → 活动成果登记」。</p>
+          <h3>活动</h3>
+          <p class="section-desc">本项目已通过审批的活动记录。登记新活动请前往工作台「快速操作 → 活动登记」。</p>
           <ProjectIncubationAchievementsPanel v-if="project" :project-id="project.id" />
         </div>
       </div>
@@ -700,7 +700,7 @@ const tabs = computed(() => {
     baseTabs.push({ key: 'enterpriseDemands', label: '产业资源' })
   }
   if (showIncubationAchievementTab.value) {
-    baseTabs.push({ key: 'incubationAchievements', label: '活动成果' })
+    baseTabs.push({ key: 'incubationAchievements', label: '活动' })
   }
   baseTabs.push(
     { key: 'images', label: '图片与视频' },

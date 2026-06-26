@@ -53,7 +53,7 @@
           </router-link>
           <router-link to="/incubation/achievement-submit" class="nav-link" active-class="active">
             <span class="nav-icon">📦</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">活动成果登记</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">活动登记</span>
           </router-link>
         </div>
 
@@ -288,14 +288,14 @@
                   <div class="action-icon">🏆</div>
                   <div class="action-content">
                     <h4>科研成果登记</h4>
-                    <p>登记论文、专利、报告等科研产出</p>
+                    <p>登记成果并查看审核状态</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('incubation-achievement')">
                   <div class="action-icon">📦</div>
                   <div class="action-content">
-                    <h4>活动成果登记</h4>
-                    <p>记录项目推广对接类活动成果和产出</p>
+                    <h4>活动登记</h4>
+                    <p>记录项目推广对接类活动和产出</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('enterprise-demands')">
