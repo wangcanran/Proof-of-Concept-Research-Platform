@@ -59,6 +59,18 @@ export interface Achievement {
   status: 'draft' | 'submitted' | 'verified' | 'rejected'
   achievement_date: string
   created_by: string
+  keywords?: string
+  external_link?: string
+  journal_conference_name?: string
+  doi_number?: string
+  volume_issue?: string
+  publication_date?: string
+  patent_number?: string
+  patent_type?: string
+  authority?: string
+  created_by_email?: string
+  created_by_phone?: string
+  creator_info?: { name?: string; email?: string; phone?: string }
   created_by_name?: string
   verified_by?: string
   verified_date?: string
@@ -74,13 +86,18 @@ export interface CreateAchievementData {
   title: string
   project_id: string
   description?: string
-  abstract?: string
-  content?: string
   keywords?: string
   status?: string
   achievement_date: string
-  authors?: string
+  authors?: string | string[]
   external_link?: string
+  journal_conference_name?: string
+  doi_number?: string
+  volume_issue?: string
+  publication_date?: string
+  patent_number?: string
+  patent_type?: string
+  authority?: string
 }
 
 export interface UpdateAchievementData extends Partial<CreateAchievementData> {}
@@ -89,6 +106,7 @@ export interface AchievementQueryParams {
   page?: number
   limit?: number
   search?: string
+  search_scope?: 'title'
   type?: string
   status?: string
 }
@@ -106,13 +124,12 @@ export interface ApiResponse<T = unknown> {
 function formatAchievementPayload(data: Partial<CreateAchievementData>) {
   const formatted = { ...data }
   if (Array.isArray(formatted.authors)) {
-    formatted.authors = JSON.stringify(formatted.authors)
-  } else if (formatted.authors && typeof formatted.authors === 'string' && !formatted.authors.startsWith('[')) {
-    const authorsArray = formatted.authors
-      .split(/[,，;；]/)
-      .map((a) => a.trim())
-      .filter(Boolean)
-    formatted.authors = JSON.stringify(authorsArray)
+    formatted.authors = formatted.authors.join(',')
+  } else if (formatted.authors && typeof formatted.authors === 'string' && formatted.authors.startsWith('[')) {
+    try {
+      const arr = JSON.parse(formatted.authors)
+      if (Array.isArray(arr)) formatted.authors = arr.join(',')
+    } catch { /* keep string */ }
   }
   return formatted
 }

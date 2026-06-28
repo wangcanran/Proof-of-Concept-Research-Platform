@@ -1,4 +1,4 @@
-<!-- 活动审核（卡片列表，仿服务申请审批） -->
+<!-- 转化成果审核（卡片列表） -->
 <template>
   <div class="review-list-page">
     <div class="page-header">
@@ -7,15 +7,15 @@
           <el-icon><ArrowLeft /></el-icon>
           <span>返回工作台</span>
         </button>
-        <h1>活动审核</h1>
-        <div class="header-subtitle">审核项目申请人提交的路演、产业交流等活动登记</div>
+        <h1>转化成果审核</h1>
+        <div class="header-subtitle">审核本人负责项目下申请人提交的转化成果</div>
       </div>
     </div>
 
     <div class="content-wrapper">
       <div class="toolbar">
         <div class="search-box">
-          <input v-model="searchQuery" type="text" class="search-input" placeholder="搜索活动标题、项目名称" @keyup.enter="loadList" />
+          <input v-model="searchQuery" type="text" class="search-input" placeholder="搜索项目名称、承接方/公司名称" @keyup.enter="loadList" />
           <button type="button" class="search-btn" @click="loadList">搜索</button>
           <button type="button" class="reset-btn" @click="resetSearch">重置</button>
         </div>
@@ -29,21 +29,23 @@
 
       <div class="section-card">
         <div v-if="loading" class="loading-state"><div class="loading-spinner"></div><p>加载中...</p></div>
-        <div v-else-if="filteredList.length === 0" class="empty-state"><div class="empty-icon">📭</div><p>暂无活动登记记录</p></div>
+        <div v-else-if="filteredList.length === 0" class="empty-state"><div class="empty-icon">📭</div><p>暂无转化成果记录</p></div>
         <div v-else class="requests-grid">
           <div v-for="item in filteredList" :key="item.id" class="request-card">
             <div class="card-header" @click="goDetail(item.id)">
-              <span class="card-project-title">{{ item.title }}</span>
+              <span class="card-project-title">{{ getCardTitle(item) }}</span>
               <span class="card-status" :class="statusClass(item.status)">{{ statusLabel(item.status) }}</span>
             </div>
             <div class="card-body" @click="goDetail(item.id)">
-              <div class="card-info"><span class="info-label">所属项目</span><span class="info-value">{{ item.project_title || '-' }}</span></div>
-              <div class="card-info"><span class="info-label">项目编号</span><span class="info-value">{{ item.project_code || '-' }}</span></div>
+              <div class="card-info"><span class="info-label">转化方式</span><span class="info-value">{{ methodLabel(item.transform_method) }}</span></div>
+              <div class="card-info"><span class="info-label">所属项目</span><span class="info-value">{{ item.project?.title || item.project_title || '-' }}</span></div>
+              <div class="card-info"><span class="info-label">项目编号</span><span class="info-value">{{ item.project?.project_code || item.project_code || '-' }}</span></div>
+              <div class="card-info"><span class="info-label">{{ getCompanyLabel(item.transform_method) }}</span><span class="info-value">{{ getCompanyName(item) }}</span></div>
               <div class="card-info"><span class="info-label">登记时间</span><span class="info-value">{{ formatDateTime(item.created_at) }}</span></div>
             </div>
             <div class="card-footer">
               <button class="btn-view-detail" @click.stop="goDetail(item.id)">查看详情</button>
-              <button v-if="item.status === 'submitted'" class="btn-approve text-long" @click.stop="goReview(item.id)">审批活动</button>
+              <button v-if="item.status === 'submitted'" class="btn-approve text-long" @click.stop="goReview(item.id)">审核转化成果</button>
             </div>
           </div>
         </div>
@@ -56,49 +58,74 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
-import request from '@/utils/request'
+import { assistantTransformationAPI, TRANSFORM_METHODS } from '@/api/transformationAchievements'
 
 const router = useRouter()
 const loading = ref(false)
 const allList = ref<any[]>([])
 const searchQuery = ref('')
+const appliedSearch = ref('')
 const currentTab = ref('all')
 
 const statusTabs = computed(() => [
   { value: 'all', label: '全部', count: allList.value.length },
-  { value: 'submitted', label: '待审批', count: allList.value.filter((i) => i.status === 'submitted').length },
-  { value: 'approved', label: '已确认', count: allList.value.filter((i) => i.status === 'approved').length },
+  { value: 'submitted', label: '待审核', count: allList.value.filter((i) => i.status === 'submitted').length },
+  { value: 'verified', label: '已核实', count: allList.value.filter((i) => i.status === 'verified').length },
   { value: 'rejected', label: '已驳回', count: allList.value.filter((i) => i.status === 'rejected').length },
 ])
 
 const filteredList = computed(() => {
-  if (currentTab.value === 'all') return allList.value
-  return allList.value.filter((i) => i.status === currentTab.value)
+  let list = allList.value
+  if (currentTab.value !== 'all') list = list.filter((i) => i.status === currentTab.value)
+  return list
 })
 
+function methodLabel(method: string) {
+  return TRANSFORM_METHODS.find((m) => m.value === method)?.label || method
+}
+
+function getCardTitle(item: Record<string, unknown>) {
+  const projectTitle = (item.project as { title?: string })?.title || (item.project_title as string) || '-'
+  return `${projectTitle} - ${getCompanyName(item)}`
+}
+
+function getCompanyLabel(method: string) {
+  return method === 'startup_company' ? '公司名称' : '承接方公司名称'
+}
+
+function getCompanyName(item: Record<string, unknown>) {
+  if (item.transform_method === 'startup_company') {
+    return (item.company_name as string) || '-'
+  }
+  return (item.recipient_company as string) || '-'
+}
+
 function statusLabel(s: string) {
-  const m: Record<string, string> = { submitted: '待审批', approved: '已确认', rejected: '已驳回' }
+  const m: Record<string, string> = { submitted: '待审核', verified: '已核实', rejected: '已驳回', draft: '草稿' }
   return m[s] || s
 }
+
 function statusClass(s: string) {
-  const m: Record<string, string> = { submitted: 'pending', approved: 'approved', rejected: 'rejected' }
+  const m: Record<string, string> = { submitted: 'pending', verified: 'approved', rejected: 'rejected' }
   return m[s] || ''
 }
-function formatDate(d?: string) {
-  return d ? new Date(d).toLocaleDateString('zh-CN') : '-'
-}
+
 function formatDateTime(d?: string) {
   return d ? new Date(d).toLocaleString('zh-CN') : '-'
 }
 
 async function loadList() {
+  appliedSearch.value = searchQuery.value.trim()
   loading.value = true
   try {
-    const res = await request.get('/api/assistant/incubation-achievements/list', {
-      params: { page: 1, page_size: 200, keyword: searchQuery.value.trim() || undefined },
+    const res = await assistantTransformationAPI.list({
+      page: 1,
+      pageSize: 200,
+      search: appliedSearch.value || undefined,
+      status: '',
     })
-    if (res.success) {
-      allList.value = Array.isArray(res.data) ? res.data : res.data?.list || []
+    if (res.success && res.data) {
+      allList.value = res.data.list || res.data || []
     } else {
       allList.value = []
     }
@@ -112,18 +139,23 @@ async function loadList() {
 function switchTab(tab: string) {
   currentTab.value = tab
 }
+
 function resetSearch() {
   searchQuery.value = ''
+  appliedSearch.value = ''
   loadList()
 }
+
 function goDashboard() {
   router.push('/assistant/dashboard')
 }
+
 function goDetail(id: string) {
-  router.push(`/incubation/activity-record/${id}`)
+  router.push(`/transformation-achievements/${id}/detail`)
 }
+
 function goReview(id: string) {
-  router.push(`/assistant/activity-achievements/${id}/review`)
+  router.push(`/assistant/transformation-achievements/${id}/review`)
 }
 
 onMounted(loadList)
@@ -133,7 +165,7 @@ onMounted(loadList)
 .review-list-page { min-height: 100vh; background: #f5f7fa; }
 .page-header { background: white; padding: 20px 24px; border-bottom: 1px solid #e8e8e8; }
 .header-left { max-width: 1200px; margin: 0 auto; }
-.back-btn { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px; padding: 8px 16px; background: #f5f5f5; border: 1px solid #e8e8e8; border-radius: 6px; color: #666; cursor: pointer; font-size: 14px; border: none; font: inherit; }
+.back-btn { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px; padding: 8px 16px; background: #f5f5f5; border: 1px solid #e8e8e8; border-radius: 6px; color: #666; cursor: pointer; font-size: 14px; }
 .page-header h1 { margin: 0; font-size: 24px; color: #2c3e50; font-weight: 600; }
 .header-subtitle { margin-top: 6px; color: #999; font-size: 14px; }
 .content-wrapper { padding: 24px; max-width: 1200px; margin: 0 auto; }

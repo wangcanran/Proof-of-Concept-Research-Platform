@@ -11,25 +11,19 @@
         <h1>服务申请详情</h1>
         <div class="header-meta" v-if="request">
           <span class="project-no-tag">{{ request.project_code || '暂未编号' }}</span>
-          <div class="status-badge" :class="getStatusClass(request.status)">
-            {{ getStatusText(request.status) }}
+          <div class="status-badge" :class="getRequestStatusClass(request)">
+            {{ getRequestStatusText(request) }}
           </div>
         </div>
       </div>
       <div class="header-actions" v-if="request">
-        <!-- 申请人操作 -->
-        <template v-if="userRole === 'applicant' && request.status === 'feedback_given' && request.feedback_action === 'approved'">
-          <button class="action-btn primary" @click="goToResultFeedback">
-            提交成果反馈
-          </button>
-        </template>
         <!-- 项目经理操作 -->
         <template v-if="userRole === 'project_manager' && request.status === 'pending'">
           <button class="action-btn primary" @click="goToFeedback">
             审批服务申请
           </button>
         </template>
-        <template v-if="userRole === 'project_manager' && request.status === 'result_submitted' && request.project_status === 'approved'">
+        <template v-if="userRole === 'project_manager' && request.status === 'feedback_given' && ['approved', 'incubating'].includes(request.project_status)">
           <button class="action-btn warning" @click="confirmTerminateProject">
             终止项目
           </button>
@@ -97,17 +91,8 @@
         <div class="section">
           <h3 class="section-title">服务申请状态</h3>
           <div class="content-box">
-            <span class="status-tag" :class="getStatusClass(request.status)">
-              {{ getStatusText(request.status) }}
-            </span>
-          </div>
-        </div>
-
-        <div class="section" v-if="request.feedback_action">
-          <h3 class="section-title">反馈结果</h3>
-          <div class="content-box">
-            <span class="feedback-tag" :class="request.feedback_action">
-              {{ request.feedback_action === 'approved' ? '已同意' : '已拒绝' }}
+            <span class="status-tag" :class="getRequestStatusClass(request)">
+              {{ getRequestStatusText(request) }}
             </span>
           </div>
         </div>
@@ -121,19 +106,19 @@
             <template v-if="categoryLabelList.length">
               <span v-for="label in categoryLabelList" :key="label" class="category-chip">{{ label }}</span>
             </template>
-            <span v-else class="muted-text">未选择（历史申请可能无此项）</span>
+            <span v-else class="muted-text">—</span>
           </div>
         </div>
 
         <div class="section">
           <h3 class="section-title">服务需求描述</h3>
-          <div class="content-box pre-wrap">{{ request.service_requirement || '暂无描述' }}</div>
+          <div class="content-box pre-wrap">{{ request.service_requirement || '—' }}</div>
         </div>
 
-        <div class="section" v-if="applicationFiles.length > 0">
+        <div class="section">
           <h3 class="section-title">申请附件</h3>
           <div class="content-box">
-            <div class="attachments-list">
+            <div v-if="applicationFiles.length" class="attachments-list">
               <a 
                 v-for="file in applicationFiles" 
                 :key="file.id" 
@@ -145,6 +130,7 @@
                 <span class="attachment-name">{{ file.file_name }}</span>
               </a>
             </div>
+            <span v-else class="muted-text">—</span>
           </div>
         </div>
 
@@ -161,20 +147,20 @@
             <h3 class="section-title">反馈结果</h3>
             <div class="content-box">
               <span class="feedback-tag" :class="request.feedback_action">
-                {{ request.feedback_action === 'approved' ? '已同意提供服务' : '已拒绝服务' }}
+                {{ request.feedback_action === 'approved' ? '已批准' : '已驳回' }}
               </span>
             </div>
           </div>
 
-          <div class="section" v-if="request.feedback_comment">
+          <div class="section">
             <h3 class="section-title">反馈说明</h3>
-            <div class="content-box pre-wrap">{{ request.feedback_comment }}</div>
+            <div class="content-box pre-wrap">{{ request.feedback_comment || '—' }}</div>
           </div>
 
-          <div class="section" v-if="feedbackFiles.length > 0">
+          <div class="section">
             <h3 class="section-title">反馈附件</h3>
             <div class="content-box">
-              <div class="attachments-list">
+              <div v-if="feedbackFiles.length" class="attachments-list">
                 <a 
                   v-for="file in feedbackFiles" 
                   :key="file.id" 
@@ -186,20 +172,13 @@
                   <span class="attachment-name">{{ file.file_name }}</span>
                 </a>
               </div>
+              <span v-else class="muted-text">—</span>
             </div>
           </div>
 
-          <div class="section" v-if="request.feedback_date">
-            <h3 class="section-title">反馈时间</h3>
-            <div class="content-box">{{ formatDateTime(request.feedback_date) }}</div>
-          </div>
-
-          <div
-            class="section"
-            v-if="request.feedback_action === 'approved' && (assignedExperts.length || canManageExperts)"
-          >
+          <div class="section">
             <div class="section-title-row">
-              <h3 class="section-title">服务专家</h3>
+              <h3 class="section-title">专家顾问</h3>
               <button
                 v-if="canManageExperts"
                 type="button"
@@ -210,12 +189,18 @@
               </button>
             </div>
             <div class="content-box">
-              <IncubationAssignedExpertsDisplay
-                :experts="assignedExperts"
-                :editable="canManageExperts"
-                :progress-id="request.id"
-                @changed="loadRequest"
-              />
+              <div v-if="assignedExperts.length" class="expert-inline-list">
+                <div v-for="expert in assignedExperts" :key="expertKey(expert)" class="expert-inline-item">
+                  <span class="expert-inline-name">{{ expert.expert_name }}</span>
+                  <span
+                    v-for="t in getExpertProfileTypes(expert)"
+                    :key="t"
+                    class="inline-type-tag"
+                  >{{ expertTypeLabel(t) }}</span>
+                  <span v-if="!getExpertProfileTypes(expert).length" class="inline-type-tag empty">—</span>
+                </div>
+              </div>
+              <span v-else class="muted-text">—</span>
             </div>
             <div v-if="canManageExperts && showExpertEditor" class="content-box expert-editor-box">
               <IncubationExpertAssignPanel
@@ -226,50 +211,56 @@
               />
             </div>
           </div>
+
+          <div class="section">
+            <div class="section-title-row">
+              <h3 class="section-title">服务机构</h3>
+              <button
+                v-if="canManageExperts"
+                type="button"
+                class="btn-edit-experts"
+                @click="showProviderEditor = !showProviderEditor"
+              >
+                {{ showProviderEditor ? '收起分配' : '调整机构分配' }}
+              </button>
+            </div>
+            <div class="content-box">
+              <div v-if="assignedProviders.length" class="provider-inline-list">
+                <div v-for="provider in assignedProviders" :key="providerKey(provider)" class="provider-inline-item">
+                  <span class="provider-inline-name">{{ provider.provider_name || provider.name }}</span>
+                  <span
+                    v-for="cat in getProviderCategoryTags(provider.category)"
+                    :key="cat"
+                    class="inline-type-tag"
+                  >{{ cat }}</span>
+                </div>
+              </div>
+              <span v-else class="muted-text">—</span>
+            </div>
+            <div v-if="canManageExperts && showProviderEditor" class="content-box expert-editor-box">
+              <IncubationServiceProviderAssignPanel
+                :progress-id="request.id"
+                manage-mode
+                :assigned-providers="assignedProviders"
+                @changed="onProvidersChanged"
+              />
+            </div>
+          </div>
+
+          <div class="section">
+            <h3 class="section-title">反馈人</h3>
+            <div class="content-box">{{ request.feedback_by_name || '—' }}</div>
+          </div>
+
+          <div class="section">
+            <h3 class="section-title">反馈时间</h3>
+            <div class="content-box">{{ formatDateTime(request.feedback_date) || '—' }}</div>
+          </div>
         </template>
         <template v-else>
           <div class="empty-section">
             <span class="empty-icon">⏳</span>
             <p>暂未反馈</p>
-          </div>
-        </template>
-      </div>
-
-      <!-- 成果反馈 -->
-      <div v-if="activeTab === 'result'" class="tab-panel">
-        <template v-if="request.status === 'result_submitted'">
-          <div class="section">
-            <h3 class="section-title">成果描述</h3>
-            <div class="content-box pre-wrap">{{ request.result_description || '暂无描述' }}</div>
-          </div>
-
-          <div class="section" v-if="resultFiles.length > 0">
-            <h3 class="section-title">成果附件</h3>
-            <div class="content-box">
-              <div class="attachments-list">
-                <a 
-                  v-for="file in resultFiles" 
-                  :key="file.id" 
-                  class="attachment-item"
-                  :href="getFileUrl(file.id)"
-                  target="_blank"
-                >
-                  <span class="attachment-icon">📎</span>
-                  <span class="attachment-name">{{ file.file_name }}</span>
-                </a>
-              </div>
-            </div>
-          </div>
-
-          <div class="section" v-if="request.result_date">
-            <h3 class="section-title">成果提交时间</h3>
-            <div class="content-box">{{ formatDateTime(request.result_date) }}</div>
-          </div>
-        </template>
-        <template v-else>
-          <div class="empty-section">
-            <span class="empty-icon">📝</span>
-            <p>{{ request.status === 'pending' ? '服务申请待处理' : '暂未提交成果反馈' }}</p>
           </div>
         </template>
       </div>
@@ -304,6 +295,31 @@
               rows="4"
             ></textarea>
           </div>
+          <template v-if="feedbackAction === 'approved' && request">
+            <div class="form-group">
+              <label class="form-label">分配专家顾问（可选）</label>
+              <IncubationExpertAssignPanel
+                :progress-id="request.id"
+                v-model="expertAssignments"
+              />
+              <IncubationAssignedExpertsDisplay
+                v-if="expertAssignments.length"
+                :experts="expertAssignments"
+                editable
+                @remove="removeExpertAssignment"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label">分配服务机构（可选）</label>
+              <IncubationServiceProviderAssignPanel v-model="providerAssignments" />
+              <IncubationAssignedServiceProvidersDisplay
+                v-if="providerAssignments.length"
+                :providers="providerAssignments"
+                editable
+                @remove="removeProviderAssignment"
+              />
+            </div>
+          </template>
           <div class="form-group">
             <label class="form-label">附件材料（可选）</label>
             <div class="upload-area">
@@ -359,6 +375,10 @@ import {
 } from '@/constants/incubationCategories'
 import IncubationExpertAssignPanel from '@/components/IncubationExpertAssignPanel.vue'
 import IncubationAssignedExpertsDisplay from '@/components/IncubationAssignedExpertsDisplay.vue'
+import IncubationServiceProviderAssignPanel from '@/components/IncubationServiceProviderAssignPanel.vue'
+import IncubationAssignedServiceProvidersDisplay from '@/components/IncubationAssignedServiceProvidersDisplay.vue'
+import type { ExpertAssignment } from '@/components/IncubationExpertAssignPanel.vue'
+import type { AssignedServiceProviderInfo } from '@/components/IncubationAssignedServiceProvidersDisplay.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -390,6 +410,9 @@ const feedbackComment = ref('')
 const uploadedFiles = ref<File[]>([])
 const fileInputRef = ref<HTMLInputElement>()
 const showExpertEditor = ref(false)
+const showProviderEditor = ref(false)
+const expertAssignments = ref<ExpertAssignment[]>([])
+const providerAssignments = ref<AssignedServiceProviderInfo[]>([])
 
 // 用户角色
 const userRole = computed(() => {
@@ -398,17 +421,11 @@ const userRole = computed(() => {
 })
 
 // 标签配置
-const visibleTabs = computed(() => {
-  const tabs = [
-    { key: 'basicInfo', label: '基本信息' },
-    { key: 'application', label: '服务申请' },
-    { key: 'feedback', label: '服务反馈' },
-  ]
-  if (request.value && request.value.status !== 'pending') {
-    tabs.push({ key: 'result', label: '成果反馈' })
-  }
-  return tabs
-})
+const visibleTabs = computed(() => [
+  { key: 'basicInfo', label: '基本信息' },
+  { key: 'application', label: '服务申请' },
+  { key: 'feedback', label: '服务反馈' },
+])
 
 // 文件分类
 const applicationFiles = computed(() => {
@@ -417,10 +434,6 @@ const applicationFiles = computed(() => {
 
 const feedbackFiles = computed(() => {
   return (request.value?.files || []).filter((f: any) => f.attachment_type === 'feedback')
-})
-
-const resultFiles = computed(() => {
-  return (request.value?.files || []).filter((f: any) => f.attachment_type === 'result')
 })
 
 const categoryLabelList = computed(() => {
@@ -433,6 +446,7 @@ const categoryDisplayLine = computed(() =>
 )
 
 const assignedExperts = computed(() => request.value?.assigned_experts || [])
+const assignedProviders = computed(() => request.value?.assigned_service_providers || [])
 
 const canManageExperts = computed(
   () =>
@@ -442,6 +456,10 @@ const canManageExperts = computed(
 )
 
 const onExpertsChanged = () => {
+  loadRequest()
+}
+
+const onProvidersChanged = () => {
   loadRequest()
 }
 
@@ -481,6 +499,20 @@ const closeModal = () => {
   showModal.value = false
   feedbackComment.value = ''
   uploadedFiles.value = []
+  expertAssignments.value = []
+  providerAssignments.value = []
+}
+
+const removeExpertAssignment = (expert: ExpertAssignment) => {
+  expertAssignments.value = expertAssignments.value.filter(
+    (e) => e.expert_id !== expert.expert_id,
+  )
+}
+
+const removeProviderAssignment = (provider: AssignedServiceProviderInfo) => {
+  providerAssignments.value = providerAssignments.value.filter(
+    (p) => p.service_provider_id !== provider.service_provider_id,
+  )
 }
 
 // 文件上传
@@ -506,10 +538,21 @@ const submitFeedback = async () => {
 
   submitting.value = true
   try {
-    const res = await api.put(`/incubation/requests/${request.value.id}/feedback`, {
+    const payload: Record<string, unknown> = {
       feedback_action: feedbackAction.value,
-      feedback_comment: feedbackComment.value.trim() || null
-    })
+      feedback_comment: feedbackComment.value.trim() || null,
+    }
+    if (feedbackAction.value === 'approved') {
+      if (expertAssignments.value.length) {
+        payload.expert_assignments = expertAssignments.value.map((a) => ({
+          expert_id: a.expert_id,
+        }))
+      }
+      if (providerAssignments.value.length) {
+        payload.service_provider_ids = providerAssignments.value.map((p) => p.service_provider_id)
+      }
+    }
+    const res = await api.put(`/incubation/requests/${request.value.id}/feedback`, payload)
 
     if (res.data.success) {
       // 上传附件
@@ -566,14 +609,6 @@ const confirmTerminateProject = async () => {
   }
 }
 
-// 跳转到成果反馈
-const goToResultFeedback = () => {
-  router.push({
-    path: '/incubation/result-feedback',
-    query: { requestId: request.value?.id }
-  })
-}
-
 // 跳转到反馈界面（项目经理）
 const goToFeedback = () => {
   router.push({
@@ -584,21 +619,62 @@ const goToFeedback = () => {
 
 // 返回
 const goBack = () => {
-  // 检查是否从成果反馈页面跳转过来
-  const from = route.query.from as string
-  if (from === 'result-feedback') {
-    router.push('/incubation/result-feedback')
-  } else {
-    router.back()
-  }
+  router.back()
 }
 
 // 工具函数
+const getRequestStatusClass = (req: { status: string; feedback_action?: string }) => {
+  if (req.status === 'pending') return 'pending'
+  if (req.feedback_action === 'approved') return 'approved'
+  if (req.feedback_action === 'rejected') return 'rejected'
+  return 'feedback'
+}
+
+const getRequestStatusText = (req: { status: string; feedback_action?: string }) => {
+  if (req.status === 'pending') return '待反馈'
+  if (req.feedback_action === 'approved') return '已批准'
+  if (req.feedback_action === 'rejected') return '已驳回'
+  return '待反馈'
+}
+
+const EXPERT_TYPE_LABELS: Record<string, string> = {
+  technical: '技术专家',
+  industry: '产业专家',
+  investment: '投资专家',
+  tech_service: '科技服务专家',
+}
+
+function expertKey(expert: { expert_id?: string; id?: string }) {
+  return expert.expert_id || expert.id || ''
+}
+
+function providerKey(provider: { service_provider_id?: string; id?: string }) {
+  return provider.service_provider_id || provider.id || ''
+}
+
+function getExpertProfileTypes(expert: Record<string, unknown>) {
+  const types =
+    (expert.profile_types as string[]) ||
+    (expert.profileTypes as string[]) ||
+    (expert.expert_types as string[]) ||
+    (expert.expertTypes as string[]) ||
+    (expert.expert_type ? [expert.expert_type as string] : [])
+  return Array.isArray(types) ? types.filter(Boolean) : []
+}
+
+function expertTypeLabel(t: string) {
+  return EXPERT_TYPE_LABELS[t] || t
+}
+
+function getProviderCategoryTags(category?: string) {
+  if (!category) return []
+  return category.split(/[,，;；]/).map((s) => s.trim()).filter(Boolean)
+}
+
 const getStatusClass = (status: string) => {
   const map: Record<string, string> = {
     pending: 'pending',
     feedback_given: 'feedback',
-    result_submitted: 'completed'
   }
   return map[status] || ''
 }
@@ -607,7 +683,6 @@ const getStatusText = (status: string) => {
   const map: Record<string, string> = {
     pending: '待处理',
     feedback_given: '已反馈',
-    result_submitted: '已完成'
   }
   return map[status] || status
 }
@@ -710,6 +785,16 @@ onMounted(() => {
 .status-badge.completed {
   background: #f6ffed;
   color: #52c41a;
+}
+
+.status-badge.approved {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.status-badge.rejected {
+  background: #fff2f0;
+  color: #ff4d4f;
 }
 
 .header-actions {

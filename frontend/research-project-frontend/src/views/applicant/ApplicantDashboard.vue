@@ -46,10 +46,26 @@
         </div>
 
         <div class="nav-section">
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">孵化服务</h4>
+          <router-link to="/incubation/service-request" class="nav-link" active-class="active">
+            <span class="nav-icon">📝</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">服务申请</span>
+          </router-link>
+        </div>
+
+        <div class="nav-section">
           <h4 v-if="!sidebarCollapsed" class="nav-section-title">成果登记</h4>
           <router-link to="/achievements/create" class="nav-link" active-class="active">
             <span class="nav-icon">🏆</span>
             <span v-if="!sidebarCollapsed" class="nav-text">科研成果登记</span>
+          </router-link>
+          <router-link to="/transformation-achievements/create" class="nav-link" active-class="active">
+            <span class="nav-icon">🔄</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">转化成果登记</span>
+          </router-link>
+          <router-link to="/enterprise-service-achievements/create" class="nav-link" active-class="active">
+            <span class="nav-icon">🤝</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">企业服务成果登记</span>
           </router-link>
           <router-link to="/incubation/achievement-submit" class="nav-link" active-class="active">
             <span class="nav-icon">📦</span>
@@ -62,18 +78,6 @@
           <router-link to="/applicant/enterprise-demands" class="nav-link" active-class="active">
             <span class="nav-icon">🏢</span>
             <span v-if="!sidebarCollapsed" class="nav-text">产业资源</span>
-          </router-link>
-        </div>
-
-        <div class="nav-section">
-          <h4 v-if="!sidebarCollapsed" class="nav-section-title">孵化服务</h4>
-          <router-link to="/incubation/service-request" class="nav-link" active-class="active">
-            <span class="nav-icon">📝</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">服务申请</span>
-          </router-link>
-          <router-link to="/incubation/result-feedback" class="nav-link" active-class="active">
-            <span class="nav-icon">📊</span>
-            <span v-if="!sidebarCollapsed" class="nav-text">成果反馈</span>
           </router-link>
         </div>
 
@@ -284,11 +288,32 @@
                     <p>查看和管理我的项目</p>
                   </div>
                 </button>
+                <button class="action-card" @click="navigateTo('service-request')">
+                  <div class="action-icon">🛎️</div>
+                  <div class="action-content">
+                    <h4>服务申请</h4>
+                    <p>为已入库或孵化中项目发起孵化服务申请</p>
+                  </div>
+                </button>
                 <button class="action-card" @click="navigateTo('submit-achievement')">
                   <div class="action-icon">🏆</div>
                   <div class="action-content">
                     <h4>科研成果登记</h4>
                     <p>登记成果并查看审核状态</p>
+                  </div>
+                </button>
+                <button class="action-card" @click="navigateTo('submit-transformation-achievement')">
+                  <div class="action-icon">🔄</div>
+                  <div class="action-content">
+                    <h4>转化成果登记</h4>
+                    <p>登记技术许可、转让、作价投资或创办企业</p>
+                  </div>
+                </button>
+                <button class="action-card" @click="navigateTo('submit-enterprise-service-achievement')">
+                  <div class="action-icon">🤝</div>
+                  <div class="action-content">
+                    <h4>企业服务成果登记</h4>
+                    <p>登记技术合作或资质认定类成果</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('incubation-achievement')">
@@ -303,13 +328,6 @@
                   <div class="action-content">
                     <h4>产业资源</h4>
                     <p>浏览产业资源并选择项目报名参与</p>
-                  </div>
-                </button>
-                <button class="action-card" @click="navigateTo('service-request')">
-                  <div class="action-icon">🛎️</div>
-                  <div class="action-content">
-                    <h4>服务申请</h4>
-                    <p>为已入库或孵化中项目发起孵化服务申请</p>
                   </div>
                 </button>
               </div>
@@ -815,6 +833,8 @@ const navigateTo = (action: string) => {
     'my-projects': '/projects',
     'all-projects': '/projects',
     'submit-achievement': '/achievements/create',
+    'submit-transformation-achievement': '/transformation-achievements/create',
+    'submit-enterprise-service-achievement': '/enterprise-service-achievements/create',
     'incubation-achievement': '/incubation/achievement-submit',
     'enterprise-demands': '/applicant/enterprise-demands',
     'service-request': '/incubation/service-request',

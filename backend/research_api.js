@@ -196,6 +196,50 @@ const INCUBATION_ACHIEVEMENT_SUBMIT_PROJECT_STATUSES = ['approved', 'incubating'
 
 /** 科研成果登记仅限已入库或孵化中的项目 */
 const PROJECT_ACHIEVEMENT_ELIGIBLE_STATUSES = ['approved', 'incubating'];
+const PM_AUTO_REVIEW_COMMENT = '项目经理填报，无需审批';
+
+function buildResearchSubmissionMeta(user, requestedStatus) {
+  const uid = user.userId || user.id;
+  if (user.role === 'project_manager') {
+    return {
+      submission_type: 'project_manager',
+      status: 'verified',
+      verified_by: uid,
+      verified_date: new Date().toISOString().slice(0, 10),
+      verification_comment: PM_AUTO_REVIEW_COMMENT,
+      notifyReview: false,
+    };
+  }
+  const status = requestedStatus || 'submitted';
+  return {
+    submission_type: 'applicant',
+    status,
+    verified_by: null,
+    verified_date: null,
+    verification_comment: null,
+    notifyReview: status === 'submitted',
+  };
+}
+
+function buildActivitySubmissionMeta(user) {
+  const uid = user.userId || user.id;
+  if (user.role === 'project_manager') {
+    return {
+      submission_type: 'project_manager',
+      status: 'approved',
+      reviewed_by: uid,
+      review_comment: PM_AUTO_REVIEW_COMMENT,
+      notifyReview: false,
+    };
+  }
+  return {
+    submission_type: 'applicant',
+    status: 'submitted',
+    reviewed_by: null,
+    review_comment: null,
+    notifyReview: true,
+  };
+}
 
 async function assertProjectEligibleForAchievement(pool, projectId) {
   const [rows] = await pool.query('SELECT id, status FROM `Project` WHERE id = ?', [projectId]);
@@ -208,7 +252,27 @@ async function assertProjectEligibleForAchievement(pool, projectId) {
   return { ok: true, project: rows[0] };
 }
 
-/** 项目进入长期孵化中（已入库或已在孵化中的项目） */
+/** 已入库项目存在服务申请或经费申请记录时进入孵化中（除非已终止/结项等） */
+async function syncProjectIncubatingStatus(pool, projectId) {
+  if (!projectId) return;
+  const [proj] = await pool.query('SELECT status FROM `Project` WHERE id = ?', [projectId]);
+  if (!proj.length || proj[0].status !== 'approved') return;
+  const [counts] = await pool.query(
+    `SELECT
+      (SELECT COUNT(*) FROM \`IncubationProgress\` WHERE project_id = ?) AS svc_count,
+      (SELECT COUNT(*) FROM \`FundsRequest\` WHERE project_id = ?) AS funds_count`,
+    [projectId, projectId],
+  );
+  const row = counts[0] || {};
+  if (Number(row.svc_count) > 0 || Number(row.funds_count) > 0) {
+    await pool.query(
+      "UPDATE `Project` SET status = 'incubating', updated_at = NOW() WHERE id = ? AND status = 'approved'",
+      [projectId],
+    );
+  }
+}
+
+/** 产业资源承接等场景：直接标记为孵化中 */
 async function markProjectIncubating(pool, projectId) {
   if (!projectId) return;
   await pool.query(
@@ -546,6 +610,90 @@ function formatEnterpriseDemandPushRow(row) {
   };
 }
 
+const SERVICE_PROVIDER_CATEGORIES = [
+  '财务',
+  '法务',
+  '知识产权',
+  '工商注册',
+  '资质申报',
+  '活动策划组织',
+  '文印制作',
+  '投融资',
+  '测试/样机代工',
+];
+
+function normalizeServiceProviderCategories(raw) {
+  let arr = [];
+  if (Array.isArray(raw)) {
+    arr = raw.map((c) => String(c).trim()).filter(Boolean);
+  } else if (typeof raw === 'string') {
+    arr = raw.split(',').map((c) => c.trim()).filter(Boolean);
+  }
+  return [...new Set(arr.filter((c) => SERVICE_PROVIDER_CATEGORIES.includes(c)))];
+}
+
+function formatServiceProviderRow(row) {
+  if (!row) return row;
+  const categoryStr = row.category ? String(row.category) : '';
+  return {
+    ...row,
+    category: categoryStr,
+    category_list: categoryStr ? categoryStr.split(',').filter(Boolean) : [],
+    created_at: row.created_at ? row.created_at.toISOString?.() || row.created_at : null,
+    updated_at: row.updated_at ? row.updated_at.toISOString?.() || row.updated_at : null,
+  };
+}
+
+function validateServiceProviderPayload(body, { partial = false } = {}) {
+  const errors = [];
+  const name = body.name != null ? String(body.name).trim() : undefined;
+  const code = body.unified_social_credit_code != null
+    ? String(body.unified_social_credit_code).trim()
+    : undefined;
+  const contactName = body.contact_name != null ? String(body.contact_name).trim() : undefined;
+  const contactPhone = body.contact_phone != null ? String(body.contact_phone).trim() : undefined;
+  const contactEmail = body.contact_email != null && body.contact_email !== ''
+    ? String(body.contact_email).trim()
+    : body.contact_email === '' ? null : undefined;
+  const description = body.description != null
+    ? String(body.description).trim()
+    : undefined;
+  const categories = body.category != null || body.categories != null
+    ? normalizeServiceProviderCategories(body.category ?? body.categories)
+    : undefined;
+
+  if (!partial || name !== undefined) {
+    if (!name) errors.push('机构名称不能为空');
+  }
+  if (!partial || code !== undefined) {
+    if (!code) errors.push('统一社会信用代码不能为空');
+  }
+  if (!partial || contactName !== undefined) {
+    if (!contactName) errors.push('联系人不能为空');
+  }
+  if (!partial || contactPhone !== undefined) {
+    if (!contactPhone) errors.push('联系电话不能为空');
+  }
+  if (!partial || categories !== undefined) {
+    if (!categories || !categories.length) errors.push('请至少选择一个机构分类');
+  }
+
+  if (errors.length) {
+    return { ok: false, error: errors[0] };
+  }
+
+  const payload = {};
+  if (name !== undefined) payload.name = name;
+  if (code !== undefined) payload.unified_social_credit_code = code;
+  if (contactName !== undefined) payload.contact_name = contactName;
+  if (contactPhone !== undefined) payload.contact_phone = contactPhone;
+  if (contactEmail !== undefined) payload.contact_email = contactEmail;
+  if (description !== undefined) payload.description = description || null;
+  if (categories !== undefined) payload.category = categories.join(',');
+
+  return { ok: true, payload };
+}
+
 /** 项目已花费：经费申请批准金额合计 */
 function sqlProjectFundsSpent(alias = 'p') {
   return `(SELECT COALESCE(SUM(fri.feedback_amount), 0)
@@ -578,11 +726,12 @@ async function loadUserProfileForApi(userId) {
   let expert_types = [];
   if (user.role === 'reviewer') {
     const [epRows] = await pool.query(
-      'SELECT expertise_description, keywords FROM `ExpertProfile` WHERE id = ?',
+      'SELECT expertise_description, keywords, expert_types FROM `ExpertProfile` WHERE id = ?',
       [userId],
     );
     expertise_description = epRows[0]?.expertise_description ?? null;
     expertise_keywords = epRows[0]?.keywords ?? null;
+    expert_types = parseExpertTypesSet(epRows[0]?.expert_types);
     const [domains] = await pool.query(
       `SELECT rd.id, rd.name, rd.code, rd.sort_order
        FROM \`ExpertDomain\` ed
@@ -592,7 +741,6 @@ async function loadUserProfileForApi(userId) {
       [userId],
     );
     expert_domains = domains;
-    expert_types = await getExpertTypesForUser(userId);
   }
   const profile = {
     ...user,
@@ -608,7 +756,24 @@ async function loadUserProfileForApi(userId) {
   return profile;
 }
 
-const VALID_EXPERT_TYPES = ['technical', 'investment', 'industry'];
+const VALID_EXPERT_TYPES = ['technical', 'investment', 'industry', 'tech_service'];
+
+/** 解析 ExpertProfile.expert_types（MySQL SET → 逗号分隔字符串） */
+function parseExpertTypesSet(value) {
+  if (value == null || value === '') return [];
+  if (Array.isArray(value)) {
+    return value.map((t) => String(t).trim()).filter((t) => VALID_EXPERT_TYPES.includes(t));
+  }
+  return String(value)
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => VALID_EXPERT_TYPES.includes(t));
+}
+
+function formatExpertTypesForSet(types) {
+  const normalized = normalizeExpertTypesInput(types);
+  return normalized.length ? normalized.join(',') : null;
+}
 
 function normalizeExpertTypesInput(input) {
   const types = Array.isArray(input) ? input : [];
@@ -617,21 +782,78 @@ function normalizeExpertTypesInput(input) {
 
 async function getExpertTypesForUser(expertId) {
   const [rows] = await pool.query(
-    'SELECT expert_type FROM `ExpertExpertType` WHERE expert_id = ? ORDER BY expert_type ASC',
+    'SELECT expert_types FROM `ExpertProfile` WHERE id = ?',
     [expertId],
   );
-  return rows.map((r) => r.expert_type);
+  return parseExpertTypesSet(rows[0]?.expert_types);
 }
 
-/** 专家类型：全量替换（technical / investment / industry） */
+/** 批量加载专家类型（ExpertProfile.expert_types，见 research_system_db_0627.sql） */
+async function batchLoadExpertTypesMap(expertIds) {
+  const map = {};
+  if (!Array.isArray(expertIds) || !expertIds.length) return map;
+  const [rows] = await pool.query(
+    'SELECT id, expert_types FROM `ExpertProfile` WHERE id IN (?)',
+    [expertIds],
+  );
+  rows.forEach((r) => {
+    map[r.id] = parseExpertTypesSet(r.expert_types);
+  });
+  return map;
+}
+
+/** 批量加载专家研究领域（ExpertDomain + ResearchDomain） */
+async function batchLoadExpertDomainsMap(expertIds) {
+  const map = {};
+  if (!Array.isArray(expertIds) || !expertIds.length) return map;
+  const [rows] = await pool.query(
+    `SELECT ed.expert_id, rd.name AS research_field
+     FROM \`ExpertDomain\` ed
+     INNER JOIN \`ResearchDomain\` rd ON ed.domain_id = rd.id
+     WHERE ed.expert_id IN (?)
+     ORDER BY rd.sort_order ASC, rd.name ASC`,
+    [expertIds],
+  );
+  rows.forEach((r) => {
+    if (!map[r.expert_id]) map[r.expert_id] = [];
+    map[r.expert_id].push(r.research_field);
+  });
+  return map;
+}
+
+/** 统一格式化专家展示字段（分配列表、已分配、服务反馈） */
+function formatExpertDisplayRow(row, profileTypes, researchFields) {
+  const types = Array.isArray(profileTypes) ? profileTypes : [];
+  const fields = Array.isArray(researchFields) ? researchFields : [];
+  const researchFieldText = fields.length ? fields.join('、') : '未指定';
+  return {
+    ...row,
+    expert_id: row.expert_id || row.id,
+    expert_name: row.expert_name || row.name,
+    expert_email: row.expert_email || row.email,
+    expert_phone: row.expert_phone || row.phone,
+    profile_types: types,
+    profileTypes: types,
+    expert_types: types,
+    expertTypes: types,
+    research_fields: fields,
+    research_field: researchFieldText,
+    expertise_description: row.expertise_description || null,
+  };
+}
+
+/** 专家类型：写入 ExpertProfile.expert_types SET 列 */
 async function replaceExpertTypes(expertId, expertTypes) {
   const types = normalizeExpertTypesInput(expertTypes);
-  await pool.query('DELETE FROM `ExpertExpertType` WHERE expert_id = ?', [expertId]);
-  for (const expertType of types) {
+  const setVal = formatExpertTypesForSet(types);
+  const [existing] = await pool.query('SELECT id FROM `ExpertProfile` WHERE id = ?', [expertId]);
+  if (!existing.length) {
     await pool.query(
-      'INSERT INTO `ExpertExpertType` (id, expert_id, expert_type, created_at) VALUES (?, ?, ?, NOW())',
-      [randomUUID(), expertId, expertType],
+      'INSERT INTO `ExpertProfile` (id, expert_types, created_at) VALUES (?, ?, NOW())',
+      [expertId, setVal],
     );
+  } else {
+    await pool.query('UPDATE `ExpertProfile` SET expert_types = ? WHERE id = ?', [setVal, expertId]);
   }
   return types;
 }
@@ -640,15 +862,7 @@ async function attachExpertTypesToUsers(users) {
   if (!Array.isArray(users) || !users.length) return users;
   const reviewerIds = users.filter((u) => u.role === 'reviewer').map((u) => u.id);
   if (!reviewerIds.length) return users;
-  const [rows] = await pool.query(
-    'SELECT expert_id, expert_type FROM `ExpertExpertType` WHERE expert_id IN (?)',
-    [reviewerIds],
-  );
-  const map = {};
-  rows.forEach((r) => {
-    if (!map[r.expert_id]) map[r.expert_id] = [];
-    map[r.expert_id].push(r.expert_type);
-  });
+  const map = await batchLoadExpertTypesMap(reviewerIds);
   users.forEach((u) => {
     if (u.role === 'reviewer') {
       u.expert_types = map[u.id] || [];
@@ -656,6 +870,17 @@ async function attachExpertTypesToUsers(users) {
     }
   });
   return users;
+}
+
+/** SQL：按专家类型筛选（ExpertProfile.expert_types SET） */
+function buildExpertTypeFilterSql(typeFilters, epAlias = 'ep') {
+  if (!Array.isArray(typeFilters) || !typeFilters.length) {
+    return { clause: '', params: [] };
+  }
+  const valid = typeFilters.filter((t) => VALID_EXPERT_TYPES.includes(t));
+  if (!valid.length) return { clause: '', params: [] };
+  const clause = valid.map(() => `FIND_IN_SET(?, ${epAlias}.expert_types)`).join(' OR ');
+  return { clause: ` AND (${clause})`, params: valid };
 }
 
 /** 专家擅长领域：全量替换 */
@@ -1187,7 +1412,7 @@ function projectAchievementFileStoredPath(absoluteDiskPath) {
   return uploadFileStoredPath(absoluteDiskPath, 'uploads/project-achievements');
 }
 
-function resolveProjectAchievementFileDiskPath(storedPath) {
+function resolveResearchAchievementFileDiskPath(storedPath) {
   return resolveUploadDiskPath(storedPath, PROJECT_ACHIEVEMENT_UPLOADS_DIR);
 }
 
@@ -1202,7 +1427,7 @@ function projectAchievementFilePublicPath(storedPath) {
   return p.startsWith('/') ? p : `/${p}`;
 }
 
-function mapProjectAchievementFileRow(row) {
+function mapResearchAchievementFileRow(row) {
   if (!row) return row;
   return {
     id: row.id,
@@ -1217,50 +1442,38 @@ function mapProjectAchievementFileRow(row) {
   };
 }
 
-async function loadProjectAchievementFilesMap(pool, achievementIds) {
+async function loadResearchAchievementFilesMap(pool, achievementIds) {
   const map = {};
   if (!achievementIds || !achievementIds.length) return map;
   const [rows] = await pool.query(
-    `SELECT * FROM \`ProjectAchievementFile\`
+    `SELECT * FROM \`ResearchAchievementFile\`
      WHERE achievement_id IN (?)
      ORDER BY sort_order ASC, created_at ASC`,
     [achievementIds],
   );
   rows.forEach((r) => {
     if (!map[r.achievement_id]) map[r.achievement_id] = [];
-    map[r.achievement_id].push(mapProjectAchievementFileRow(r));
+    map[r.achievement_id].push(mapResearchAchievementFileRow(r));
   });
   return map;
 }
 
-function buildProjectAchievementText(body) {
-  const desc = (body.description && String(body.description).trim()) || '';
-  const abstract =
-    (body.abstract && String(body.abstract).trim()) ||
-    (desc.length > 500 ? `${desc.slice(0, 500)}…` : desc) ||
-    '（无摘要）';
-  let content = (body.content && String(body.content).trim()) || desc || abstract;
-  const extras = [];
-  if (body.authors) {
+function normalizeAuthorsForDb(authors) {
+  if (authors == null || authors === '') return null;
+  if (Array.isArray(authors)) {
+    const joined = authors.map((a) => String(a).trim()).filter(Boolean).join(',');
+    return joined || null;
+  }
+  const s = String(authors).trim();
+  if (s.startsWith('[')) {
     try {
-      let authors = body.authors;
-      if (typeof authors === 'string' && authors.trim().startsWith('[')) {
-        authors = JSON.parse(authors);
+      const arr = JSON.parse(s);
+      if (Array.isArray(arr)) {
+        return arr.map((a) => String(a).trim()).filter(Boolean).join(',') || null;
       }
-      const authorStr = Array.isArray(authors) ? authors.join('、') : String(authors).trim();
-      if (authorStr) extras.push(`作者：${authorStr}`);
     } catch { /* ignore */ }
   }
-  if (body.keywords && String(body.keywords).trim()) {
-    extras.push(`关键词：${String(body.keywords).trim()}`);
-  }
-  if (body.external_link && String(body.external_link).trim()) {
-    extras.push(`外部链接：${String(body.external_link).trim()}`);
-  }
-  if (extras.length) {
-    content = content + (content ? '\n\n' : '') + extras.join('\n');
-  }
-  return { abstract, content };
+  return s || null;
 }
 
 function formatAchievementDateField(val) {
@@ -1270,23 +1483,73 @@ function formatAchievementDateField(val) {
   return s.length >= 10 ? s.slice(0, 10) : s;
 }
 
-function formatProjectAchievementRow(row, files = []) {
-  const achievementDate = row.achievement_date
-    ? (row.achievement_date.toISOString?.().slice(0, 10) || row.achievement_date)
-    : null;
+/** 从请求体提取 ResearchAchievement 表字段（0627 schema，各字段独立存储） */
+function pickResearchAchievementFieldsFromBody(body) {
+  const paper = body.paper || {};
+  const patent = body.patent || {};
+  return {
+    type: body.type,
+    name: String(body.title || body.name || '').trim(),
+    project_id: body.project_id,
+    output_date: body.achievement_date || body.output_date || null,
+    authors: body.authors !== undefined ? normalizeAuthorsForDb(body.authors) : undefined,
+    keywords: body.keywords != null ? String(body.keywords).trim() : undefined,
+    description: body.description != null ? String(body.description).trim() : undefined,
+    external_link: body.external_link != null ? String(body.external_link).trim() : undefined,
+    journal_conference_name:
+      body.journal_conference_name ?? paper.journal ?? undefined,
+    doi_number: body.doi_number ?? paper.doi ?? undefined,
+    volume_issue: body.volume_issue ?? paper.volume ?? undefined,
+    publication_date: body.publication_date ?? paper.publishDate ?? undefined,
+    patent_number: body.patent_number ?? patent.number ?? undefined,
+    patent_type: body.patent_type ?? patent.type ?? undefined,
+    authority: body.authority ?? patent.authority ?? undefined,
+    status: body.status,
+  };
+}
+
+function formatResearchAchievementRow(row, files = []) {
+  const outputDate = formatAchievementDateField(row.output_date);
+  const publicationDate = formatAchievementDateField(row.publication_date);
+  const authorsStr = row.authors || '';
+  const authorsArr = authorsStr
+    ? authorsStr.split(/[,，;；]/).map((s) => s.trim()).filter(Boolean)
+    : [];
   return {
     ...row,
-    achievement_date: achievementDate,
-    description: row.abstract || row.content || '',
+    title: row.name,
+    name: row.name,
+    achievement_date: outputDate,
+    output_date: outputDate,
+    publication_date: publicationDate,
+    description: row.description || '',
+    abstract: row.description || '',
+    content: row.description || '',
+    authors: authorsArr,
     project: row.project_title
       ? { id: row.project_id, title: row.project_title, project_code: row.project_code }
       : null,
+    project_info: row.project_title
+      ? { title: row.project_title, project_code: row.project_code }
+      : null,
+    creator_info: row.created_by_name
+      ? {
+          name: row.created_by_name,
+          email: row.created_by_email || null,
+          phone: row.created_by_phone || null,
+        }
+      : null,
+    verifier_info: row.verified_by_name ? { name: row.verified_by_name } : null,
     files,
     file_count: files.length,
   };
 }
 
-async function userMayAccessProjectAchievement(pool, achievement, user) {
+const mapProjectAchievementFileRow = mapResearchAchievementFileRow;
+const loadProjectAchievementFilesMap = loadResearchAchievementFilesMap;
+const formatProjectAchievementRow = formatResearchAchievementRow;
+
+async function userMayAccessResearchAchievement(pool, achievement, user) {
   const uid = user.userId || user.id;
   if (String(achievement.created_by) === String(uid)) return true;
   if (user.role === 'admin') return true;
@@ -1303,8 +1566,10 @@ async function userMayAccessProjectAchievement(pool, achievement, user) {
   return false;
 }
 
+const userMayAccessProjectAchievement = userMayAccessResearchAchievement;
+
 /** 项目经理仅能审批本人负责项目的科研成果；管理员不受限 */
-async function assertUserMayReviewProjectAchievement(pool, achievementId, user) {
+async function assertUserMayReviewResearchAchievement(pool, achievementId, user) {
   if (!user) return { ok: false, status: 401, error: '认证失败' };
   if (user.role === 'admin') return { ok: true };
   if (user.role !== 'project_manager') {
@@ -1312,9 +1577,9 @@ async function assertUserMayReviewProjectAchievement(pool, achievementId, user) 
   }
   const uid = user.userId || user.id;
   const [rows] = await pool.query(
-    `SELECT pa.id FROM \`ProjectAchievement\` pa
-     INNER JOIN \`Project\` p ON pa.project_id = p.id
-     WHERE pa.id = ? AND p.manager_id = ?`,
+    `SELECT ra.id FROM \`ResearchAchievement\` ra
+     INNER JOIN \`Project\` p ON ra.project_id = p.id
+     WHERE ra.id = ? AND p.manager_id = ?`,
     [achievementId, uid],
   );
   if (!rows.length) {
@@ -1355,41 +1620,28 @@ const INCUBATION_EXPERT_TYPE_LABELS = {
   technical: '技术专家',
   investment: '投资专家',
   industry: '产业专家',
+  tech_service: '科技服务专家',
 };
 
-/** 获取孵化服务申请已分配专家 */
+/** 获取孵化服务申请已分配专家（IncubationProgressExpert，见 research_system_db_0627.sql） */
 async function getIncubationAssignedExperts(progressId) {
   const [rows] = await pool.query(
-    `SELECT ipe.id, ipe.progress_id, ipe.expert_id, ipe.expert_type, ipe.assigned_by, ipe.created_at,
+    `SELECT ipe.id, ipe.progress_id, ipe.expert_id, ipe.assigned_by, ipe.created_at,
             u.name AS expert_name, u.email AS expert_email, u.phone AS expert_phone,
             u.department, u.title, ep.expertise_description, ep.keywords
      FROM \`IncubationProgressExpert\` ipe
      JOIN \`User\` u ON ipe.expert_id = u.id
      LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.id
      WHERE ipe.progress_id = ?
-     ORDER BY ipe.expert_type ASC, ipe.created_at ASC`,
+     ORDER BY ipe.created_at ASC`,
     [progressId],
   );
   const expertIds = rows.map((r) => r.expert_id).filter(Boolean);
-  let profileTypesMap = {};
-  if (expertIds.length) {
-    const [typeRows] = await pool.query(
-      `SELECT expert_id, expert_type FROM \`ExpertExpertType\` WHERE expert_id IN (?) ORDER BY expert_type ASC`,
-      [expertIds],
-    );
-    typeRows.forEach((r) => {
-      if (!profileTypesMap[r.expert_id]) profileTypesMap[r.expert_id] = [];
-      profileTypesMap[r.expert_id].push(r.expert_type);
-    });
-  }
-  return rows.map((r) => {
-    const profileTypes = profileTypesMap[r.expert_id] || [];
-    return {
-      ...r,
-      profile_types: profileTypes,
-      profileTypes,
-    };
-  });
+  const profileTypesMap = expertIds.length ? await batchLoadExpertTypesMap(expertIds) : {};
+  const domainsMap = expertIds.length ? await batchLoadExpertDomainsMap(expertIds) : {};
+  return rows.map((r) =>
+    formatExpertDisplayRow(r, profileTypesMap[r.expert_id] || [], domainsMap[r.expert_id] || []),
+  );
 }
 
 /** 校验当前用户是否为该孵化服务申请对应项目的项目经理 */
@@ -1431,34 +1683,35 @@ async function assignIncubationProgressExperts(progressId, assignments, assigned
   if (!Array.isArray(assignments) || !assignments.length) return results;
 
   for (const item of assignments) {
-    const expertId = item.expert_id;
-    const requestedType = item.expert_type;
+    const expertId = item.expert_id || item;
     if (!expertId) continue;
 
     const [experts] = await pool.query(
-      `SELECT u.id, u.name FROM \`User\` u
+      `SELECT u.id, u.name, u.email, u.phone, u.department, u.title
+       FROM \`User\` u
        WHERE u.id = ? AND u.role = 'reviewer' AND u.status = 'active'`,
       [expertId],
     );
     if (!experts.length) continue;
 
     const profileTypes = await getExpertTypesForUser(expertId);
-    const expertType = resolveIncubationExpertAssignmentType(profileTypes, requestedType);
-    if (!VALID_EXPERT_TYPES.includes(expertType)) continue;
-
     const assignmentId = randomUUID();
     try {
       await pool.query(
         `INSERT INTO \`IncubationProgressExpert\`
-         (id, progress_id, expert_id, expert_type, assigned_by, created_at)
-         VALUES (?, ?, ?, ?, ?, NOW())`,
-        [assignmentId, progressId, expertId, expertType, assignedBy],
+         (id, progress_id, expert_id, assigned_by, created_at)
+         VALUES (?, ?, ?, ?, NOW())`,
+        [assignmentId, progressId, expertId, assignedBy],
       );
       results.push({
         id: assignmentId,
         expert_id: expertId,
-        expert_type: expertType,
         expert_name: experts[0].name,
+        expert_email: experts[0].email,
+        expert_phone: experts[0].phone,
+        department: experts[0].department,
+        title: experts[0].title,
+        profile_types: profileTypes,
       });
 
       await pool.query(
@@ -1468,7 +1721,7 @@ async function assignIncubationProgressExperts(progressId, assignments, assigned
           randomUUID(),
           expertId,
           '孵化服务专家指派',
-          `您已被指派为项目「${progress.project_title}」孵化服务申请的${INCUBATION_EXPERT_TYPE_LABELS[expertType] || expertType}。`,
+          `您已被指派为项目「${progress.project_title || ''}」孵化服务申请的专家顾问。`,
           progressId,
         ],
       );
@@ -1479,7 +1732,60 @@ async function assignIncubationProgressExperts(progressId, assignments, assigned
   return results;
 }
 
-async function loadIncubationAchievementRecordsWithFiles(projectId, options = {}) {
+/** 获取孵化服务申请已分配服务机构 */
+async function getIncubationAssignedServiceProviders(progressId) {
+  const [rows] = await pool.query(
+    `SELECT ipsp.id, ipsp.progress_id, ipsp.service_provider_id, ipsp.assigned_by, ipsp.created_at,
+            sp.name AS provider_name, sp.unified_social_credit_code, sp.category,
+            sp.contact_name, sp.contact_phone, sp.contact_email, sp.description
+     FROM \`IncubationProgressServiceProvider\` ipsp
+     JOIN \`ServiceProvider\` sp ON ipsp.service_provider_id = sp.id
+     WHERE ipsp.progress_id = ?
+     ORDER BY ipsp.created_at ASC`,
+    [progressId],
+  );
+  return rows;
+}
+
+/** 为孵化服务申请分配服务机构 */
+async function assignIncubationProgressServiceProviders(progressId, providerIds, assignedBy) {
+  const results = [];
+  if (!Array.isArray(providerIds) || !providerIds.length) return results;
+  const uniqueIds = [...new Set(providerIds.map((id) => String(id).trim()).filter(Boolean))];
+  for (const providerId of uniqueIds) {
+    const [providers] = await pool.query(
+      'SELECT id, name FROM `ServiceProvider` WHERE id = ?',
+      [providerId],
+    );
+    if (!providers.length) continue;
+    const assignmentId = randomUUID();
+    try {
+      await pool.query(
+        `INSERT INTO \`IncubationProgressServiceProvider\`
+         (id, progress_id, service_provider_id, assigned_by, created_at)
+         VALUES (?, ?, ?, ?, NOW())`,
+        [assignmentId, progressId, providerId, assignedBy],
+      );
+      results.push({
+        id: assignmentId,
+        service_provider_id: providerId,
+        provider_name: providers[0].name,
+      });
+    } catch (e) {
+      if (e.code !== 'ER_DUP_ENTRY') throw e;
+    }
+  }
+  return results;
+}
+
+async function enrichIncubationProgressRow(progress) {
+  if (!progress?.id) return progress;
+  progress.assigned_experts = await getIncubationAssignedExperts(progress.id);
+  progress.assigned_service_providers = await getIncubationAssignedServiceProviders(progress.id);
+  return progress;
+}
+
+async function loadActivityRecordsWithFiles(projectId, options = {}) {
   const { approvedOnly = false } = options;
   let whereSql = 'iar.project_id = ?';
   const params = [projectId];
@@ -1488,7 +1794,7 @@ async function loadIncubationAchievementRecordsWithFiles(projectId, options = {}
   }
   const [records] = await pool.query(
     `SELECT iar.*, u.name AS creator_name, rv.name AS reviewer_name
-     FROM \`IncubationAchievementRecord\` iar
+     FROM \`ActivityRecord\` iar
      JOIN \`User\` u ON iar.created_by = u.id
      LEFT JOIN \`User\` rv ON iar.reviewed_by = rv.id
      WHERE ${whereSql}
@@ -1497,8 +1803,8 @@ async function loadIncubationAchievementRecordsWithFiles(projectId, options = {}
   );
   for (const record of records) {
     const [files] = await pool.query(
-      `SELECT id, record_id, file_name, file_path, file_size, mime_type, file_extension, description, created_at
-       FROM \`IncubationAchievementRecordFile\`
+      `SELECT id, record_id, file_name, file_path, file_size, mime_type, sort_order, uploaded_by, created_at
+       FROM \`ActivityRecordFile\`
        WHERE record_id = ?
        ORDER BY sort_order ASC, created_at ASC`,
       [record.id],
@@ -1522,11 +1828,7 @@ async function userMayViewIncubationAchievements(pool, projectId, user) {
 
 async function userMaySubmitIncubationAchievement(pool, projectId, user) {
   const uid = user.userId || user.id;
-  const isMember = await userIsApplicantOrTeamMember(pool, projectId, uid);
-  if (!isMember) {
-    return { ok: false, status: 403, error: '仅项目申请人或团队成员可提交活动' };
-  }
-  const [p] = await pool.query('SELECT status, title, manager_id FROM `Project` WHERE id = ?', [projectId]);
+  const [p] = await pool.query('SELECT status, title, manager_id, applicant_id FROM `Project` WHERE id = ?', [projectId]);
   if (!p.length) {
     return { ok: false, status: 404, error: '项目不存在' };
   }
@@ -1537,7 +1839,14 @@ async function userMaySubmitIncubationAchievement(pool, projectId, user) {
       error: '仅已入库或孵化中的项目可提交活动',
     };
   }
-  return { ok: true, project: p[0] };
+  if (user.role === 'project_manager' && String(p[0].manager_id) === String(uid)) {
+    return { ok: true, project: p[0], asManager: true };
+  }
+  const isMember = await userIsApplicantOrTeamMember(pool, projectId, uid);
+  if (!isMember) {
+    return { ok: false, status: 403, error: '仅项目申请人或团队成员可提交活动' };
+  }
+  return { ok: true, project: p[0], asManager: false };
 }
 
 // 统一响应函数
@@ -1551,6 +1860,18 @@ function sendResponse(res, statusCode, data) {
 }
 
 // 创建HTTP服务器
+const { createHandlers: createTransformationEnterpriseHandlers } = require('./transformation_enterprise_api');
+const transformationEnterpriseApi = createTransformationEnterpriseHandlers({
+  pool,
+  verifyToken,
+  sendResponse,
+  parseRequestBody,
+  checkPermission,
+  userIsApplicantOrTeamMember,
+  resolveUploadDiskPath,
+  generateUUID,
+});
+
 const server = http.createServer(async (req, res) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
 
@@ -1675,7 +1996,7 @@ const server = http.createServer(async (req, res) => {
 
         const [achievementStats] = await pool.query(`
       SELECT COUNT(*) as totalAchievements 
-      FROM ProjectAchievement 
+      FROM ResearchAchievement 
       WHERE status = 'verified'
     `);
 
@@ -1728,7 +2049,7 @@ const server = http.createServer(async (req, res) => {
     `);
         const [achievementRows] = await pool.query(`
       SELECT COUNT(*) AS achievement_count
-      FROM \`ProjectAchievement\`
+      FROM \`ResearchAchievement\`
     `);
 
         const p = projectRows[0] || {};
@@ -2139,6 +2460,217 @@ const server = http.createServer(async (req, res) => {
       } catch (error) {
         console.error('删除新闻失败:', error);
         sendResponse(res, 500, { success: false, error: '删除新闻失败' });
+      }
+      return;
+    }
+
+    // ==================== 服务资源库管理 API（项目经理） ====================
+
+    if (pathname === '/api/service-providers' && req.method === 'GET') {
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const keyword = String(query.keyword || '').trim();
+        const categoryRaw = query.category || query.categories || '';
+        const categories = String(categoryRaw)
+          .split(',')
+          .map((c) => c.trim())
+          .filter(Boolean);
+        const page = parseInt(query.page, 10) || 1;
+        const pageSize = parseInt(query.pageSize, 10) || 10;
+        const offset = (page - 1) * pageSize;
+
+        let where = 'WHERE 1=1';
+        const params = [];
+        if (keyword) {
+          const kw = `%${keyword}%`;
+          where += ' AND (sp.name LIKE ? OR sp.unified_social_credit_code LIKE ? OR sp.contact_name LIKE ? OR sp.contact_phone LIKE ? OR sp.contact_email LIKE ? OR sp.category LIKE ? OR sp.description LIKE ?)';
+          params.push(kw, kw, kw, kw, kw, kw, kw);
+        }
+        if (categories.length) {
+          where += ` AND (${categories.map(() => 'FIND_IN_SET(?, sp.category)').join(' OR ')})`;
+          params.push(...categories);
+        }
+
+        const [rows] = await pool.query(
+          `SELECT sp.* FROM \`ServiceProvider\` sp ${where} ORDER BY sp.updated_at DESC, sp.name ASC LIMIT ? OFFSET ?`,
+          [...params, pageSize, offset],
+        );
+        const [cnt] = await pool.query(
+          `SELECT COUNT(*) AS total FROM \`ServiceProvider\` sp ${where}`,
+          params,
+        );
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            list: rows.map(formatServiceProviderRow),
+            total: cnt[0].total,
+            page,
+            pageSize,
+            categories: SERVICE_PROVIDER_CATEGORIES,
+          },
+        });
+      } catch (error) {
+        console.error('获取服务资源列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取服务资源列表失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/service-providers' && req.method === 'POST') {
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const validated = validateServiceProviderPayload(body);
+        if (!validated.ok) {
+          sendResponse(res, 400, { success: false, error: validated.error });
+          return;
+        }
+        const id = randomUUID();
+        const p = validated.payload;
+        await pool.query(
+          `INSERT INTO \`ServiceProvider\`
+            (id, name, unified_social_credit_code, category, contact_name, contact_phone, contact_email, description)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id,
+            p.name,
+            p.unified_social_credit_code,
+            p.category,
+            p.contact_name,
+            p.contact_phone,
+            p.contact_email ?? null,
+            p.description ?? null,
+          ],
+        );
+        const [created] = await pool.query('SELECT * FROM `ServiceProvider` WHERE id = ?', [id]);
+        sendResponse(res, 201, {
+          success: true,
+          data: formatServiceProviderRow(created[0]),
+          message: '创建成功',
+        });
+      } catch (error) {
+        console.error('创建服务资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '创建服务资源失败' });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/service-providers\/[\w-]+$/) && req.method === 'GET') {
+      const providerId = pathname.replace('/api/service-providers/', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const [rows] = await pool.query('SELECT * FROM `ServiceProvider` WHERE id = ?', [providerId]);
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '服务资源不存在' });
+          return;
+        }
+        sendResponse(res, 200, {
+          success: true,
+          data: formatServiceProviderRow(rows[0]),
+        });
+      } catch (error) {
+        console.error('获取服务资源详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取服务资源详情失败' });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/service-providers\/[\w-]+$/) && req.method === 'PUT') {
+      const providerId = pathname.replace('/api/service-providers/', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const [existing] = await pool.query('SELECT id FROM `ServiceProvider` WHERE id = ?', [providerId]);
+        if (!existing.length) {
+          sendResponse(res, 404, { success: false, error: '服务资源不存在' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const validated = validateServiceProviderPayload(body, { partial: true });
+        if (!validated.ok) {
+          sendResponse(res, 400, { success: false, error: validated.error });
+          return;
+        }
+        const p = validated.payload;
+        const fields = [];
+        const params = [];
+        for (const key of [
+          'name',
+          'unified_social_credit_code',
+          'category',
+          'contact_name',
+          'contact_phone',
+          'contact_email',
+          'description',
+        ]) {
+          if (p[key] !== undefined) {
+            fields.push(`${key} = ?`);
+            params.push(p[key]);
+          }
+        }
+        if (!fields.length) {
+          sendResponse(res, 400, { success: false, error: '没有可更新的字段' });
+          return;
+        }
+        params.push(providerId);
+        await pool.query(`UPDATE \`ServiceProvider\` SET ${fields.join(', ')} WHERE id = ?`, params);
+        const [updated] = await pool.query('SELECT * FROM `ServiceProvider` WHERE id = ?', [providerId]);
+        sendResponse(res, 200, {
+          success: true,
+          data: formatServiceProviderRow(updated[0]),
+          message: '更新成功',
+        });
+      } catch (error) {
+        console.error('更新服务资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '更新服务资源失败' });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/service-providers\/[\w-]+$/) && req.method === 'DELETE') {
+      const providerId = pathname.replace('/api/service-providers/', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const [existing] = await pool.query('SELECT id FROM `ServiceProvider` WHERE id = ?', [providerId]);
+        if (!existing.length) {
+          sendResponse(res, 404, { success: false, error: '服务资源不存在' });
+          return;
+        }
+        const [assigned] = await pool.query(
+          'SELECT id FROM `IncubationProgressServiceProvider` WHERE service_provider_id = ? LIMIT 1',
+          [providerId],
+        );
+        if (assigned.length) {
+          sendResponse(res, 400, {
+            success: false,
+            error: '该服务机构已被孵化服务申请引用，无法删除',
+          });
+          return;
+        }
+        await pool.query('DELETE FROM `ServiceProvider` WHERE id = ?', [providerId]);
+        sendResponse(res, 200, { success: true, message: '删除成功' });
+      } catch (error) {
+        console.error('删除服务资源失败:', error);
+        sendResponse(res, 500, { success: false, error: '删除服务资源失败' });
       }
       return;
     }
@@ -4354,10 +4886,10 @@ const server = http.createServer(async (req, res) => {
         const [achievementTasks] = await pool.query(`
       SELECT 
         pa.id,
-        pa.title,
+        pa.name,
         'achievement_review' as type,
         DATE_FORMAT(pa.created_at, '%Y-%m-%d') as deadline
-      FROM \`ProjectAchievement\` pa
+      FROM \`ResearchAchievement\` pa
       INNER JOIN \`Project\` p ON pa.project_id = p.id
       WHERE p.applicant_id = ?
         AND pa.status = 'submitted'
@@ -4696,11 +5228,11 @@ const server = http.createServer(async (req, res) => {
         const [achievementTasks] = await pool.query(`
           SELECT 
             pa.id,
-            CONCAT('审核成果: ', pa.title) as title,
+            CONCAT('审核成果: ', pa.name) as title,
             'achievement_audit' as type,
             DATE_FORMAT(pa.created_at, '%Y-%m-%d') as deadline,
             p.title as project_title
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           LEFT JOIN \`Project\` p ON pa.project_id = p.id
           WHERE pa.status = 'submitted'
           ORDER BY pa.created_at ASC
@@ -5410,7 +5942,7 @@ const server = http.createServer(async (req, res) => {
       const map = {
         'User': '用户',
         'Project': '项目',
-        'ProjectAchievement': '项目成果',
+        'ResearchAchievement': '项目成果',
         'Notification': '通知',
         'System': '系统'
       };
@@ -5554,7 +6086,7 @@ const server = http.createServer(async (req, res) => {
         u.created_at,
         u.updated_at,
         (SELECT COUNT(*) FROM \`Project\` p WHERE p.applicant_id = u.id) as project_count,
-        (SELECT COUNT(*) FROM \`ProjectAchievement\` pa WHERE pa.created_by = u.id) as achievement_count
+        (SELECT COUNT(*) FROM \`ResearchAchievement\` pa WHERE pa.created_by = u.id) as achievement_count
       FROM \`User\` u
       LEFT JOIN \`ExpertProfile\` ep ON ep.id = u.id
       WHERE ${whereClause}
@@ -6563,7 +7095,7 @@ const server = http.createServer(async (req, res) => {
         `
     SELECT 
       (SELECT COUNT(*) FROM \`Project\` WHERE applicant_id = ?) as project_count,
-      (SELECT COUNT(*) FROM \`ProjectAchievement\` WHERE created_by = ?) as achievement_count,
+      (SELECT COUNT(*) FROM \`ResearchAchievement\` WHERE created_by = ?) as achievement_count,
       0 as funding_count
   `,
         [userId, userId],
@@ -7582,7 +8114,7 @@ const server = http.createServer(async (req, res) => {
         // 获取未审核成果
         const [pendingAchievements] = await pool.query(`
       SELECT COUNT(*) as count 
-      FROM \`ProjectAchievement\` 
+      FROM \`ResearchAchievement\` 
       WHERE status = 'submitted'
     `);
         overview.pending_achievements = pendingAchievements[0]?.count || 0;
@@ -7689,7 +8221,7 @@ const server = http.createServer(async (req, res) => {
           const actionText = actionMap[log.action] || log.action;
           const tableName = log.table_name === 'Project' ? '项目' :
             log.table_name === 'User' ? '用户' :
-              log.table_name === 'ProjectAchievement' ? '成果' :
+              log.table_name === 'ResearchAchievement' ? '成果' :
                 log.table_name;
           return `${log.user_name || '系统'} ${actionText}${tableName}`;
         };
@@ -7869,7 +8401,7 @@ const server = http.createServer(async (req, res) => {
         // 获取待审核成果数量
         const [pendingAchievementsResult] = await pool.query(`
       SELECT COUNT(*) as count 
-      FROM \`ProjectAchievement\` 
+      FROM \`ResearchAchievement\` 
       WHERE status = 'submitted'
     `);
 
@@ -8205,6 +8737,7 @@ const server = http.createServer(async (req, res) => {
           }
 
           await connection.commit();
+          await syncProjectIncubatingStatus(pool, projectId);
           sendResponse(res, 200, {
             success: true,
             message: '经费申请提交成功',
@@ -8533,7 +9066,7 @@ const server = http.createServer(async (req, res) => {
           );
 
           await connection.commit();
-          await markProjectIncubating(pool, projectId);
+          await syncProjectIncubatingStatus(pool, projectId);
           sendResponse(res, 200, {
             success: true,
             message: '经费登记成功，已同步至项目申请人',
@@ -8996,7 +9529,7 @@ const server = http.createServer(async (req, res) => {
         );
 
         if (['approved', 'partial_approved'].includes(feedbackAction)) {
-          await markProjectIncubating(pool, reqRow[0]?.project_id);
+          await syncProjectIncubatingStatus(pool, reqRow[0]?.project_id);
         }
 
         if (applicantId) {
@@ -9556,7 +10089,7 @@ const server = http.createServer(async (req, res) => {
         const tableTexts = {
           User: '用户',
           Project: '项目',
-          ProjectAchievement: '项目成果',
+          ResearchAchievement: '项目成果',
           Notification: '通知',
         };
 
@@ -9800,7 +10333,7 @@ const server = http.createServer(async (req, res) => {
 
         const [achievementsResult] = await pool.query(`
       SELECT COUNT(*) as count 
-      FROM \`ProjectAchievement\` 
+      FROM \`ResearchAchievement\` 
       WHERE status = 'submitted'
     `);
 
@@ -11649,21 +12182,20 @@ const server = http.createServer(async (req, res) => {
 
         // 按成果年份筛选
         if (query.year) {
-          whereClauses.push('YEAR(pa.achievement_date) = ?');
+          whereClauses.push('YEAR(pa.output_date) = ?');
           queryParams.push(query.year);
         }
 
-        // 关键词搜索
+        // 关键词搜索（成果标题、项目名称）
         if (query.search) {
-          whereClauses.push(
-            '(pa.title LIKE ? OR pa.abstract LIKE ? OR pa.content LIKE ? OR p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)',
-          );
+          whereClauses.push('(pa.name LIKE ? OR p.title LIKE ?)');
           const keyword = `%${query.search}%`;
-          queryParams.push(keyword, keyword, keyword, keyword, keyword, keyword);
+          queryParams.push(keyword, keyword);
         }
 
         if (user.role === 'project_manager') {
           whereClauses.push('p.manager_id = ?');
+          whereClauses.push("pa.submission_type = 'applicant'");
           queryParams.push(user.userId || user.id);
         }
 
@@ -11672,7 +12204,7 @@ const server = http.createServer(async (req, res) => {
         // 获取成果总数
         const [totalResult] = await pool.query(`
       SELECT COUNT(*) as total 
-      FROM \`ProjectAchievement\` pa
+      FROM \`ResearchAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       LEFT JOIN \`User\` u ON pa.created_by = u.id
       ${whereClause}
@@ -11686,11 +12218,20 @@ const server = http.createServer(async (req, res) => {
         pa.id,
         pa.project_id,
         pa.type,
-        pa.title,
-        pa.abstract,
-        pa.content,
+        pa.name,
+        pa.description,
+        pa.authors,
+        pa.keywords,
+        pa.external_link,
+        pa.journal_conference_name,
+        pa.doi_number,
+        pa.volume_issue,
+        pa.publication_date,
+        pa.patent_number,
+        pa.patent_type,
+        pa.authority,
         pa.status,
-        pa.achievement_date,
+        pa.output_date,
         pa.verified_by,
         pa.verified_date,
         pa.verification_comment,
@@ -11709,60 +12250,30 @@ const server = http.createServer(async (req, res) => {
         u.department as creator_department,
         
         uv.name as verifier_name
-      FROM \`ProjectAchievement\` pa
+      FROM \`ResearchAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       LEFT JOIN \`User\` u ON pa.created_by = u.id
       LEFT JOIN \`User\` uv ON pa.verified_by = uv.id
       ${whereClause}
-      ORDER BY pa.achievement_date DESC, pa.created_at DESC
+      ORDER BY pa.output_date DESC, pa.created_at DESC
       LIMIT ? OFFSET ?
     `, [...queryParams, pageSize, offset]);
 
         // 格式化数据
-        const achFilesMap = await loadProjectAchievementFilesMap(
+        const achFilesMap = await loadResearchAchievementFilesMap(
           pool,
           achievements.map((a) => a.id),
         );
-        const formattedAchievements = achievements.map(ach => {
-          const files = achFilesMap[ach.id] || [];
-          return {
-          id: ach.id,
-          project_id: ach.project_id,
-          type: ach.type,
-          title: ach.title,
-          abstract: ach.abstract,
-          content: ach.content,
-          description: ach.abstract,
-          keywords: [],
-          status: ach.status,
-          achievement_date: formatAchievementDateField(ach.achievement_date),
-          authors: [],
-          files,
-          file_count: files.length,
-          attachment_urls: files,
-          external_link: null,
-          verified_by: ach.verified_by,
-          verified_date: formatAchievementDateField(ach.verified_date),
-          verification_comment: ach.verification_comment,
-          published_date: null,
-          publish_link: null,
-          project_info: {
-            id: ach.project_id,
-            title: ach.project_title,
-            project_code: ach.project_code,
-            category: ach.project_category
-          },
-          creator_info: {
-            id: ach.creator_id,
-            name: ach.creator_name,
-            department: ach.creator_department
-          },
-          verifier_info: ach.verifier_name ? {
-            id: ach.verified_by,
-            name: ach.verifier_name
-          } : null
-        };
-        });
+        const formattedAchievements = achievements.map((ach) =>
+          formatResearchAchievementRow(
+            {
+              ...ach,
+              created_by_name: ach.creator_name,
+              verified_by_name: ach.verifier_name,
+            },
+            achFilesMap[ach.id] || [],
+          ),
+        );
 
         // 获取统计数据
         const mgrStats = achievementManagerWhereForUser(user, 'p');
@@ -11772,7 +12283,7 @@ const server = http.createServer(async (req, res) => {
         SUM(CASE WHEN pa.status = 'submitted' THEN 1 ELSE 0 END) as pending,
         SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as verified,
         SUM(CASE WHEN pa.status = 'rejected' THEN 1 ELSE 0 END) as rejected
-      FROM \`ProjectAchievement\` pa
+      FROM \`ResearchAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       WHERE 1=1${mgrStats.clause}
     `, mgrStats.params);
@@ -11784,7 +12295,7 @@ const server = http.createServer(async (req, res) => {
         SUM(CASE WHEN pa.type = 'patent' THEN 1 ELSE 0 END) as patent,
         SUM(CASE WHEN pa.type = 'software' THEN 1 ELSE 0 END) as software,
         SUM(CASE WHEN pa.type NOT IN ('paper', 'patent', 'software') THEN 1 ELSE 0 END) as others
-      FROM \`ProjectAchievement\` pa
+      FROM \`ResearchAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       WHERE 1=1${mgrStats.clause}
     `, mgrStats.params);
@@ -11873,7 +12384,7 @@ const server = http.createServer(async (req, res) => {
         uv.name as verifier_name,
         uv.email as verifier_email,
         0 AS transfer_count
-      FROM \`ProjectAchievement\` pa
+      FROM \`ResearchAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       LEFT JOIN \`User\` u ON pa.created_by = u.id
       LEFT JOIN \`User\` uv ON pa.verified_by = uv.id
@@ -11904,7 +12415,7 @@ const server = http.createServer(async (req, res) => {
         type,
         achievement_date,
         status
-      FROM \`ProjectAchievement\`
+      FROM \`ResearchAchievement\`
       WHERE project_id = ? AND id != ?
       ORDER BY achievement_date DESC
       LIMIT 5
@@ -11913,11 +12424,11 @@ const server = http.createServer(async (req, res) => {
         const [tasks] = await pool.query(`
       SELECT id, action, new_values, created_at
       FROM \`AuditLog\`
-      WHERE table_name = 'ProjectAchievement' AND record_id = ?
+      WHERE table_name = 'ResearchAchievement' AND record_id = ?
       ORDER BY created_at DESC
     `, [achievementId]);
 
-        const detailFilesMap = await loadProjectAchievementFilesMap(pool, [achievementId]);
+        const detailFilesMap = await loadResearchAchievementFilesMap(pool, [achievementId]);
         const detailFiles = detailFilesMap[achievementId] || [];
 
         sendResponse(res, 200, {
@@ -12058,7 +12569,7 @@ const server = http.createServer(async (req, res) => {
 
         // 检查成果状态
         const [achievements] = await pool.query(
-          'SELECT * FROM `ProjectAchievement` WHERE id = ? AND status = "submitted"',
+          'SELECT * FROM `ResearchAchievement` WHERE id = ? AND status = "submitted"',
           [achievementId]
         );
 
@@ -12072,7 +12583,7 @@ const server = http.createServer(async (req, res) => {
 
         const achievement = achievements[0];
 
-        const reviewPerm = await assertUserMayReviewProjectAchievement(pool, achievementId, user);
+        const reviewPerm = await assertUserMayReviewResearchAchievement(pool, achievementId, user);
         if (!reviewPerm.ok) {
           sendResponse(res, reviewPerm.status, { success: false, error: reviewPerm.error });
           return;
@@ -12093,7 +12604,7 @@ const server = http.createServer(async (req, res) => {
 
         // 更新成果状态
         await pool.query(
-          'UPDATE `ProjectAchievement` SET status = ?, verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
+          'UPDATE `ResearchAchievement` SET status = ?, verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
           [newStatus, user.id, comment, achievementId]
         );
 
@@ -12128,7 +12639,7 @@ const server = http.createServer(async (req, res) => {
           id, user_id, type, title, content,
           related_id, related_type, priority,
           is_read, created_at
-        ) VALUES (?, ?, 'system', ?, ?, ?, 'ProjectAchievement', 'high', FALSE, NOW())
+        ) VALUES (?, ?, 'system', ?, ?, ?, 'ResearchAchievement', 'high', FALSE, NOW())
       `, [
             notificationId,
             applicantId,
@@ -12141,7 +12652,7 @@ const server = http.createServer(async (req, res) => {
         // 记录操作日志
         await pool.query(`
       INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
-      VALUES (?, 'achievement_review', 'ProjectAchievement', ?, ?, NOW())
+      VALUES (?, 'achievement_review', 'ResearchAchievement', ?, ?, NOW())
     `, [user.id, achievementId, JSON.stringify({
           status: newStatus,
           recommendation,
@@ -12197,7 +12708,7 @@ const server = http.createServer(async (req, res) => {
 
         // 检查成果状态
         const [achievements] = await pool.query(
-          'SELECT * FROM `ProjectAchievement` WHERE id = ? AND status = "verified"',
+          'SELECT * FROM `ResearchAchievement` WHERE id = ? AND status = "verified"',
           [achievementId]
         );
 
@@ -12213,7 +12724,7 @@ const server = http.createServer(async (req, res) => {
 
         const publishDate = publish_date || new Date().toISOString().split('T')[0];
         await pool.query(
-          `UPDATE \`ProjectAchievement\` SET content = CONCAT(IFNULL(content,''), '\n\n【对外发布链接】', ?) WHERE id = ? AND status = 'verified'`,
+          `UPDATE \`ResearchAchievement\` SET external_link = ? WHERE id = ? AND status = 'verified'`,
           [publish_link, achievementId]
         );
 
@@ -12234,7 +12745,7 @@ const server = http.createServer(async (req, res) => {
           id, user_id, type, title, content,
           related_id, related_type, priority,
           is_read, created_at
-        ) VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', 'high', FALSE, NOW())
+        ) VALUES (?, ?, 'review', ?, ?, ?, 'ResearchAchievement', 'high', FALSE, NOW())
       `,
             [
               notificationId,
@@ -12249,7 +12760,7 @@ const server = http.createServer(async (req, res) => {
         await pool.query(
           `
       INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
-      VALUES (?, 'achievement_publish', 'ProjectAchievement', ?, ?, NOW())
+      VALUES (?, 'achievement_publish', 'ResearchAchievement', ?, ?, NOW())
     `,
           [
             user.id,
@@ -12323,7 +12834,7 @@ const server = http.createServer(async (req, res) => {
 
         // 检查成果状态
         const [achievements] = await pool.query(
-          'SELECT * FROM `ProjectAchievement` WHERE id = ? AND status = "verified"',
+          'SELECT * FROM `ResearchAchievement` WHERE id = ? AND status = "verified"',
           [achievementId]
         );
 
@@ -12344,7 +12855,7 @@ const server = http.createServer(async (req, res) => {
           (actual_amount != null ? `；实际金额：${actual_amount}` : '') +
           (description ? `\n说明：${description}` : '');
         await pool.query(
-          `UPDATE \`ProjectAchievement\` SET content = CONCAT(IFNULL(content,''), ?) WHERE id = ?`,
+          `UPDATE \`ResearchAchievement\` SET description = CONCAT(IFNULL(description,''), ?) WHERE id = ?`,
           [transferNote, achievementId],
         );
 
@@ -12368,7 +12879,7 @@ const server = http.createServer(async (req, res) => {
           id, user_id, type, title, content,
           related_id, related_type, priority,
           is_read, created_at
-        ) VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', 'medium', FALSE, NOW())
+        ) VALUES (?, ?, 'review', ?, ?, ?, 'ResearchAchievement', 'medium', FALSE, NOW())
       `,
             [
               notificationId,
@@ -12383,7 +12894,7 @@ const server = http.createServer(async (req, res) => {
         await pool.query(
           `
       INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
-      VALUES (?, 'achievement_transfer_create', 'ProjectAchievement', ?, ?, NOW())
+      VALUES (?, 'achievement_transfer_create', 'ResearchAchievement', ?, ?, NOW())
     `,
           [
             user.id,
@@ -12449,7 +12960,7 @@ const server = http.createServer(async (req, res) => {
         const placeholders = ids.map(() => '?').join(',');
         const mgrBatch = achievementManagerWhereForUser(user, 'p');
         const [achievements] = await pool.query(`
-      SELECT pa.* FROM \`ProjectAchievement\` pa
+      SELECT pa.* FROM \`ResearchAchievement\` pa
       INNER JOIN \`Project\` p ON pa.project_id = p.id
       WHERE pa.id IN (${placeholders}) AND pa.status = 'submitted'${mgrBatch.clause}
     `, [...ids, ...mgrBatch.params]);
@@ -12466,7 +12977,7 @@ const server = http.createServer(async (req, res) => {
         for (const achievement of achievements) {
           try {
             await pool.query(
-              'UPDATE `ProjectAchievement` SET status = "verified", verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
+              'UPDATE `ResearchAchievement` SET status = "verified", verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
               [user.id, comment || '批量核实通过', achievement.id]
             );
 
@@ -12487,7 +12998,7 @@ const server = http.createServer(async (req, res) => {
               id, user_id, type, title, content,
               related_id, related_type, priority,
               is_read, created_at
-            ) VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', 'medium', FALSE, NOW())
+            ) VALUES (?, ?, 'review', ?, ?, ?, 'ResearchAchievement', 'medium', FALSE, NOW())
           `,
                 [
                   notificationId,
@@ -12514,7 +13025,7 @@ const server = http.createServer(async (req, res) => {
         // 记录操作日志
         await pool.query(`
       INSERT INTO \`AuditLog\` (user_id, action, table_name, new_values, created_at)
-      VALUES (?, 'batch_achievement_verify', 'ProjectAchievement', ?, NOW())
+      VALUES (?, 'batch_achievement_verify', 'ResearchAchievement', ?, NOW())
     `, [user.id, JSON.stringify({
           ids,
           comment,
@@ -12575,7 +13086,7 @@ const server = http.createServer(async (req, res) => {
         const placeholders = ids.map(() => '?').join(',');
         const mgrBatch = achievementManagerWhereForUser(user, 'p');
         const [achievements] = await pool.query(`
-      SELECT pa.* FROM \`ProjectAchievement\` pa
+      SELECT pa.* FROM \`ResearchAchievement\` pa
       INNER JOIN \`Project\` p ON pa.project_id = p.id
       WHERE pa.id IN (${placeholders}) AND pa.status = 'submitted'${mgrBatch.clause}
     `, [...ids, ...mgrBatch.params]);
@@ -12592,7 +13103,7 @@ const server = http.createServer(async (req, res) => {
         for (const achievement of achievements) {
           try {
             await pool.query(
-              'UPDATE `ProjectAchievement` SET status = "rejected", verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
+              'UPDATE `ResearchAchievement` SET status = "rejected", verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
               [user.id, comment, achievement.id]
             );
 
@@ -12613,7 +13124,7 @@ const server = http.createServer(async (req, res) => {
               id, user_id, type, title, content,
               related_id, related_type, priority,
               is_read, created_at
-            ) VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', 'medium', FALSE, NOW())
+            ) VALUES (?, ?, 'review', ?, ?, ?, 'ResearchAchievement', 'medium', FALSE, NOW())
           `,
                 [
                   notificationId,
@@ -12640,7 +13151,7 @@ const server = http.createServer(async (req, res) => {
         // 记录操作日志
         await pool.query(`
       INSERT INTO \`AuditLog\` (user_id, action, table_name, new_values, created_at)
-      VALUES (?, 'batch_achievement_reject', 'ProjectAchievement', ?, NOW())
+      VALUES (?, 'batch_achievement_reject', 'ResearchAchievement', ?, NOW())
     `, [user.id, JSON.stringify({
           ids,
           comment,
@@ -12695,7 +13206,7 @@ const server = http.createServer(async (req, res) => {
         // 检查所有成果是否可操作
         const placeholders = ids.map(() => '?').join(',');
         const [achievements] = await pool.query(`
-      SELECT * FROM \`ProjectAchievement\` 
+      SELECT * FROM \`ResearchAchievement\` 
       WHERE id IN (${placeholders}) AND status = 'verified'
     `, ids);
 
@@ -12713,7 +13224,7 @@ const server = http.createServer(async (req, res) => {
           try {
             const publishLink = `https://research-system.example.com/achievements/${achievement.id}`;
             await pool.query(
-              `UPDATE \`ProjectAchievement\` SET content = CONCAT(IFNULL(content,''), '\n\n【对外发布链接】', ?) WHERE id = ? AND status = 'verified'`,
+              `UPDATE \`ResearchAchievement\` SET external_link = ? WHERE id = ? AND status = 'verified'`,
               [publishLink, achievement.id],
             );
 
@@ -12737,7 +13248,7 @@ const server = http.createServer(async (req, res) => {
               id, user_id, type, title, content,
               related_id, related_type, priority,
               is_read, created_at
-            ) VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', 'medium', FALSE, NOW())
+            ) VALUES (?, ?, 'review', ?, ?, ?, 'ResearchAchievement', 'medium', FALSE, NOW())
           `,
                 [
                   notificationId,
@@ -12764,7 +13275,7 @@ const server = http.createServer(async (req, res) => {
         // 记录操作日志
         await pool.query(`
       INSERT INTO \`AuditLog\` (user_id, action, table_name, new_values, created_at)
-      VALUES (?, 'batch_achievement_publish', 'ProjectAchievement', ?, NOW())
+      VALUES (?, 'batch_achievement_publish', 'ResearchAchievement', ?, NOW())
     `, [user.id, JSON.stringify({
           ids,
           successCount,
@@ -12817,7 +13328,7 @@ const server = http.createServer(async (req, res) => {
         SUM(CASE WHEN pa.status = 'submitted' THEN 1 ELSE 0 END) as pending,
         SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as verified,
         SUM(CASE WHEN pa.status = 'rejected' THEN 1 ELSE 0 END) as rejected
-      FROM \`ProjectAchievement\` pa
+      FROM \`ResearchAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       WHERE 1=1${mgrStats.clause}
     `, mgrStats.params);
@@ -12827,7 +13338,7 @@ const server = http.createServer(async (req, res) => {
         pa.type,
         COUNT(*) as count,
         SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as verified_count
-      FROM \`ProjectAchievement\` pa
+      FROM \`ResearchAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       WHERE 1=1${mgrStats.clause}
       GROUP BY pa.type
@@ -12836,13 +13347,13 @@ const server = http.createServer(async (req, res) => {
 
         const [monthlyStats] = await pool.query(`
       SELECT 
-        DATE_FORMAT(pa.achievement_date, '%Y-%m') as month,
+        DATE_FORMAT(pa.output_date, '%Y-%m') as month,
         COUNT(*) as total,
         SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as verified
-      FROM \`ProjectAchievement\` pa
+      FROM \`ResearchAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
-      WHERE pa.achievement_date >= DATE_SUB(NOW(), INTERVAL 12 MONTH)${mgrStats.clause}
-      GROUP BY DATE_FORMAT(pa.achievement_date, '%Y-%m')
+      WHERE pa.output_date >= DATE_SUB(NOW(), INTERVAL 12 MONTH)${mgrStats.clause}
+      GROUP BY DATE_FORMAT(pa.output_date, '%Y-%m')
       ORDER BY month DESC
     `, mgrStats.params);
 
@@ -12852,7 +13363,7 @@ const server = http.createServer(async (req, res) => {
         p.project_code,
         COUNT(pa.id) as achievement_count,
         SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as verified_count
-      FROM \`ProjectAchievement\` pa
+      FROM \`ResearchAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       WHERE 1=1${mgrStats.clause}
       GROUP BY pa.project_id, p.title, p.project_code
@@ -12961,17 +13472,17 @@ const server = http.createServer(async (req, res) => {
 
         // 按成果年份筛选
         if (query.year) {
-          whereClauses.push('YEAR(pa.achievement_date) = ?');
+          whereClauses.push('YEAR(pa.output_date) = ?');
           queryParams.push(query.year);
         }
 
         // 关键词搜索
         if (query.search) {
           whereClauses.push(
-            '(pa.title LIKE ? OR pa.abstract LIKE ? OR pa.content LIKE ? OR p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)',
+            '(pa.name LIKE ? OR pa.description LIKE ? OR pa.keywords LIKE ? OR pa.authors LIKE ? OR p.title LIKE ? OR p.project_code LIKE ? OR u.name LIKE ?)',
           );
           const keyword = `%${query.search}%`;
-          queryParams.push(keyword, keyword, keyword, keyword, keyword, keyword);
+          queryParams.push(keyword, keyword, keyword, keyword, keyword, keyword, keyword);
         }
 
         if (user.role === 'project_manager') {
@@ -12984,7 +13495,7 @@ const server = http.createServer(async (req, res) => {
         // 获取所有符合条件的成果
         const [achievements] = await pool.query(`
       SELECT 
-        pa.title as '成果标题',
+        pa.name as '成果标题',
         CASE pa.type
           WHEN 'paper' THEN '论文'
           WHEN 'patent' THEN '专利'
@@ -12996,8 +13507,8 @@ const server = http.createServer(async (req, res) => {
         END as '成果类型',
         p.project_code as '项目编号',
         p.title as '项目名称',
-        pa.abstract as '摘要',
-        pa.achievement_date as '成果日期',
+        pa.description as '摘要',
+        pa.output_date as '成果日期',
         CASE pa.status
           WHEN 'draft' THEN '草稿'
           WHEN 'submitted' THEN '待审核'
@@ -13013,12 +13524,12 @@ const server = http.createServer(async (req, res) => {
         NULL as '发布链接',
         NULL as '发布日期',
         0 as '转化记录数量'
-      FROM \`ProjectAchievement\` pa
+      FROM \`ResearchAchievement\` pa
       LEFT JOIN \`Project\` p ON pa.project_id = p.id
       LEFT JOIN \`User\` u ON pa.created_by = u.id
       LEFT JOIN \`User\` uv ON pa.verified_by = uv.id
       ${whereClause}
-      ORDER BY pa.achievement_date DESC
+      ORDER BY pa.output_date DESC
     `, queryParams);
 
         sendResponse(res, 200, {
@@ -14155,7 +14666,7 @@ const server = http.createServer(async (req, res) => {
         SUM(CASE WHEN action LIKE '%login%' THEN 1 ELSE 0 END) as loginCount,
         SUM(CASE WHEN table_name = 'Project' THEN 1 ELSE 0 END) as projectCount,
         0 as fundingCount,
-        SUM(CASE WHEN table_name = 'ProjectAchievement' THEN 1 ELSE 0 END) as achievementCount,
+        SUM(CASE WHEN table_name = 'ResearchAchievement' THEN 1 ELSE 0 END) as achievementCount,
         SUM(CASE WHEN DATE(created_at) = ? THEN 1 ELSE 0 END) as todayCount
       FROM \`AuditLog\`
       WHERE ${whereClause}
@@ -14505,7 +15016,7 @@ const server = http.createServer(async (req, res) => {
         'Project': '项目表',
         'ProjectMember': '项目成员表',
         'ProjectBudget': '项目预算表',
-        'ProjectAchievement': '项目成果表',
+        'ResearchAchievement': '项目成果表',
         'Notification': '通知表',
         'AuditLog': '操作日志表',
       };
@@ -14578,7 +15089,7 @@ const server = http.createServer(async (req, res) => {
             ip_address,
             created_at
           FROM \`AuditLog\`
-          WHERE user_id = ? OR table_name IN ('Project', 'User', 'ProjectAchievement', 'Notification')
+          WHERE user_id = ? OR table_name IN ('Project', 'User', 'ResearchAchievement', 'Notification')
           ORDER BY created_at DESC
           LIMIT ?
         `, [user.id, parseInt(limit)]);
@@ -14605,7 +15116,7 @@ const server = http.createServer(async (req, res) => {
               icon = '👤';
               color = '#f6ffed';
             }
-          } else if (activity.table_name === 'ProjectAchievement') {
+          } else if (activity.table_name === 'ResearchAchievement') {
             description = `处理了成果 "${activity.new_values?.title || '未知成果'}"`;
             icon = '🏆';
             color = '#fff0f6';
@@ -14686,7 +15197,7 @@ const server = http.createServer(async (req, res) => {
           if (notif.type === 'project') icon = '📋';
           if (notif.type === 'review') icon = '⭐';
           if (notif.type === 'funding') icon = '💰';
-          if (notif.related_type === 'ProjectAchievement') icon = '🏆';
+          if (notif.related_type === 'ResearchAchievement') icon = '🏆';
           if (notif.type === 'reminder') icon = '⏰';
 
           return {
@@ -14745,7 +15256,7 @@ const server = http.createServer(async (req, res) => {
           SELECT 
             (SELECT COUNT(*) FROM \`Project\` WHERE status = 'under_review') as pending_reviews,
             0 as pending_expenditures,
-            (SELECT COUNT(*) FROM \`ProjectAchievement\` WHERE status = 'submitted') as pending_achievements,
+            (SELECT COUNT(*) FROM \`ResearchAchievement\` WHERE status = 'submitted') as pending_achievements,
             (SELECT COUNT(*) FROM \`User\` WHERE status = 'inactive') as pending_users,
             (SELECT COUNT(*) FROM \`Project\` WHERE status IN ('under_review', 'incubating')) as active_projects
         `);
@@ -14843,12 +15354,12 @@ const server = http.createServer(async (req, res) => {
         const [achievementTasks] = await pool.query(`
           SELECT 
             pa.id,
-            pa.title,
+            pa.name,
             'achievement_review' as type,
             pa.created_at,
             p.title as project_title,
             pa.type as achievement_type
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           LEFT JOIN \`Project\` p ON pa.project_id = p.id
           WHERE pa.status = 'submitted'
           ORDER BY pa.created_at ASC
@@ -15380,17 +15891,10 @@ const server = http.createServer(async (req, res) => {
           });
         }
 
-        // 获取专家类型（技术 / 投资 / 产业；未设置则为空数组）
+        // 获取专家类型（ExpertProfile.expert_types SET）
         let expertTypesMap = {};
         if (reviewerIds.length > 0) {
-          const [typeRows] = await pool.query(
-            `SELECT expert_id, expert_type FROM \`ExpertExpertType\` WHERE expert_id IN (?) ORDER BY expert_type ASC`,
-            [reviewerIds],
-          );
-          typeRows.forEach((r) => {
-            if (!expertTypesMap[r.expert_id]) expertTypesMap[r.expert_id] = [];
-            expertTypesMap[r.expert_id].push(r.expert_type);
-          });
+          expertTypesMap = await batchLoadExpertTypesMap(reviewerIds);
         }
 
         // 格式化专家数据，并计算领域匹配
@@ -16156,9 +16660,10 @@ const server = http.createServer(async (req, res) => {
               ea.expert_id AS id,
               u.name,
               u.email,
+              u.phone,
               u.department,
               u.title,
-              ep.expertise_description AS research_field,
+              ep.expertise_description,
               ea.status,
               NULL AS submitted_at,
               ea.assigned_at,
@@ -16173,21 +16678,13 @@ const server = http.createServer(async (req, res) => {
           );
 
           const assignedIds = assignedReviewers.map((r) => r.id).filter(Boolean);
-          let expertTypesMap = {};
-          if (assignedIds.length) {
-            const [typeRows] = await pool.query(
-              `SELECT expert_id, expert_type FROM \`ExpertExpertType\` WHERE expert_id IN (?) ORDER BY expert_type ASC`,
-              [assignedIds],
-            );
-            typeRows.forEach((r) => {
-              if (!expertTypesMap[r.expert_id]) expertTypesMap[r.expert_id] = [];
-              expertTypesMap[r.expert_id].push(r.expert_type);
-            });
-          }
-          const withTypes = assignedReviewers.map((r) => {
-            const types = expertTypesMap[r.id] || [];
-            return { ...r, expert_types: types, expertTypes: types };
-          });
+          const expertTypesMap = assignedIds.length
+            ? await batchLoadExpertTypesMap(assignedIds)
+            : {};
+          const domainsMap = assignedIds.length ? await batchLoadExpertDomainsMap(assignedIds) : {};
+          const withTypes = assignedReviewers.map((r) =>
+            formatExpertDisplayRow(r, expertTypesMap[r.id] || [], domainsMap[r.id] || []),
+          );
 
           sendResponse(res, 200, {
             success: true,
@@ -17108,8 +17605,8 @@ const server = http.createServer(async (req, res) => {
         // 删除项目预算（ProjectBudget表）
         await pool.query('DELETE FROM `ProjectBudget` WHERE project_id = ?', [projectId]);
 
-        // 删除项目成果（ProjectAchievement表）
-        await pool.query('DELETE FROM `ProjectAchievement` WHERE project_id = ?', [projectId]);
+        // 删除项目成果（ResearchAchievement表）
+        await pool.query('DELETE FROM `ResearchAchievement` WHERE project_id = ?', [projectId]);
 
         // 删除项目附件（ProjectAttachment表）
         await pool.query('DELETE FROM `ProjectAttachment` WHERE project_id = ?', [projectId]);
@@ -17279,7 +17776,7 @@ const server = http.createServer(async (req, res) => {
             verified_date,
             verification_comment,
             created_at
-          FROM \`ProjectAchievement\`
+          FROM \`ResearchAchievement\`
           WHERE project_id = ?
           ORDER BY achievement_date DESC, created_at DESC
         `, [projectId]);
@@ -17852,7 +18349,7 @@ const server = http.createServer(async (req, res) => {
             verification_comment,
             created_at,
             (SELECT name FROM \`User\` WHERE id = created_by) as author_name
-          FROM \`ProjectAchievement\`
+          FROM \`ResearchAchievement\`
           WHERE project_id = ?
           ORDER BY achievement_date DESC, created_at DESC
         `, [projectId]);
@@ -17955,8 +18452,8 @@ const server = http.createServer(async (req, res) => {
         // 删除项目预算（ProjectBudget表）
         await pool.query('DELETE FROM `ProjectBudget` WHERE project_id = ?', [projectId]);
 
-        // 删除项目成果（ProjectAchievement表）
-        await pool.query('DELETE FROM `ProjectAchievement` WHERE project_id = ?', [projectId]);
+        // 删除项目成果（ResearchAchievement表）
+        await pool.query('DELETE FROM `ResearchAchievement` WHERE project_id = ?', [projectId]);
 
         // 删除项目附件（ProjectAttachment表）
         await pool.query('DELETE FROM `ProjectAttachment` WHERE project_id = ?', [projectId]);
@@ -19864,7 +20361,7 @@ const server = http.createServer(async (req, res) => {
 
     // ==================== 成果管理API ====================
 
-    // 上传科研成果附件（写入 ProjectAchievementFile）
+    // 上传科研成果附件（写入 ResearchAchievementFile）
     if (pathname === '/api/achievements/upload' && req.method === 'POST') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -19906,7 +20403,7 @@ const server = http.createServer(async (req, res) => {
           }
 
           const [achRows] = await pool.query(
-            'SELECT * FROM `ProjectAchievement` WHERE id = ?',
+            'SELECT * FROM `ResearchAchievement` WHERE id = ?',
             [achievementId],
           );
           if (!achRows.length) {
@@ -19915,7 +20412,7 @@ const server = http.createServer(async (req, res) => {
           }
           const achievement = achRows[0];
           const uid = user.userId || user.id;
-          const mayAccess = await userMayAccessProjectAchievement(pool, achievement, user);
+          const mayAccess = await userMayAccessResearchAchievement(pool, achievement, user);
           if (!mayAccess) {
             sendResponse(res, 403, { success: false, error: '没有权限上传此成果附件' });
             return;
@@ -19940,7 +20437,7 @@ const server = http.createServer(async (req, res) => {
           }
 
           const [sortRow] = await pool.query(
-            'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort FROM `ProjectAchievementFile` WHERE achievement_id = ?',
+            'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort FROM `ResearchAchievementFile` WHERE achievement_id = ?',
             [achievementId],
           );
           const sortOrder = sortRow[0]?.next_sort ?? 0;
@@ -19948,7 +20445,7 @@ const server = http.createServer(async (req, res) => {
           const storedPath = projectAchievementFileStoredPath(absPath);
 
           await pool.query(
-            `INSERT INTO \`ProjectAchievementFile\`
+            `INSERT INTO \`ResearchAchievementFile\`
              (id, achievement_id, file_name, file_path, file_size, mime_type, sort_order, uploaded_by, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
             [fileId, achievementId, fileName, storedPath, fileSize, mimeType, sortOrder, uid],
@@ -19957,7 +20454,7 @@ const server = http.createServer(async (req, res) => {
           sendResponse(res, 200, {
             success: true,
             message: '文件上传成功',
-            data: mapProjectAchievementFileRow({
+            data: mapResearchAchievementFileRow({
               id: fileId,
               achievement_id: achievementId,
               file_name: fileName,
@@ -19989,8 +20486,8 @@ const server = http.createServer(async (req, res) => {
       try {
         const [fileRows] = await pool.query(
           `SELECT f.*, pa.created_by, pa.project_id, pa.status
-           FROM \`ProjectAchievementFile\` f
-           INNER JOIN \`ProjectAchievement\` pa ON pa.id = f.achievement_id
+           FROM \`ResearchAchievementFile\` f
+           INNER JOIN \`ResearchAchievement\` pa ON pa.id = f.achievement_id
            WHERE f.id = ?`,
           [fileId],
         );
@@ -20011,7 +20508,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const diskPath = resolveProjectAchievementFileDiskPath(fileRow.file_path);
+        const diskPath = resolveResearchAchievementFileDiskPath(fileRow.file_path);
         if (diskPath && fs.existsSync(diskPath)) {
           try {
             fs.unlinkSync(diskPath);
@@ -20019,7 +20516,7 @@ const server = http.createServer(async (req, res) => {
             console.warn('删除科研成果附件磁盘文件失败:', e.message);
           }
         }
-        await pool.query('DELETE FROM `ProjectAchievementFile` WHERE id = ?', [fileId]);
+        await pool.query('DELETE FROM `ResearchAchievementFile` WHERE id = ?', [fileId]);
         sendResponse(res, 200, { success: true, message: '附件已删除' });
       } catch (error) {
         console.error('删除科研成果附件失败:', error);
@@ -20049,7 +20546,7 @@ const server = http.createServer(async (req, res) => {
         let sql = `
           SELECT pa.*, p.title as project_title, p.project_code,
                  u1.name as created_by_name, u2.name as verified_by_name
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           LEFT JOIN \`Project\` p ON pa.project_id = p.id
           LEFT JOIN \`User\` u1 ON pa.created_by = u1.id
           LEFT JOIN \`User\` u2 ON pa.verified_by = u2.id
@@ -20063,7 +20560,7 @@ const server = http.createServer(async (req, res) => {
           ))
         `;
         let countSql = `
-          SELECT COUNT(*) as total FROM \`ProjectAchievement\` pa
+          SELECT COUNT(*) as total FROM \`ResearchAchievement\` pa
           WHERE (pa.created_by = ? OR pa.project_id IN (
             SELECT p2.id FROM \`Project\` p2
             WHERE p2.applicant_id = ?
@@ -20091,24 +20588,24 @@ const server = http.createServer(async (req, res) => {
         } else if (user.role === 'project_manager') {
           sql = sql.replace(
             /WHERE \(pa\.created_by = \? OR pa\.project_id IN \([\s\S]*?\)\)/,
-            'WHERE p.manager_id = ?',
+            `WHERE ((pa.created_by = ? AND pa.submission_type = 'project_manager') OR (pa.submission_type = 'applicant' AND p.manager_id = ?))`,
           );
           countSql = countSql.replace(
             /WHERE \(pa\.created_by = \? OR pa\.project_id IN \([\s\S]*?\)\)/,
-            'WHERE project_id IN (SELECT id FROM `Project` WHERE manager_id = ?)',
+            `WHERE ((pa.created_by = ? AND pa.submission_type = 'project_manager') OR (pa.submission_type = 'applicant' AND project_id IN (SELECT id FROM \`Project\` WHERE manager_id = ?)))`,
           );
           params.length = 0;
           countParams.length = 0;
-          params.push(uid);
-          countParams.push(uid);
+          params.push(uid, uid);
+          countParams.push(uid, uid);
         } else if (user.role === 'applicant') {
           sql = sql.replace(
             /WHERE \(pa\.created_by = \? OR pa\.project_id IN \([\s\S]*?\)\)/,
-            'WHERE pa.created_by = ?',
+            `WHERE pa.created_by = ? AND pa.submission_type = 'applicant'`,
           );
           countSql = countSql.replace(
             /WHERE \(pa\.created_by = \? OR pa\.project_id IN \([\s\S]*?\)\)/,
-            'WHERE created_by = ?',
+            `WHERE created_by = ? AND submission_type = 'applicant'`,
           );
           params.length = 0;
           countParams.length = 0;
@@ -20132,13 +20629,25 @@ const server = http.createServer(async (req, res) => {
           countParams.push(status);
         }
 
-        // 搜索
+        // 搜索（search_scope=title 时匹配成果名称与项目名称）
         if (search) {
-          sql += ' AND (pa.title LIKE ? OR pa.abstract LIKE ? OR pa.content LIKE ?)';
-          countSql += ' AND (title LIKE ? OR abstract LIKE ? OR content LIKE ?)';
-          const searchParam = `%${search}%`;
-          params.push(searchParam, searchParam, searchParam);
-          countParams.push(searchParam, searchParam, searchParam);
+          if (query.search_scope === 'title') {
+            sql += ' AND (pa.name LIKE ? OR p.title LIKE ?)';
+            countSql = countSql.replace(
+              'FROM `ResearchAchievement` pa',
+              'FROM `ResearchAchievement` pa LEFT JOIN `Project` p ON pa.project_id = p.id',
+            );
+            countSql += ' AND (pa.name LIKE ? OR p.title LIKE ?)';
+            const searchParam = `%${search}%`;
+            params.push(searchParam, searchParam);
+            countParams.push(searchParam, searchParam);
+          } else {
+            sql += ' AND (pa.name LIKE ? OR pa.description LIKE ? OR pa.keywords LIKE ?)';
+            countSql += ' AND (name LIKE ? OR description LIKE ? OR keywords LIKE ?)';
+            const searchParam = `%${search}%`;
+            params.push(searchParam, searchParam, searchParam);
+            countParams.push(searchParam, searchParam, searchParam);
+          }
         }
 
         sql += ' ORDER BY pa.created_at DESC LIMIT ? OFFSET ?';
@@ -20147,7 +20656,7 @@ const server = http.createServer(async (req, res) => {
         const [rows] = await pool.query(sql, params);
         const [totalResult] = await pool.query(countSql, countParams);
         const total = totalResult[0].total;
-        const filesMap = await loadProjectAchievementFilesMap(
+        const filesMap = await loadResearchAchievementFilesMap(
           pool,
           rows.map((r) => r.id),
         );
@@ -20155,7 +20664,7 @@ const server = http.createServer(async (req, res) => {
         sendResponse(res, 200, {
           success: true,
           data: rows.map((row) =>
-            formatProjectAchievementRow(row, filesMap[row.id] || []),
+            formatResearchAchievementRow(row, filesMap[row.id] || []),
           ),
           total: total,
           page: parseInt(page),
@@ -20233,15 +20742,19 @@ const server = http.createServer(async (req, res) => {
             return;
           }
 
-          // 检查权限：只有项目成员或管理员可以创建成果
+          // 检查权限：只有项目成员、项目经理（负责该项目）或管理员可以创建成果
           const isOwner = project.applicant_id === user.id;
-          const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
+          const isAdmin = user.role === 'admin';
           const [isMember] = await pool.query(
             'SELECT id FROM `ProjectMember` WHERE project_id = ? AND user_id = ?',
             [body.project_id, user.id]
           );
+          const [mgr] = await pool.query('SELECT manager_id FROM `Project` WHERE id = ?', [body.project_id]);
+          const isManager =
+            user.role === 'project_manager' &&
+            String(mgr[0]?.manager_id) === String(user.userId || user.id);
 
-          if (!isOwner && !isAdmin && isMember.length === 0) {
+          if (!isOwner && !isAdmin && isMember.length === 0 && !isManager) {
             sendResponse(res, 403, {
               success: false,
               error: '没有权限为此项目创建成果'
@@ -20252,23 +20765,39 @@ const server = http.createServer(async (req, res) => {
 
         // 生成成果ID
         const achievementId = randomUUID();
-        const { abstract: abs, content: cont } = buildProjectAchievementText(body);
+        const fields = pickResearchAchievementFieldsFromBody(body);
+        const subMeta = buildResearchSubmissionMeta(user, body.status);
         const sql = `
-          INSERT INTO \`ProjectAchievement\` (
-            id, project_id, type, title, abstract, content, achievement_date,
-            status, created_by, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+          INSERT INTO \`ResearchAchievement\` (
+            id, project_id, type, name, output_date, authors, keywords, description,
+            external_link, journal_conference_name, doi_number, volume_issue, publication_date,
+            patent_number, patent_type, authority, status, submission_type, verified_by, verified_date, verification_comment,
+            created_by, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
 
         const params = [
           achievementId,
           body.project_id,
-          body.type,
-          body.title,
-          abs,
-          cont,
-          body.achievement_date || new Date().toISOString().split('T')[0],
-          body.status || 'draft',
+          fields.type,
+          fields.name,
+          fields.output_date || new Date().toISOString().split('T')[0],
+          fields.authors ?? null,
+          fields.keywords ?? null,
+          fields.description ?? null,
+          fields.external_link ?? null,
+          fields.journal_conference_name ?? null,
+          fields.doi_number ?? null,
+          fields.volume_issue ?? null,
+          fields.publication_date ?? null,
+          fields.patent_number ?? null,
+          fields.patent_type ?? null,
+          fields.authority ?? null,
+          subMeta.status,
+          subMeta.submission_type,
+          subMeta.verified_by,
+          subMeta.verified_date,
+          subMeta.verification_comment,
           user.id,
         ];
 
@@ -20277,7 +20806,7 @@ const server = http.createServer(async (req, res) => {
 
         await pool.query(sql, params);
 
-        if ((body.status || 'draft') === 'submitted' && body.project_id) {
+        if (subMeta.notifyReview && body.project_id) {
           const [projNotify] = await pool.query(
             'SELECT manager_id, title FROM `Project` WHERE id = ?',
             [body.project_id],
@@ -20285,7 +20814,7 @@ const server = http.createServer(async (req, res) => {
           if (projNotify.length && projNotify[0].manager_id) {
             await pool.query(
               `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
-               VALUES (?, ?, 'review', ?, ?, ?, 'ProjectAchievement', NOW())`,
+               VALUES (?, ?, 'review', ?, ?, ?, 'ResearchAchievement', NOW())`,
               [
                 randomUUID(),
                 projNotify[0].manager_id,
@@ -20301,18 +20830,18 @@ const server = http.createServer(async (req, res) => {
         const [achievements] = await pool.query(
           `SELECT pa.*, p.title as project_title, p.project_code,
                   u.name as created_by_name
-           FROM \`ProjectAchievement\` pa
+           FROM \`ResearchAchievement\` pa
            LEFT JOIN \`Project\` p ON pa.project_id = p.id
            LEFT JOIN \`User\` u ON pa.created_by = u.id
            WHERE pa.id = ?`,
           [achievementId]
         );
-        const filesMap = await loadProjectAchievementFilesMap(pool, [achievementId]);
+        const filesMap = await loadResearchAchievementFilesMap(pool, [achievementId]);
 
         sendResponse(res, 201, {
           success: true,
           message: '成果创建成功',
-          data: formatProjectAchievementRow(achievements[0], filesMap[achievementId] || []),
+          data: formatResearchAchievementRow(achievements[0], filesMap[achievementId] || []),
         });
 
       } catch (error) {
@@ -20327,11 +20856,47 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // 申请人/项目经理：获取可登记科研成果的项目（已入库、孵化中）
+    if (pathname === '/api/achievements/eligible-projects' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || !['applicant', 'project_manager'].includes(user.role)) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const uid = user.userId || user.id;
+        let sql = `SELECT p.id, p.project_code, p.title, p.status, p.approval_date,
+                  (SELECT COUNT(*) FROM \`ResearchAchievement\` ra WHERE ra.project_id = p.id AND ra.created_by = ?) AS achievement_count
+           FROM \`Project\` p
+           WHERE p.status IN ('approved', 'incubating')`;
+        const params = [uid];
+        if (user.role === 'applicant') {
+          sql += ` AND (
+               p.applicant_id = ?
+               OR p.id IN (SELECT pm.project_id FROM \`ProjectMember\` pm WHERE pm.user_id = ?)
+             )`;
+          params.push(uid, uid);
+        } else if (user.role === 'project_manager') {
+          sql += ' AND p.manager_id = ?';
+          params.push(uid);
+        }
+        sql += ' ORDER BY p.updated_at DESC';
+        const [projects] = await pool.query(sql, params);
+        sendResponse(res, 200, { success: true, data: projects });
+      } catch (error) {
+        console.error('获取可登记科研成果的项目失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目列表失败' });
+      }
+      return;
+    }
+
     // 3. 获取单个成果详情
     if (
       pathname.startsWith('/api/achievements/') &&
       req.method === 'GET' &&
-      pathname !== '/api/achievements/stats'
+      pathname !== '/api/achievements/stats' &&
+      pathname !== '/api/achievements/eligible-projects'
     ) {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -20352,9 +20917,9 @@ const server = http.createServer(async (req, res) => {
         // 查询成果详情
         const sql = `
           SELECT pa.*, p.title as project_title, p.project_code, p.applicant_id,
-                 u1.name as created_by_name, u1.email as created_by_email,
+                 u1.name as created_by_name, u1.email as created_by_email, u1.phone as created_by_phone,
                  u2.name as verified_by_name, u2.email as verified_by_email
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           LEFT JOIN \`Project\` p ON pa.project_id = p.id
           LEFT JOIN \`User\` u1 ON pa.created_by = u1.id
           LEFT JOIN \`User\` u2 ON pa.verified_by = u2.id
@@ -20411,11 +20976,11 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const filesMap = await loadProjectAchievementFilesMap(pool, [achievementId]);
+        const filesMap = await loadResearchAchievementFilesMap(pool, [achievementId]);
         const files = filesMap[achievementId] || [];
 
         const responseData = {
-          ...formatProjectAchievementRow(achievement, files),
+          ...formatResearchAchievementRow(achievement, files),
           permissions: {
             can_edit: isOwner || isAdmin,
             can_delete: (isOwner || isAdmin) && achievement.status === 'draft',
@@ -20468,7 +21033,7 @@ const server = http.createServer(async (req, res) => {
       try {
         // 检查成果是否存在
         const [achievements] = await pool.query(
-          'SELECT * FROM `ProjectAchievement` WHERE id = ?',
+          'SELECT * FROM `ResearchAchievement` WHERE id = ?',
           [achievementId]
         );
 
@@ -20519,26 +21084,34 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        // 构建更新字段
+        // 构建更新字段（ResearchAchievement 各列独立存储）
         const updateFields = [];
         const updateValues = [];
+        const picked = pickResearchAchievementFieldsFromBody({ ...achievement, ...body });
 
-        const allowedFields = [
-          'type', 'title', 'abstract', 'content', 'achievement_date', 'status', 'project_id',
+        const columnMap = [
+          ['type', body.type !== undefined ? picked.type : undefined],
+          ['name', body.title !== undefined || body.name !== undefined ? picked.name : undefined],
+          ['project_id', body.project_id],
+          ['output_date', body.achievement_date !== undefined || body.output_date !== undefined ? picked.output_date : undefined],
+          ['authors', body.authors !== undefined ? picked.authors : undefined],
+          ['keywords', body.keywords !== undefined ? picked.keywords : undefined],
+          ['description', body.description !== undefined ? picked.description : undefined],
+          ['external_link', body.external_link !== undefined ? picked.external_link : undefined],
+          ['journal_conference_name', body.journal_conference_name !== undefined || body.paper !== undefined ? picked.journal_conference_name : undefined],
+          ['doi_number', body.doi_number !== undefined || body.paper !== undefined ? picked.doi_number : undefined],
+          ['volume_issue', body.volume_issue !== undefined || body.paper !== undefined ? picked.volume_issue : undefined],
+          ['publication_date', body.publication_date !== undefined || body.paper !== undefined ? picked.publication_date : undefined],
+          ['patent_number', body.patent_number !== undefined || body.patent !== undefined ? picked.patent_number : undefined],
+          ['patent_type', body.patent_type !== undefined || body.patent !== undefined ? picked.patent_type : undefined],
+          ['authority', body.authority !== undefined || body.patent !== undefined ? picked.authority : undefined],
+          ['status', body.status],
         ];
-        const textUpdate = buildProjectAchievementText(body);
-        if (body.description !== undefined || body.abstract !== undefined || body.content !== undefined
-          || body.authors !== undefined || body.keywords !== undefined || body.external_link !== undefined) {
-          updateFields.push('abstract = ?');
-          updateFields.push('content = ?');
-          updateValues.push(textUpdate.abstract, textUpdate.content);
-        }
 
-        allowedFields.forEach((field) => {
-          if (field === 'abstract' || field === 'content') return;
-          if (body[field] !== undefined) {
-            updateFields.push(`${field} = ?`);
-            updateValues.push(body[field]);
+        columnMap.forEach(([col, val]) => {
+          if (val !== undefined) {
+            updateFields.push(`${col} = ?`);
+            updateValues.push(val);
           }
         });
 
@@ -20557,7 +21130,7 @@ const server = http.createServer(async (req, res) => {
 
         updateValues.push(achievementId);
 
-        const updateSql = `UPDATE \`ProjectAchievement\` SET ${updateFields.join(', ')} WHERE id = ?`;
+        const updateSql = `UPDATE \`ResearchAchievement\` SET ${updateFields.join(', ')} WHERE id = ?`;
 
         console.log('📝 执行更新SQL:', updateSql);
         console.log('📝 参数:', updateValues);
@@ -20606,7 +21179,7 @@ const server = http.createServer(async (req, res) => {
       try {
         // 检查成果是否存在
         const [achievements] = await pool.query(
-          'SELECT * FROM `ProjectAchievement` WHERE id = ?',
+          'SELECT * FROM `ResearchAchievement` WHERE id = ?',
           [achievementId]
         );
 
@@ -20645,7 +21218,7 @@ const server = http.createServer(async (req, res) => {
         console.log('✅ 验证通过，开始删除成果...');
 
         // 删除成果
-        const [result] = await pool.query('DELETE FROM `ProjectAchievement` WHERE id = ?', [achievementId]);
+        const [result] = await pool.query('DELETE FROM `ResearchAchievement` WHERE id = ?', [achievementId]);
 
         console.log('✅ 成果删除成功，影响行数:', result.affectedRows);
 
@@ -20686,7 +21259,7 @@ const server = http.createServer(async (req, res) => {
 
       try {
         const [achievements] = await pool.query(
-          'SELECT * FROM `ProjectAchievement` WHERE id = ?',
+          'SELECT * FROM `ResearchAchievement` WHERE id = ?',
           [achievementId]
         );
 
@@ -20731,8 +21304,8 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // 库表 ProjectAchievement.status：draft/submitted/verified/rejected（无 under_review）
-        await pool.query('UPDATE `ProjectAchievement` SET status = ? WHERE id = ?', [
+        // 库表 ResearchAchievement.status：draft/submitted/verified/rejected（无 under_review）
+        await pool.query('UPDATE `ResearchAchievement` SET status = ? WHERE id = ?', [
           'submitted',
           achievementId,
         ]);
@@ -20805,7 +21378,7 @@ const server = http.createServer(async (req, res) => {
 
       try {
         const [achievements] = await pool.query(
-          'SELECT * FROM `ProjectAchievement` WHERE id = ?',
+          'SELECT * FROM `ResearchAchievement` WHERE id = ?',
           [achievementId]
         );
 
@@ -20819,7 +21392,7 @@ const server = http.createServer(async (req, res) => {
 
         const achievement = achievements[0];
 
-        // 与 ProjectAchievement.status ENUM 一致：待审核为 submitted
+        // 与 ResearchAchievement.status ENUM 一致：待审核为 submitted
         if (achievement.status !== 'submitted') {
           sendResponse(res, 409, {
             success: false,
@@ -20847,9 +21420,9 @@ const server = http.createServer(async (req, res) => {
             break;
         }
 
-        // 更新成果状态（字段名与 research_system_db.sql 中 ProjectAchievement 一致）
+        // 更新成果状态（字段名与 research_system_db.sql 中 ResearchAchievement 一致）
         await pool.query(
-          'UPDATE `ProjectAchievement` SET status = ?, verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
+          'UPDATE `ResearchAchievement` SET status = ?, verified_by = ?, verified_date = CURDATE(), verification_comment = ? WHERE id = ?',
           [newStatus, user.id, body.reason || body.comments || '', achievementId]
         );
 
@@ -20872,7 +21445,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 8. 获取项目下的所有成果（科研成果 ProjectAchievement，不含孵化成果 incubation-achievements）
+    // 8. 获取项目下的所有成果（科研成果 ResearchAchievement，不含孵化成果 incubation-achievements）
     if (
       pathname.startsWith('/api/projects/') &&
       pathname.includes('/achievements') &&
@@ -20939,12 +21512,12 @@ const server = http.createServer(async (req, res) => {
         // 构建查询
         let sql = `
           SELECT pa.*, u.name as created_by_name
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           LEFT JOIN \`User\` u ON pa.created_by = u.id
           WHERE pa.project_id = ?
         `;
 
-        let countSql = 'SELECT COUNT(*) as total FROM `ProjectAchievement` WHERE project_id = ?';
+        let countSql = 'SELECT COUNT(*) as total FROM `ResearchAchievement` WHERE project_id = ?';
         const params = [projectId];
         const countParams = [projectId];
 
@@ -21019,7 +21592,7 @@ const server = http.createServer(async (req, res) => {
               SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
               COUNT(DISTINCT project_id) as project_count,
               COUNT(DISTINCT created_by) as user_count
-            FROM \`ProjectAchievement\`
+            FROM \`ResearchAchievement\`
           `;
         } else {
           // 普通用户查看自己的统计数据
@@ -21031,7 +21604,7 @@ const server = http.createServer(async (req, res) => {
               SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft,
               SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
               COUNT(DISTINCT project_id) as project_count
-            FROM \`ProjectAchievement\`
+            FROM \`ResearchAchievement\`
             WHERE created_by = ?
           `;
           statsParams = [user.id];
@@ -21044,14 +21617,14 @@ const server = http.createServer(async (req, res) => {
         if (checkPermission(user.role, ['admin', 'project_manager'])) {
           typeQuery = `
             SELECT type, COUNT(*) as count 
-            FROM \`ProjectAchievement\`
+            FROM \`ResearchAchievement\`
             GROUP BY type
             ORDER BY count DESC
           `;
         } else {
           typeQuery = `
             SELECT type, COUNT(*) as count 
-            FROM \`ProjectAchievement\`
+            FROM \`ResearchAchievement\`
             WHERE created_by = ?
             GROUP BY type
             ORDER BY count DESC
@@ -21066,7 +21639,7 @@ const server = http.createServer(async (req, res) => {
           SELECT 
             DATE_FORMAT(created_at, '%Y-%m') as month,
             COUNT(*) as count
-          FROM \`ProjectAchievement\`
+          FROM \`ResearchAchievement\`
           WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
           ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND created_by = ?' : ''}
           GROUP BY DATE_FORMAT(created_at, '%Y-%m')
@@ -23141,7 +23714,7 @@ const server = http.createServer(async (req, res) => {
               NULLIF(SUM(CASE WHEN pa.status IN ('verified', 'rejected') THEN 1 ELSE 0 END), 0), 
               1
             ) as approval_rate
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           ${whereClause}
           ${projectFilter}
           ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
@@ -23200,7 +23773,7 @@ const server = http.createServer(async (req, res) => {
           SELECT 
             COUNT(*) as prev_total,
             SUM(CASE WHEN pa.status = 'verified' THEN 1 ELSE 0 END) as prev_approved
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           WHERE pa.created_at BETWEEN ? AND ?
           ${projectFilter}
           ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
@@ -23337,7 +23910,7 @@ const server = http.createServer(async (req, res) => {
         // 获取总数用于计算百分比
         const totalQuery = `
           SELECT COUNT(*) as total
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           ${whereClause}
           ${projectFilter}
           ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
@@ -23357,7 +23930,7 @@ const server = http.createServer(async (req, res) => {
             ${groupByField === 'pa.type' ? 'pa.type as type' : "'category' as type"},
             COUNT(*) as count,
             ROUND(COUNT(*) * 100.0 / ?, 1) as percentage
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           ${groupByField.includes('p.title') ? 'LEFT JOIN `Project` p ON pa.project_id = p.id' : ''}
           ${groupByField.includes('u.name') ? 'LEFT JOIN `User` u ON pa.created_by = u.id' : ''}
           ${whereClause}
@@ -23479,7 +24052,7 @@ const server = http.createServer(async (req, res) => {
               NULLIF(SUM(CASE WHEN pa.status IN ('verified', 'rejected') THEN 1 ELSE 0 END), 0), 
               1
             ) as rate
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           ${whereClause}
           ${projectFilter}
           ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
@@ -23630,7 +24203,7 @@ const server = http.createServer(async (req, res) => {
                 1
               ) as approval_rate
             FROM \`Project\` p
-            LEFT JOIN \`ProjectAchievement\` pa ON p.id = pa.project_id 
+            LEFT JOIN \`ResearchAchievement\` pa ON p.id = pa.project_id 
               AND pa.created_at BETWEEN ? AND ?
             GROUP BY p.id, p.title, p.project_code
             HAVING achievement_count > 0
@@ -23653,7 +24226,7 @@ const server = http.createServer(async (req, res) => {
                 1
               ) as approval_rate
             FROM \`Project\` p
-            LEFT JOIN \`ProjectAchievement\` pa ON p.id = pa.project_id 
+            LEFT JOIN \`ResearchAchievement\` pa ON p.id = pa.project_id 
               AND pa.created_at BETWEEN ? AND ?
             WHERE p.applicant_id = ? OR p.id IN (
               SELECT project_id FROM \`ProjectMember\` WHERE user_id = ?
@@ -23757,7 +24330,7 @@ const server = http.createServer(async (req, res) => {
               1
             ) as approval_rate,
             ROUND(AVG(DATEDIFF(COALESCE(pa.verified_at, pa.created_at), pa.created_at)), 1) as avg_review_days
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           WHERE pa.created_at BETWEEN ? AND ?
           ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
           GROUP BY pa.type
@@ -23765,7 +24338,7 @@ const server = http.createServer(async (req, res) => {
 
         let countQuery = `
           SELECT COUNT(DISTINCT pa.type) as total
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           WHERE pa.created_at BETWEEN ? AND ?
           ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
         `;
@@ -23814,7 +24387,7 @@ const server = http.createServer(async (req, res) => {
           SELECT 
             pa.type,
             COUNT(*) as prev_total
-          FROM \`ProjectAchievement\` pa
+          FROM \`ResearchAchievement\` pa
           WHERE pa.created_at BETWEEN ? AND ?
           ${!checkPermission(user.role, ['admin', 'project_manager']) ? 'AND pa.created_by = ?' : ''}
           GROUP BY pa.type
@@ -23912,12 +24485,12 @@ const server = http.createServer(async (req, res) => {
             const [achievements] = await pool.query(`
               SELECT 
                 pa.type,
-                pa.title,
+                pa.name,
                 pa.status,
                 DATE_FORMAT(pa.created_at, '%Y-%m-%d') as created_date,
                 p.title as project_title,
                 u.name as created_by_name
-              FROM \`ProjectAchievement\` pa
+              FROM \`ResearchAchievement\` pa
               LEFT JOIN \`Project\` p ON pa.project_id = p.id
               LEFT JOIN \`User\` u ON pa.created_by = u.id
               WHERE 1=1
@@ -24264,7 +24837,7 @@ const server = http.createServer(async (req, res) => {
             SUM(CASE WHEN type = 'review' THEN 1 ELSE 0 END) as review,
             SUM(CASE WHEN type = 'funding' THEN 1 ELSE 0 END) as funding,
             SUM(CASE WHEN type = 'expenditure' THEN 1 ELSE 0 END) as expenditure,
-            SUM(CASE WHEN related_type = 'ProjectAchievement' THEN 1 ELSE 0 END) as achievement,
+            SUM(CASE WHEN related_type = 'ResearchAchievement' THEN 1 ELSE 0 END) as achievement,
             SUM(CASE WHEN type = 'reminder' THEN 1 ELSE 0 END) as reminder,
             SUM(CASE WHEN expires_at IS NOT NULL AND expires_at < NOW() THEN 1 ELSE 0 END) as expired
           FROM \`Notification\`
@@ -24573,14 +25146,14 @@ const server = http.createServer(async (req, res) => {
                 break;
 
               case 'achievement':
-              case 'ProjectAchievement':
+              case 'ResearchAchievement':
                 const [achievements] = await pool.query(
-                  'SELECT id, title, type FROM `ProjectAchievement` WHERE id = ?',
+                  'SELECT id, title, type FROM `ResearchAchievement` WHERE id = ?',
                   [notification.related_id]
                 );
                 if (achievements.length > 0) {
                   related_data = {
-                    type: 'ProjectAchievement',
+                    type: 'ResearchAchievement',
                     data: achievements[0]
                   };
                 }
@@ -24811,7 +25384,7 @@ const server = http.createServer(async (req, res) => {
             SUM(CASE WHEN type = 'report' THEN 1 ELSE 0 END) as reports,
             SUM(CASE WHEN type = 'prototype' THEN 1 ELSE 0 END) as prototypes,
             10.2 as achievementGrowth  -- 示例增长数据
-          FROM \`ProjectAchievement\`
+          FROM \`ResearchAchievement\`
           WHERE status = 'verified'
         `);
 
@@ -24903,9 +25476,9 @@ const server = http.createServer(async (req, res) => {
         const pendingFunding = [{ count: 0 }];
         const pendingExpenditures = [{ count: 0 }];
 
-        // 使用 ProjectAchievement 表
+        // 使用 ResearchAchievement 表
         const [pendingAchievements] = await pool.query(
-          'SELECT COUNT(*) as count FROM `ProjectAchievement` WHERE status = "submitted"'
+          'SELECT COUNT(*) as count FROM `ResearchAchievement` WHERE status = "submitted"'
         );
 
         const pendingTasks = {
@@ -26885,29 +27458,134 @@ const server = http.createServer(async (req, res) => {
       fs.mkdirSync(INCUBATION_UPLOADS_DIR, { recursive: true });
     }
 
-    // 申请人：获取可提交孵化成果的项目（已入库、孵化中）
+    // 活动登记详情（单条）
+    const activityRecordDetailMatch = pathname.match(/^\/api\/activity-records\/([^/]+)$/);
+    if (
+      activityRecordDetailMatch &&
+      req.method === 'GET' &&
+      activityRecordDetailMatch[1] !== 'my'
+    ) {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+      const recordId = activityRecordDetailMatch[1];
+      try {
+        const [rows] = await pool.query(
+          `SELECT ar.*, p.title AS project_title, p.project_code, p.applicant_id,
+                  u.name AS creator_name, u.email AS creator_email, u.phone AS creator_phone,
+                  u2.name AS reviewed_by_name
+           FROM \`ActivityRecord\` ar
+           JOIN \`Project\` p ON ar.project_id = p.id
+           JOIN \`User\` u ON ar.created_by = u.id
+           LEFT JOIN \`User\` u2 ON ar.reviewed_by = u2.id
+           WHERE ar.id = ?`,
+          [recordId],
+        );
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '活动登记记录不存在' });
+          return;
+        }
+        const record = rows[0];
+        const uid = user.userId || user.id;
+        const isOwner = String(record.created_by) === String(uid);
+        const isApplicant = String(record.applicant_id) === String(uid);
+        const isAdmin = checkPermission(user.role, ['admin', 'project_manager']);
+        let isMember = false;
+        const [memberCheck] = await pool.query(
+          'SELECT id FROM `ProjectMember` WHERE project_id = ? AND user_id = ?',
+          [record.project_id, uid],
+        );
+        isMember = memberCheck.length > 0;
+        if (!isOwner && !isApplicant && !isAdmin && !isMember) {
+          sendResponse(res, 403, { success: false, error: '没有权限查看此活动登记' });
+          return;
+        }
+        const [files] = await pool.query(
+          `SELECT id, record_id, file_name, file_path, file_size, mime_type, created_at
+           FROM \`ActivityRecordFile\` WHERE record_id = ? ORDER BY sort_order ASC, created_at ASC`,
+          [recordId],
+        );
+        record.files = files;
+        sendResponse(res, 200, { success: true, data: record });
+      } catch (error) {
+        console.error('获取活动登记详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取活动登记详情失败' });
+      }
+      return;
+    }
+
+    // 申请人/项目经理：获取自己的活动登记记录
+    if (pathname === '/api/activity-records/my' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || !['applicant', 'project_manager'].includes(user.role)) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const uid = user.userId || user.id;
+        let sql = `SELECT ar.*, p.title AS project_title, p.project_code, u.name AS creator_name
+           FROM \`ActivityRecord\` ar
+           JOIN \`Project\` p ON ar.project_id = p.id
+           JOIN \`User\` u ON ar.created_by = u.id
+           WHERE `;
+        const params = [];
+        if (user.role === 'applicant') {
+          sql += `ar.created_by = ? AND ar.submission_type = 'applicant'`;
+          params.push(uid);
+        } else {
+          sql += `((ar.created_by = ? AND ar.submission_type = 'project_manager') OR (ar.submission_type = 'applicant' AND p.manager_id = ?))`;
+          params.push(uid, uid);
+        }
+        sql += ` ORDER BY ar.created_at DESC LIMIT 100`;
+        const [rows] = await pool.query(sql, params);
+        for (const record of rows) {
+          const [files] = await pool.query(
+            `SELECT id, record_id, file_name, file_path, file_size, mime_type, created_at
+             FROM \`ActivityRecordFile\` WHERE record_id = ? ORDER BY sort_order ASC, created_at ASC`,
+            [record.id],
+          );
+          record.files = files;
+        }
+        sendResponse(res, 200, { success: true, data: rows });
+      } catch (error) {
+        console.error('获取活动登记列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取活动登记列表失败' });
+      }
+      return;
+    }
+
+    // 申请人/项目经理：获取可提交活动的项目（已入库、孵化中）
     if (pathname === '/api/incubation/achievement-eligible-projects' && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
-      if (!user || user.role !== 'applicant') {
+      if (!user || !['applicant', 'project_manager'].includes(user.role)) {
         sendResponse(res, 403, { success: false, error: '没有权限' });
         return;
       }
       try {
         const uid = user.userId || user.id;
         const statusPlaceholders = INCUBATION_ACHIEVEMENT_SUBMIT_PROJECT_STATUSES.map(() => '?').join(', ');
-        const [projects] = await pool.query(
-          `SELECT p.id, p.project_code, p.title, p.status, p.approval_date,
-                  (SELECT COUNT(*) FROM \`IncubationAchievementRecord\` iar WHERE iar.project_id = p.id) AS achievement_count
+        let sql = `SELECT p.id, p.project_code, p.title, p.status, p.approval_date,
+                  (SELECT COUNT(*) FROM \`ActivityRecord\` ar WHERE ar.project_id = p.id) AS achievement_count
            FROM \`Project\` p
-           WHERE p.status IN (${statusPlaceholders})
-             AND (
+           WHERE p.status IN (${statusPlaceholders})`;
+        const params = [...INCUBATION_ACHIEVEMENT_SUBMIT_PROJECT_STATUSES];
+        if (user.role === 'applicant') {
+          sql += ` AND (
                p.applicant_id = ?
                OR p.id IN (SELECT pm.project_id FROM \`ProjectMember\` pm WHERE pm.user_id = ?)
-             )
-           ORDER BY p.updated_at DESC`,
-          [...INCUBATION_ACHIEVEMENT_SUBMIT_PROJECT_STATUSES, uid, uid],
-        );
+             )`;
+          params.push(uid, uid);
+        } else {
+          sql += ' AND p.manager_id = ?';
+          params.push(uid);
+        }
+        sql += ' ORDER BY p.updated_at DESC';
+        const [projects] = await pool.query(sql, params);
         sendResponse(res, 200, { success: true, data: projects });
       } catch (error) {
         console.error('获取可提交孵化成果的项目失败:', error);
@@ -26962,7 +27640,7 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         const query = url.parse(req.url, true).query;
-        const status = query.status; // pending, feedback_given, result_submitted
+        const status = query.status; // pending, feedback_given
 
         let sql = `
           SELECT ip.*, p.title as project_title, p.project_code,
@@ -26986,13 +27664,14 @@ const server = http.createServer(async (req, res) => {
 
         const [requests] = await pool.query(sql, params);
 
-        // 获取每个请求的附件
+        // 获取每个请求的附件与分配信息
         for (const req of requests) {
           const [files] = await pool.query(
             'SELECT * FROM \`IncubationProgressFile\` WHERE progress_id = ?',
             [req.id]
           );
           req.files = files;
+          await enrichIncubationProgressRow(req);
         }
 
         sendResponse(res, 200, { success: true, data: requests });
@@ -27070,7 +27749,7 @@ const server = http.createServer(async (req, res) => {
           [progressId, project_id, user.id, service_requirement, serviceCategoriesStr]
         );
 
-        await markProjectIncubating(pool, project_id);
+        await syncProjectIncubatingStatus(pool, project_id);
 
         // 发送通知给项目经理
         if (project.manager_id) {
@@ -27136,7 +27815,7 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         const query = url.parse(req.url, true).query;
-        const status = query.status || 'pending'; // pending, feedback_given, result_submitted, all
+        const status = query.status || 'pending'; // pending, feedback_given, all
 
         let sql = `
           SELECT ip.*, p.title as project_title, p.project_code, p.status as project_status,
@@ -27157,13 +27836,14 @@ const server = http.createServer(async (req, res) => {
 
         const [requests] = await pool.query(sql, params);
 
-        // 获取每个请求的附件
+        // 获取每个请求的附件与分配信息
         for (const req of requests) {
           const [files] = await pool.query(
             'SELECT * FROM \`IncubationProgressFile\` WHERE progress_id = ?',
             [req.id]
           );
           req.files = files;
+          await enrichIncubationProgressRow(req);
         }
 
         sendResponse(res, 200, { success: true, data: requests });
@@ -27185,7 +27865,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const progressId = pathname.split('/')[4];
         const body = await parseRequestBody(req);
-        const { feedback_action, feedback_comment, expert_assignments } = body;
+        const { feedback_action, feedback_comment, expert_assignments, service_provider_ids } = body;
 
         if (!feedback_action || !['approved', 'rejected'].includes(feedback_action)) {
           sendResponse(res, 400, { success: false, error: '请选择是否提供服务' });
@@ -27228,16 +27908,29 @@ const server = http.createServer(async (req, res) => {
           [user.id, feedback_action, feedback_comment || null, progressId]
         );
 
-        // 孵化中为长期状态：不因服务反馈结果回退为已入库
-
         let assignedExperts = [];
-        if (feedback_action === 'approved' && Array.isArray(expert_assignments) && expert_assignments.length) {
-          assignedExperts = await assignIncubationProgressExperts(
-            progressId,
-            expert_assignments,
-            user.id,
-            progress,
-          );
+        let assignedProviders = [];
+        if (feedback_action === 'approved') {
+          if (Array.isArray(expert_assignments) && expert_assignments.length) {
+            assignedExperts = await assignIncubationProgressExperts(
+              progressId,
+              expert_assignments,
+              user.id,
+              progress,
+            );
+          }
+          const providerIds = Array.isArray(service_provider_ids)
+            ? service_provider_ids
+            : Array.isArray(body.service_provider_assignments)
+              ? body.service_provider_assignments.map((p) => p.service_provider_id || p.id || p)
+              : [];
+          if (providerIds.length) {
+            assignedProviders = await assignIncubationProgressServiceProviders(
+              progressId,
+              providerIds,
+              user.id,
+            );
+          }
         }
 
         // 发送通知给申请人
@@ -27252,6 +27945,7 @@ const server = http.createServer(async (req, res) => {
           success: true,
           message: feedback_action === 'approved' ? '已同意提供服务' : '已拒绝服务申请',
           assigned_experts: assignedExperts,
+          assigned_service_providers: assignedProviders,
         });
       } catch (error) {
         console.error('处理服务申请反馈失败:', error);
@@ -27260,84 +27954,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 申请人：提交成果反馈
-    if (pathname.match(/^\/api\/incubation\/requests\/[^/]+\/result$/) && req.method === 'PUT') {
-      const token = req.headers.authorization;
-      const user = await verifyToken(token);
-      if (!user || user.role !== 'applicant') {
-        sendResponse(res, 403, { success: false, error: '没有权限' });
-        return;
-      }
-      try {
-        const progressId = pathname.split('/')[4];
-        const body = await parseRequestBody(req);
-        const { result_description } = body;
-
-        if (!result_description) {
-          sendResponse(res, 400, { success: false, error: '成果描述为必填项' });
-          return;
-        }
-
-        // 主申请人或团队成员可提交成果反馈（IncubationProgress.applicant_id 为首次发起申请人，不必等于当前用户）
-        const [progressRows] = await pool.query(
-          `SELECT ip.*, p.title as project_title, p.manager_id
-           FROM \`IncubationProgress\` ip
-           JOIN \`Project\` p ON ip.project_id = p.id
-           WHERE ip.id = ?
-             AND (
-               p.applicant_id = ?
-               OR EXISTS (SELECT 1 FROM \`ProjectMember\` pm WHERE pm.project_id = p.id AND pm.user_id = ?)
-             )`,
-          [progressId, user.id, user.id]
-        );
-
-        if (progressRows.length === 0) {
-          sendResponse(res, 404, { success: false, error: '服务申请不存在或无权限' });
-          return;
-        }
-
-        const progress = progressRows[0];
-
-        if (progress.status !== 'feedback_given') {
-          sendResponse(res, 400, { success: false, error: '该服务申请尚未收到反馈或已提交成果' });
-          return;
-        }
-
-        if (progress.feedback_action !== 'approved') {
-          sendResponse(res, 400, { success: false, error: '服务申请未获批准，无法提交成果' });
-          return;
-        }
-
-        // 更新服务申请记录
-        await pool.query(
-          `UPDATE \`IncubationProgress\` 
-           SET result_date = NOW(), result_description = ?, status = 'result_submitted', updated_at = NOW()
-           WHERE id = ?`,
-          [result_description, progressId]
-        );
-
-        // 孵化中为长期状态：提交成果反馈后仍保持孵化中
-
-        // 发送通知给项目经理
-        if (progress.manager_id) {
-          await pool.query(
-            `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
-             VALUES (?, ?, 'incubation', ?, ?, ?, 'IncubationProgress', NOW())`,
-            [randomUUID(), progress.manager_id, '成果反馈已提交',
-            `项目「${progress.project_title}」已提交成果反馈。`, progressId]
-          );
-        }
-
-        sendResponse(res, 200, {
-          success: true,
-          message: '成果反馈提交成功'
-        });
-      } catch (error) {
-        console.error('提交成果反馈失败:', error);
-        sendResponse(res, 500, { success: false, error: '提交成果反馈失败' });
-      }
-      return;
-    }
+    // （已移除）申请人提交成果反馈 — 孵化服务流程仅保留申请与审批反馈
 
     // 项目经理：终止项目
     if (pathname.match(/^\/api\/incubation\/projects\/[^/]+\/terminate$/) && req.method === 'PUT') {
@@ -27486,6 +28103,10 @@ const server = http.createServer(async (req, res) => {
           }
           const prog = ipRows[0];
           const attachType = String(attachmentType);
+          if (!['application', 'feedback'].includes(attachType)) {
+            sendResponse(res, 400, { success: false, error: '附件类型无效' });
+            return;
+          }
           let uploadAllowed = false;
           if (attachType === 'feedback') {
             const [prj] = await pool.query(
@@ -27649,15 +28270,15 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (typeFilters.length) {
-          whereConditions.push(`EXISTS (
-            SELECT 1 FROM \`ExpertExpertType\` eet
-            WHERE eet.expert_id = u.id AND eet.expert_type IN (?)
-          )`);
-          queryParams.push(typeFilters);
+          const typeFilter = buildExpertTypeFilterSql(typeFilters, 'ep');
+          if (typeFilter.clause) {
+            whereConditions.push(typeFilter.clause.replace(/^ AND /, ''));
+            queryParams.push(...typeFilter.params);
+          }
         }
 
         const [reviewers] = await pool.query(
-          `SELECT u.id, u.name, u.email, u.phone, u.department, u.title, ep.expertise_description, ep.keywords
+          `SELECT u.id, u.name, u.email, u.phone, u.department, u.title, ep.expertise_description, ep.keywords, ep.expert_types
            FROM \`User\` u
            LEFT JOIN \`ExpertProfile\` ep ON u.id = ep.id
            WHERE ${whereConditions.join(' AND ')}
@@ -27668,7 +28289,6 @@ const server = http.createServer(async (req, res) => {
 
         const reviewerIds = reviewers.map((r) => r.id);
         let expertDomains = {};
-        let expertTypesMap = {};
         if (reviewerIds.length) {
           const [domains] = await pool.query(
             `SELECT ed.expert_id, rd.name AS research_field
@@ -27681,18 +28301,10 @@ const server = http.createServer(async (req, res) => {
             if (!expertDomains[d.expert_id]) expertDomains[d.expert_id] = [];
             expertDomains[d.expert_id].push(d.research_field);
           });
-          const [typeRows] = await pool.query(
-            `SELECT expert_id, expert_type FROM \`ExpertExpertType\` WHERE expert_id IN (?) ORDER BY expert_type ASC`,
-            [reviewerIds],
-          );
-          typeRows.forEach((r) => {
-            if (!expertTypesMap[r.expert_id]) expertTypesMap[r.expert_id] = [];
-            expertTypesMap[r.expert_id].push(r.expert_type);
-          });
         }
 
         const data = reviewers.map((r) => {
-          const types = expertTypesMap[r.id] || [];
+          const types = parseExpertTypesSet(r.expert_types);
           return {
             id: r.id,
             name: r.name,
@@ -27765,10 +28377,6 @@ const server = http.createServer(async (req, res) => {
           sendResponse(res, 400, { success: false, error: '仅已同意的服务申请可分配专家' });
           return;
         }
-        if (progress.status === 'result_submitted') {
-          sendResponse(res, 400, { success: false, error: '该服务申请已完成，无法再分配专家' });
-          return;
-        }
 
         const body = await parseRequestBody(req);
         const assigned = await assignIncubationProgressExperts(
@@ -27828,6 +28436,157 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // 服务机构资源列表（项目经理分配时可搜索）
+    if (pathname === '/api/incubation/service-providers' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const query = url.parse(req.url, true).query;
+        const keyword = String(query.keyword || '').trim();
+        const categoryRaw = query.category || query.categories || '';
+        const categories = String(categoryRaw)
+          .split(',')
+          .map((c) => c.trim())
+          .filter(Boolean);
+        let sql = 'SELECT id, name, unified_social_credit_code, category, contact_name, contact_phone, contact_email, description FROM `ServiceProvider`';
+        const params = [];
+        const whereParts = [];
+        if (keyword) {
+          const kw = `%${keyword}%`;
+          whereParts.push(
+            '(name LIKE ? OR unified_social_credit_code LIKE ? OR contact_name LIKE ? OR category LIKE ? OR description LIKE ?)',
+          );
+          params.push(kw, kw, kw, kw, kw);
+        }
+        if (categories.length) {
+          whereParts.push(`(${categories.map(() => 'FIND_IN_SET(?, category)').join(' OR ')})`);
+          params.push(...categories);
+        }
+        if (whereParts.length) {
+          sql += ` WHERE ${whereParts.join(' AND ')}`;
+        }
+        sql += ' ORDER BY name ASC LIMIT 100';
+        const [rows] = await pool.query(sql, params);
+        sendResponse(res, 200, { success: true, data: rows });
+      } catch (error) {
+        console.error('获取服务机构列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取服务机构列表失败' });
+      }
+      return;
+    }
+
+    // 获取/更新孵化服务申请已分配服务机构
+    if (
+      pathname.match(/^\/api\/incubation\/requests\/[^/]+\/service-providers$/) &&
+      (req.method === 'GET' || req.method === 'PUT')
+    ) {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      const progressId = pathname.split('/')[4];
+
+      if (req.method === 'GET') {
+        try {
+          const [progressRows] = await pool.query(
+            'SELECT * FROM `IncubationProgress` WHERE id = ?',
+            [progressId],
+          );
+          if (!progressRows.length) {
+            sendResponse(res, 404, { success: false, error: '服务申请不存在' });
+            return;
+          }
+          if (!(await userMayViewIncubationProgress(pool, progressRows[0], user))) {
+            sendResponse(res, 403, { success: false, error: '没有权限' });
+            return;
+          }
+          const providers = await getIncubationAssignedServiceProviders(progressId);
+          sendResponse(res, 200, { success: true, data: providers });
+        } catch (error) {
+          console.error('获取已分配服务机构失败:', error);
+          sendResponse(res, 500, { success: false, error: '获取已分配服务机构失败' });
+        }
+        return;
+      }
+
+      if (user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const mgr = await verifyIncubationProgressManager(progressId, user.id);
+        if (!mgr.ok) {
+          sendResponse(res, mgr.status, { success: false, error: mgr.error });
+          return;
+        }
+        const { progress } = mgr;
+        if (progress.feedback_action !== 'approved') {
+          sendResponse(res, 400, { success: false, error: '仅已同意的服务申请可分配服务机构' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const providerIds = body.service_provider_ids
+          || (Array.isArray(body.assignments)
+            ? body.assignments.map((p) => p.service_provider_id || p.id)
+            : []);
+        const assigned = await assignIncubationProgressServiceProviders(progressId, providerIds, user.id);
+        const allProviders = await getIncubationAssignedServiceProviders(progressId);
+        sendResponse(res, 200, {
+          success: true,
+          message: '服务机构分配成功',
+          assigned,
+          data: allProviders,
+        });
+      } catch (error) {
+        console.error('分配孵化服务机构失败:', error);
+        sendResponse(res, 500, { success: false, error: '分配服务机构失败' });
+      }
+      return;
+    }
+
+    // 项目经理：移除孵化服务机构分配
+    if (
+      pathname.match(/^\/api\/incubation\/requests\/[^/]+\/service-providers\/[^/]+$/) &&
+      req.method === 'DELETE'
+    ) {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const parts = pathname.split('/');
+        const progressId = parts[4];
+        const assignmentId = parts[6];
+        const mgr = await verifyIncubationProgressManager(progressId, user.id);
+        if (!mgr.ok) {
+          sendResponse(res, mgr.status, { success: false, error: mgr.error });
+          return;
+        }
+        const [rows] = await pool.query(
+          'SELECT id FROM `IncubationProgressServiceProvider` WHERE id = ? AND progress_id = ?',
+          [assignmentId, progressId],
+        );
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '分配记录不存在' });
+          return;
+        }
+        await pool.query('DELETE FROM `IncubationProgressServiceProvider` WHERE id = ?', [assignmentId]);
+        sendResponse(res, 200, { success: true, message: '已移除服务机构分配' });
+      } catch (error) {
+        console.error('移除孵化服务机构分配失败:', error);
+        sendResponse(res, 500, { success: false, error: '移除服务机构分配失败' });
+      }
+      return;
+    }
+
     // 获取服务申请详情
     if (pathname.match(/^\/api\/incubation\/requests\/[^/]+$/) && req.method === 'GET') {
       const token = req.headers.authorization;
@@ -27842,7 +28601,7 @@ const server = http.createServer(async (req, res) => {
         const [progressRows] = await pool.query(
           `SELECT ip.*, p.title as project_title, p.project_code, p.status as project_status,
                   u_app.name as applicant_name, u_app.email as applicant_email, u_app.phone as applicant_phone,
-                  u_mgr.name as manager_name
+                  u_mgr.name as feedback_by_name
            FROM \`IncubationProgress\` ip
            JOIN \`Project\` p ON ip.project_id = p.id
            JOIN \`User\` u_app ON ip.applicant_id = u_app.id
@@ -27869,7 +28628,7 @@ const server = http.createServer(async (req, res) => {
           [progressId]
         );
         progress.files = files;
-        progress.assigned_experts = await getIncubationAssignedExperts(progressId);
+        await enrichIncubationProgressRow(progress);
 
         sendResponse(res, 200, { success: true, data: progress });
       } catch (error) {
@@ -27902,7 +28661,7 @@ const server = http.createServer(async (req, res) => {
           sendResponse(res, 403, { success: false, error: '没有权限查看活动' });
           return;
         }
-        const records = await loadIncubationAchievementRecordsWithFiles(projectId, { approvedOnly: true });
+        const records = await loadActivityRecordsWithFiles(projectId, { approvedOnly: true });
         sendResponse(res, 200, { success: true, data: records });
       } catch (error) {
         console.error('获取孵化成果列表失败:', error);
@@ -27948,16 +28707,28 @@ const server = http.createServer(async (req, res) => {
         const recordId = randomUUID();
         const uid = user.userId || user.id;
         const project = perm.project;
+        const actMeta = buildActivitySubmissionMeta(user);
         await pool.query(
-          `INSERT INTO \`IncubationAchievementRecord\`
-           (id, project_id, title, description, record_date, status, created_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'submitted', ?, NOW(), NOW())`,
-          [recordId, projectId, title, description || null, recordDate, uid],
+          `INSERT INTO \`ActivityRecord\`
+           (id, project_id, title, description, record_date, status, submission_type, reviewed_by, reviewed_at, review_comment, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${actMeta.status === 'approved' ? 'NOW()' : 'NULL'}, ?, ?, NOW(), NOW())`,
+          [
+            recordId,
+            projectId,
+            title,
+            description || null,
+            recordDate,
+            actMeta.status,
+            actMeta.submission_type,
+            actMeta.reviewed_by,
+            actMeta.review_comment,
+            uid,
+          ],
         );
-        if (project.manager_id) {
+        if (actMeta.notifyReview && project.manager_id) {
           await pool.query(
             `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
-             VALUES (?, ?, 'incubation', ?, ?, ?, 'IncubationAchievementRecord', NOW())`,
+             VALUES (?, ?, 'incubation', ?, ?, ?, 'ActivityRecord', NOW())`,
             [
               randomUUID(),
               project.manager_id,
@@ -27969,8 +28740,8 @@ const server = http.createServer(async (req, res) => {
         }
         sendResponse(res, 201, {
           success: true,
-          message: '活动已提交，等待项目经理审批',
-          data: { id: recordId, title, description, record_date: recordDate, status: 'submitted' },
+          message: actMeta.status === 'approved' ? '活动已登记' : '活动已提交，等待项目经理审批',
+          data: { id: recordId, title, description, record_date: recordDate, status: actMeta.status },
         });
       } catch (error) {
         console.error('提交孵化成果失败:', error);
@@ -28026,7 +28797,7 @@ const server = http.createServer(async (req, res) => {
           }
 
           const [recRows] = await pool.query(
-            'SELECT id, project_id FROM `IncubationAchievementRecord` WHERE id = ?',
+            'SELECT id, project_id FROM `ActivityRecord` WHERE id = ?',
             [recordId],
           );
           if (!recRows.length) {
@@ -28052,18 +28823,13 @@ const server = http.createServer(async (req, res) => {
             return;
           }
           const storedPath = incubationAchievementFileStoredPath(absPath);
-          const fileExt = path.extname(fileName || '').replace(/^\./, '').toLowerCase() || null;
           const uid = user.userId || user.id;
-          const desc =
-            fileDescription != null && String(fileDescription).trim()
-              ? String(fileDescription).trim().slice(0, 500)
-              : null;
 
           await pool.query(
-            `INSERT INTO \`IncubationAchievementRecordFile\`
-             (id, record_id, file_name, file_path, file_size, mime_type, file_extension, description, sort_order, uploaded_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NOW())`,
-            [fileId, recordId, fileName, storedPath, fileSize, mimeType, fileExt, desc, uid],
+            `INSERT INTO \`ActivityRecordFile\`
+             (id, record_id, file_name, file_path, file_size, mime_type, sort_order, uploaded_by, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 0, ?, NOW())`,
+            [fileId, recordId, fileName, storedPath, fileSize, mimeType, uid],
           );
 
           sendResponse(res, 200, {
@@ -28074,7 +28840,6 @@ const server = http.createServer(async (req, res) => {
               file_name: fileName,
               file_size: fileSize,
               mime_type: mimeType,
-              file_extension: fileExt,
             },
           });
         } catch (dbError) {
@@ -28097,7 +28862,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const fileId = pathname.split('/')[4];
         const [files] = await pool.query(
-          'SELECT * FROM `IncubationAchievementRecordFile` WHERE id = ?',
+          'SELECT * FROM `ActivityRecordFile` WHERE id = ?',
           [fileId],
         );
         if (!files.length) {
@@ -28106,7 +28871,7 @@ const server = http.createServer(async (req, res) => {
         }
         const fileInfo = files[0];
         const [recRows] = await pool.query(
-          'SELECT project_id FROM `IncubationAchievementRecord` WHERE id = ?',
+          'SELECT project_id FROM `ActivityRecord` WHERE id = ?',
           [fileInfo.record_id],
         );
         if (!recRows.length) {
@@ -28163,7 +28928,7 @@ const server = http.createServer(async (req, res) => {
         const pageSize = Math.min(100, Math.max(1, parseInt(query.page_size || query.pageSize, 10) || 20));
         const offset = (page - 1) * pageSize;
 
-        let whereParts = ['p.manager_id = ?'];
+        let whereParts = ['p.manager_id = ?', "iar.submission_type = 'applicant'"];
         const params = [uid];
         if (status && ['submitted', 'approved', 'rejected'].includes(status)) {
           whereParts.push('iar.status = ?');
@@ -28171,18 +28936,14 @@ const server = http.createServer(async (req, res) => {
         }
         if (keyword) {
           const kw = `%${keyword}%`;
-          whereParts.push(`(
-            iar.title LIKE ? OR iar.description LIKE ?
-            OR p.title LIKE ? OR p.project_code LIKE ?
-            OR u.name LIKE ?
-          )`);
-          params.push(kw, kw, kw, kw, kw);
+          whereParts.push('(iar.title LIKE ? OR p.title LIKE ?)');
+          params.push(kw, kw);
         }
         const whereSql = whereParts.join(' AND ');
 
         const [countRows] = await pool.query(
           `SELECT COUNT(*) AS total
-           FROM \`IncubationAchievementRecord\` iar
+           FROM \`ActivityRecord\` iar
            JOIN \`Project\` p ON iar.project_id = p.id
            JOIN \`User\` u ON iar.created_by = u.id
            WHERE ${whereSql}`,
@@ -28193,7 +28954,7 @@ const server = http.createServer(async (req, res) => {
         const [rows] = await pool.query(
           `SELECT iar.*, u.name AS creator_name, rv.name AS reviewer_name,
                   p.title AS project_title, p.project_code
-           FROM \`IncubationAchievementRecord\` iar
+           FROM \`ActivityRecord\` iar
            JOIN \`Project\` p ON iar.project_id = p.id
            JOIN \`User\` u ON iar.created_by = u.id
            LEFT JOIN \`User\` rv ON iar.reviewed_by = rv.id
@@ -28207,8 +28968,8 @@ const server = http.createServer(async (req, res) => {
 
         for (const record of rows) {
           const [files] = await pool.query(
-            `SELECT id, record_id, file_name, file_path, file_size, mime_type, file_extension, created_at
-             FROM \`IncubationAchievementRecordFile\`
+            `SELECT id, record_id, file_name, file_path, file_size, mime_type, created_at
+             FROM \`ActivityRecordFile\`
              WHERE record_id = ?
              ORDER BY sort_order ASC, created_at ASC`,
             [record.id],
@@ -28221,7 +28982,7 @@ const server = http.createServer(async (req, res) => {
              SUM(CASE WHEN iar.status = 'submitted' THEN 1 ELSE 0 END) AS pending,
              SUM(CASE WHEN iar.status = 'approved' THEN 1 ELSE 0 END) AS approved,
              SUM(CASE WHEN iar.status = 'rejected' THEN 1 ELSE 0 END) AS rejected
-           FROM \`IncubationAchievementRecord\` iar
+           FROM \`ActivityRecord\` iar
            JOIN \`Project\` p ON iar.project_id = p.id
            WHERE p.manager_id = ?`,
           [uid],
@@ -28270,7 +29031,7 @@ const server = http.createServer(async (req, res) => {
 
         const [rows] = await pool.query(
           `SELECT iar.*, p.title AS project_title, p.manager_id, p.applicant_id
-           FROM \`IncubationAchievementRecord\` iar
+           FROM \`ActivityRecord\` iar
            JOIN \`Project\` p ON iar.project_id = p.id
            WHERE iar.id = ?`,
           [recordId],
@@ -28292,7 +29053,7 @@ const server = http.createServer(async (req, res) => {
 
         const newStatus = action === 'approve' ? 'approved' : 'rejected';
         await pool.query(
-          `UPDATE \`IncubationAchievementRecord\`
+          `UPDATE \`ActivityRecord\`
            SET status = ?, reviewed_by = ?, reviewed_at = NOW(), review_comment = ?, updated_at = NOW()
            WHERE id = ?`,
           [newStatus, uid, comment || null, recordId],
@@ -28308,7 +29069,7 @@ const server = http.createServer(async (req, res) => {
               : `您提交的活动「${record.title}」（项目：${record.project_title}）未通过审批${comment ? `，意见：${comment}` : ''}。`;
           await pool.query(
             `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
-             VALUES (?, ?, 'incubation', ?, ?, ?, 'IncubationAchievementRecord', NOW())`,
+             VALUES (?, ?, 'incubation', ?, ?, ?, 'ActivityRecord', NOW())`,
             [randomUUID(), notifyUserId, title, content, recordId],
           );
         }
@@ -28322,6 +29083,11 @@ const server = http.createServer(async (req, res) => {
         console.error('审批活动失败:', error);
         sendResponse(res, 500, { success: false, error: '审批失败' });
       }
+      return;
+    }
+
+    // ==================== 转化成果 & 企业服务成果 ====================
+    if (await transformationEnterpriseApi.handleRequest(req, res, pathname, parsedUrl)) {
       return;
     }
 
@@ -28433,13 +29199,16 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`   POST /api/incubation/service-request - 提交服务申请（申请人）`);
   console.log(`   GET  /api/incubation/pending-requests - 获取待处理服务申请列表（项目经理）`);
   console.log(`   PUT  /api/incubation/requests/{id}/feedback - 给予服务申请反馈（项目经理）`);
-  console.log(`   PUT  /api/incubation/requests/{id}/result - 提交成果反馈（申请人）`);
   console.log(`   PUT  /api/incubation/projects/{id}/terminate - 终止项目（项目经理）`);
   console.log(`   GET  /api/incubation/requests/{id} - 获取服务申请详情`);
+  console.log(`   GET  /api/incubation/service-providers - 服务机构资源列表（项目经理）`);
   console.log(`   GET  /api/incubation/requests/{id}/available-experts - 获取可分配专家（项目经理）`);
   console.log(`   GET  /api/incubation/requests/{id}/experts - 获取已分配专家`);
   console.log(`   PUT  /api/incubation/requests/{id}/experts - 分配专家（项目经理）`);
   console.log(`   DELETE /api/incubation/requests/{id}/experts/{assignmentId} - 移除专家分配`);
+  console.log(`   GET  /api/incubation/requests/{id}/service-providers - 获取已分配服务机构`);
+  console.log(`   PUT  /api/incubation/requests/{id}/service-providers - 分配服务机构（项目经理）`);
+  console.log(`   DELETE /api/incubation/requests/{id}/service-providers/{assignmentId} - 移除服务机构分配`);
   console.log(`   POST /api/incubation/upload - 上传孵化服务附件`);
   console.log(`   GET  /api/incubation/files/{id} - 下载孵化服务附件`);
   console.log('');

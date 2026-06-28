@@ -1,0 +1,112 @@
+/* 试制/新产品等动态记录表格（登记表单 + 详情展示共用） */
+.record-table-wrap {
+  margin: 12px 0 20px;
+  padding-left: 140px;
+}
+
+.record-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.record-table th,
+.record-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.record-table th {
+  background: #fafafa;
+  color: #666;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.record-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.record-table .col-action {
+  width: 72px;
+  text-align: center;
+}
+
+.record-table-add {
+  margin-top: 8px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: #b31b1b;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.record-table-add:hover {
+  color: #8b1515;
+  text-decoration: underline;
+}
+
+/* 是否… 开关行：标签一行展开，选项右对齐 */
+.toggle-fields-block {
+  margin-top: 8px;
+}
+
+.toggle-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0 10px 0;
+  margin-left: 0;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.toggle-field-label {
+  flex: 1;
+  font-size: 14px;
+  color: #606266;
+  line-height: 1.5;
+  padding-right: 12px;
+}
+
+.toggle-field-control {
+  flex-shrink: 0;
+  min-width: 120px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.detail-header-meta-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.detail-header-meta-row .project-codes-box {
+  margin-top: 0;
+}
+
+@media (max-width: 768px) {
+  .record-table-wrap {
+    padding-left: 0;
+  }
+
+  .toggle-field-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .toggle-field-control {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

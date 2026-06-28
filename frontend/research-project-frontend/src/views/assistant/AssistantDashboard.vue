@@ -52,32 +52,67 @@
           </div>
 
           <div class="nav-section">
-            <h4 v-if="!sidebarCollapsed" class="nav-section-title">成果审核</h4>
-            <router-link to="/audit/achievements" class="nav-link" active-class="active">
-              <span class="nav-icon">🏆</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">科研成果审核</span>
-              <span v-if="!sidebarCollapsed && pendingStats.achievements > 0" class="nav-badge">
-                {{ pendingStats.achievements }}
-              </span>
-            </router-link>
-            <router-link to="/assistant/activity-achievements" class="nav-link" active-class="active">
-              <span class="nav-icon">📦</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">活动审核</span>
-              <span v-if="!sidebarCollapsed && pendingActivityAchievementCount > 0" class="nav-badge">
-                {{ pendingActivityAchievementCount }}
-              </span>
-            </router-link>
-          </div>
-
-          <div class="nav-section">
             <h4 v-if="!sidebarCollapsed" class="nav-section-title">孵化服务</h4>
             <router-link to="/assistant/incubation-requests" class="nav-link" active-class="active">
               <span class="nav-icon">🔧</span>
-              <span v-if="!sidebarCollapsed" class="nav-text">服务申请处理</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">服务申请审批</span>
               <span v-if="!sidebarCollapsed && pendingIncubationCount > 0" class="nav-badge">
                 {{ pendingIncubationCount }}
               </span>
             </router-link>
+          </div>
+
+          <div class="nav-section nav-section-achievements">
+            <h4 v-if="!sidebarCollapsed" class="nav-section-title">成果登记</h4>
+            <div
+              v-for="item in achievementNavItems"
+              :key="item.key"
+              class="nav-flyout"
+              @mouseenter="openFlyout(item.key, $event)"
+              @mouseleave="closeFlyout"
+            >
+              <button
+                type="button"
+                class="nav-link nav-flyout-trigger"
+                :class="{ active: isAchievementGroupActive(item) }"
+                @click="toggleFlyout(item.key, $event)"
+              >
+                <span class="nav-icon">{{ item.icon }}</span>
+                <span v-if="!sidebarCollapsed" class="nav-text">{{ item.label }}</span>
+                <span v-if="!sidebarCollapsed" class="nav-link-end">
+                  <span class="nav-flyout-arrow">›</span>
+                  <span
+                    v-if="item.reviewBadge() > 0"
+                    class="nav-badge"
+                  >{{ item.reviewBadge() }}</span>
+                </span>
+              </button>
+              <div
+                v-show="openFlyoutKey === item.key"
+                class="nav-flyout-panel"
+                :style="flyoutPanelStyle"
+                @mouseenter="openFlyoutKey = item.key"
+                @mouseleave="closeFlyout"
+              >
+                <router-link
+                  :to="item.registerPath"
+                  class="nav-flyout-item"
+                  :class="{ active: isFlyoutLinkActive(item.registerPath, item.key, 'register') }"
+                  @click="closeFlyout"
+                >
+                  {{ item.registerLabel }}
+                </router-link>
+                <router-link
+                  :to="item.reviewPath"
+                  class="nav-flyout-item"
+                  :class="{ active: isFlyoutLinkActive(item.reviewPath, item.key, 'review') }"
+                  @click="closeFlyout"
+                >
+                  <span>{{ item.reviewLabel }}</span>
+                  <span v-if="item.reviewBadge() > 0" class="flyout-badge">{{ item.reviewBadge() }}</span>
+                </router-link>
+              </div>
+            </div>
           </div>
 
           <div class="nav-section">
@@ -101,7 +136,7 @@
           </div>
 
           <div class="nav-section">
-            <h4 v-if="!sidebarCollapsed" class="nav-section-title">用户管理</h4>
+            <h4 v-if="!sidebarCollapsed" class="nav-section-title">综合管理</h4>
             <router-link to="/assistant/users" class="nav-link" active-class="active">
               <span class="nav-icon">👥</span>
               <span v-if="!sidebarCollapsed" class="nav-text">用户管理</span>
@@ -109,6 +144,10 @@
             <router-link to="/assistant/invitations" class="nav-link" active-class="active">
               <span class="nav-icon">✉️</span>
               <span v-if="!sidebarCollapsed" class="nav-text">邀请码</span>
+            </router-link>
+            <router-link to="/assistant/service-providers" class="nav-link" active-class="active">
+              <span class="nav-icon">🏪</span>
+              <span v-if="!sidebarCollapsed" class="nav-text">服务资源库</span>
             </router-link>
             <router-link to="/assistant/activities" class="nav-link" active-class="active">
               <span class="nav-icon">📜</span>
@@ -331,11 +370,32 @@
                     <p>领取待受理申请并分配专家</p>
                   </div>
                 </button>
+                <button class="action-card" @click="navigateTo('incubation-requests')">
+                  <div class="action-icon">🔧</div>
+                  <div class="action-content">
+                    <h4>服务申请审批</h4>
+                    <p>审批服务申请</p>
+                  </div>
+                </button>
                 <button class="action-card" @click="navigateTo('review-achievements')">
                   <div class="action-icon">🏆</div>
                   <div class="action-content">
                     <h4>科研成果审核</h4>
                     <p>审核论文、专利等科研产出</p>
+                  </div>
+                </button>
+                <button class="action-card" @click="navigateTo('review-transformation-achievements')">
+                  <div class="action-icon">🔄</div>
+                  <div class="action-content">
+                    <h4>转化成果审核</h4>
+                    <p>审核技术许可、转让、作价投资或创办企业</p>
+                  </div>
+                </button>
+                <button class="action-card" @click="navigateTo('review-enterprise-service-achievements')">
+                  <div class="action-icon">🤝</div>
+                  <div class="action-content">
+                    <h4>企业服务成果审核</h4>
+                    <p>审核技术合作与资质认定类成果</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('review-activity-achievements')">
@@ -464,12 +524,151 @@
 
 <script setup lang="ts">
 import { getApiBaseUrl } from '@/utils/request'
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 
 const router = useRouter()
+const route = useRoute()
+
+interface AchievementNavItem {
+  key: string
+  label: string
+  icon: string
+  registerPath: string
+  reviewPath: string
+  registerLabel: string
+  reviewLabel: string
+  reviewBadge: () => number
+}
+
+const openFlyoutKey = ref<string | null>(null)
+const flyoutPanelStyle = ref<Record<string, string>>({})
+
+const achievementNavItems = computed<AchievementNavItem[]>(() => [
+  {
+    key: 'research',
+    label: '科研成果',
+    icon: '🏆',
+    registerPath: '/achievements/create',
+    reviewPath: '/audit/achievements',
+    registerLabel: '科研成果登记',
+    reviewLabel: '科研成果审核',
+    reviewBadge: () => pendingStats.value.achievements,
+  },
+  {
+    key: 'transformation',
+    label: '转化成果',
+    icon: '🔄',
+    registerPath: '/transformation-achievements/create',
+    reviewPath: '/assistant/transformation-achievements',
+    registerLabel: '转化成果登记',
+    reviewLabel: '转化成果审核',
+    reviewBadge: () => pendingTransformationCount.value,
+  },
+  {
+    key: 'enterprise',
+    label: '企业服务成果',
+    icon: '🤝',
+    registerPath: '/enterprise-service-achievements/create',
+    reviewPath: '/assistant/enterprise-service-achievements',
+    registerLabel: '企业服务成果登记',
+    reviewLabel: '企业服务成果审核',
+    reviewBadge: () => pendingEnterpriseServiceCount.value,
+  },
+  {
+    key: 'activity',
+    label: '活动',
+    icon: '📦',
+    registerPath: '/incubation/achievement-submit',
+    reviewPath: '/assistant/activity-achievements',
+    registerLabel: '活动登记',
+    reviewLabel: '活动审核',
+    reviewBadge: () => pendingActivityAchievementCount.value,
+  },
+])
+
+function updateFlyoutPosition(el: HTMLElement) {
+  const rect = el.getBoundingClientRect()
+  flyoutPanelStyle.value = {
+    top: `${rect.top}px`,
+    left: `${rect.right}px`,
+  }
+}
+
+function openFlyout(key: string, event?: Event) {
+  openFlyoutKey.value = key
+  const target = event?.currentTarget as HTMLElement | undefined
+  const trigger =
+    target?.classList.contains('nav-flyout-trigger')
+      ? target
+      : (target?.querySelector('.nav-flyout-trigger') as HTMLElement | null)
+  if (trigger) {
+    updateFlyoutPosition(trigger)
+  }
+}
+
+function closeFlyout() {
+  openFlyoutKey.value = null
+}
+
+function toggleFlyout(key: string, event: MouseEvent) {
+  if (openFlyoutKey.value === key) {
+    closeFlyout()
+    return
+  }
+  openFlyout(key, event)
+}
+
+function isAchievementGroupActive(item: AchievementNavItem) {
+  const path = route.path
+  switch (item.key) {
+    case 'research':
+      return (
+        path.startsWith('/achievements') ||
+        path.startsWith('/audit/achievements') ||
+        path.startsWith('/assistant/achievements')
+      )
+    case 'transformation':
+      return (
+        path.startsWith('/transformation-achievements') ||
+        path.startsWith('/assistant/transformation-achievements')
+      )
+    case 'enterprise':
+      return (
+        path.startsWith('/enterprise-service-achievements') ||
+        path.startsWith('/assistant/enterprise-service-achievements')
+      )
+    case 'activity':
+      return (
+        path.includes('/incubation/achievement-submit') ||
+        path.includes('/incubation/activity-record') ||
+        path.startsWith('/assistant/activity-achievements') ||
+        path.startsWith('/audit/activity-achievements')
+      )
+    default:
+      return false
+  }
+}
+
+function isFlyoutLinkActive(path: string, key: string, mode: 'register' | 'review') {
+  const current = route.path
+  if (mode === 'register') {
+    if (key === 'research') return current.startsWith('/achievements') && !current.includes('/assistant/')
+    if (key === 'activity') return current.includes('/incubation/achievement-submit') || current.includes('/incubation/activity-record')
+    return current.startsWith(path)
+  }
+  if (key === 'research') {
+    return current.startsWith('/audit/achievements') || current.startsWith('/assistant/achievements')
+  }
+  return current === path || current.startsWith(`${path}/`)
+}
+
+watch(
+  () => route.path,
+  () => closeFlyout(),
+)
 
 // API配置
 const API_BASE_URL = getApiBaseUrl()
@@ -549,6 +748,8 @@ const pendingStats = computed(() => ({
 // 待处理孵化服务申请数量
 const pendingIncubationCount = ref(0)
 const pendingActivityAchievementCount = ref(0)
+const pendingTransformationCount = ref(0)
+const pendingEnterpriseServiceCount = ref(0)
 
 // 计算属性
 const userInitial = computed(() => {
@@ -641,11 +842,14 @@ const formatTime = (dateString: string | Date | null) => {
 const navigateTo = (action: string) => {
   const routes: Record<string, string> = {
     applications: '/assistant/applications',
+    'incubation-requests': '/assistant/incubation-requests',
     users: '/assistant/users',
     activities: '/assistant/activities',
     notifications: '/notifications',
     'review-projects': '/audit/projects',
     'review-achievements': '/audit/achievements',
+    'review-transformation-achievements': '/assistant/transformation-achievements',
+    'review-enterprise-service-achievements': '/assistant/enterprise-service-achievements',
     'review-activity-achievements': '/assistant/activity-achievements',
   }
   if (routes[action]) router.push(routes[action])
@@ -931,6 +1135,20 @@ const loadPendingTasksData = async () => {
     })
     if (activityRes.success && activityRes.stats) {
       pendingActivityAchievementCount.value = activityRes.stats.pending || 0
+    }
+    const transformationRes = await api.get('/assistant/transformation-achievements/list', {
+      params: { status: 'submitted' },
+    })
+    if (transformationRes.success && transformationRes.data) {
+      const list = transformationRes.data.list || transformationRes.data || []
+      pendingTransformationCount.value = Array.isArray(list) ? list.length : 0
+    }
+    const enterpriseRes = await api.get('/assistant/enterprise-service-achievements/list', {
+      params: { status: 'submitted' },
+    })
+    if (enterpriseRes.success && enterpriseRes.data) {
+      const list = enterpriseRes.data.list || enterpriseRes.data || []
+      pendingEnterpriseServiceCount.value = Array.isArray(list) ? list.length : 0
     }
   } catch (error) {
     console.error('加载待处理任务失败:', error)
@@ -1318,6 +1536,7 @@ button {
   z-index: 1000;
   flex-direction: column;
   transition: all 0.3s ease;
+  overflow: visible;
 }
 
 .sidebar-collapsed {
@@ -1379,7 +1598,92 @@ button {
   flex: 1;
   padding: 16px 0;
   overflow-y: auto;
+  overflow-x: visible;
   scrollbar-width: none;
+}
+
+.nav-section-achievements {
+  overflow: visible;
+}
+
+.nav-flyout {
+  position: relative;
+}
+
+.nav-flyout-trigger {
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.nav-link-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.nav-flyout-arrow {
+  font-size: 16px;
+  opacity: 0.75;
+  line-height: 1;
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.nav-flyout-trigger .nav-badge {
+  margin-left: 0;
+}
+
+.nav-flyout-panel {
+  position: fixed;
+  z-index: 1100;
+  min-width: 196px;
+  background: #8b1515;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0 8px 8px 0;
+  box-shadow: 4px 4px 16px rgba(0, 0, 0, 0.18);
+  padding: 6px 0;
+}
+
+.nav-flyout-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 16px;
+  color: rgba(255, 255, 255, 0.92);
+  text-decoration: none;
+  font-size: 13px;
+  line-height: 1.4;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+
+.nav-flyout-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.nav-flyout-item.active {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.flyout-badge {
+  flex-shrink: 0;
+  background: #ff4d4f;
+  color: #fff;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 16px;
+  text-align: center;
 }
 
 .sidebar-nav::-webkit-scrollbar {

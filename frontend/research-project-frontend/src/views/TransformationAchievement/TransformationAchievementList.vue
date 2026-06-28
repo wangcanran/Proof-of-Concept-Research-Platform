@@ -3,7 +3,7 @@
     <div class="section-header">
       <h3 class="section-title">
         <span class="section-icon">📜</span>
-        科研成果登记记录
+        转化成果登记记录
       </h3>
       <div class="header-right">
         <div class="search-box">
@@ -11,7 +11,7 @@
             v-model="searchQuery"
             type="text"
             class="search-input"
-            placeholder="搜索项目名称、成果名称"
+            placeholder="搜索项目名称、承接方/公司名称"
             @keyup.enter="handleSearch"
           />
           <button type="button" class="search-btn" @click="handleSearch">搜索</button>
@@ -38,29 +38,33 @@
 
     <div v-else-if="filteredList.length === 0" class="empty-state">
       <div class="empty-icon">📭</div>
-      <p>暂无科研成果登记记录</p>
+      <p>暂无转化成果登记记录</p>
     </div>
 
     <div v-else class="requests-grid">
       <div v-for="item in filteredList" :key="item.id" class="request-card">
         <div class="card-header" @click="handleViewDetail(item)">
-          <span class="card-project-title">{{ item.title }}</span>
+          <span class="card-project-title">{{ getCardTitle(item) }}</span>
           <span class="card-status" :class="getStatusClass(item.status as string)">
             {{ getStatusLabel(item.status as string) }}
           </span>
         </div>
         <div class="card-body" @click="handleViewDetail(item)">
           <div class="card-info">
-            <span class="info-label">成果类型</span>
-            <span class="info-value">{{ getTypeLabel(item.type as string) }}</span>
+            <span class="info-label">转化方式</span>
+            <span class="info-value">{{ getMethodLabel(item.transform_method as string) }}</span>
           </div>
           <div class="card-info">
             <span class="info-label">所属项目</span>
-            <span class="info-value">{{ (item.project as { title?: string })?.title || item.project_title || '-' }}</span>
+            <span class="info-value">{{ (item.project as { title?: string })?.title || '-' }}</span>
           </div>
           <div class="card-info">
             <span class="info-label">项目编号</span>
-            <span class="info-value">{{ (item.project as { project_code?: string })?.project_code || item.project_code || '-' }}</span>
+            <span class="info-value">{{ (item.project as { project_code?: string })?.project_code || '-' }}</span>
+          </div>
+          <div class="card-info">
+            <span class="info-label">{{ getCompanyLabel(item.transform_method as string) }}</span>
+            <span class="info-value">{{ getCompanyName(item) }}</span>
           </div>
           <div class="card-info">
             <span class="info-label">登记时间</span>
@@ -78,7 +82,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { achievementAPI } from '@/api/achievements'
+import { transformationAchievementAPI, TRANSFORM_METHODS } from '@/api/transformationAchievements'
 
 const router = useRouter()
 
@@ -114,18 +118,29 @@ const filteredList = computed(() => {
   return list
 })
 
-const getTypeLabel = (type: string) => {
-  const map: Record<string, string> = {
-    paper: '论文',
-    patent: '专利',
-    software: '软著',
-    report: '报告',
-    prototype: '样机',
-    standard: '标准',
-    other: '其他',
-    award: '奖项',
+const getMethodLabel = (method: string) => {
+  return TRANSFORM_METHODS.find((m) => m.value === method)?.label || method
+}
+
+const getCardTitle = (item: Record<string, unknown>) => {
+  const projectTitle = (item.project as { title?: string })?.title || '-'
+  const companyName = getCompanyName(item)
+  return `${projectTitle} - ${companyName}`
+}
+
+const getCompanyLabel = (method: string) =>
+  method === 'startup_company' ? '公司名称' : '承接方公司名称'
+
+const getCompanyName = (item: Record<string, unknown>) => {
+  if (item.transform_method === 'startup_company') {
+    return (item.company_name as string) || '-'
   }
-  return map[type] || type
+  return (item.recipient_company as string) || '-'
+}
+
+const formatDateTime = (dateString?: string) => {
+  if (!dateString) return '-'
+  return new Date(dateString).toLocaleString('zh-CN')
 }
 
 const getStatusLabel = (status: string) => {
@@ -148,28 +163,14 @@ const getStatusClass = (status: string) => {
   return map[status] || ''
 }
 
-const formatDateTime = (dateString?: string) => {
-  if (!dateString) return '-'
-  try {
-    return new Date(dateString).toLocaleString('zh-CN')
-  } catch {
-    return dateString
-  }
-}
-
-const fetchAchievementList = async () => {
+const fetchList = async () => {
   loading.value = true
   try {
-    const response = await achievementAPI.getAchievements({
-      page: 1,
-      limit: 100,
+    const response = await transformationAchievementAPI.list({
       search: searchQuery.value.trim() || undefined,
-      search_scope: searchQuery.value.trim() ? 'title' : undefined,
     })
     if (response.success) {
-      allRecords.value = (response.data || []).filter(
-        (r) => r.status !== 'draft',
-      )
+      allRecords.value = (response.data || []).filter((r: { status?: string }) => r.status !== 'draft')
     } else {
       allRecords.value = []
     }
@@ -181,7 +182,7 @@ const fetchAchievementList = async () => {
 }
 
 const handleSearch = () => {
-  fetchAchievementList()
+  fetchList()
 }
 
 const switchTab = (tab: string) => {
@@ -189,13 +190,13 @@ const switchTab = (tab: string) => {
 }
 
 const handleViewDetail = (row: { id: string }) => {
-  router.push(`/achievements/${row.id}/detail`)
+  router.push(`/transformation-achievements/${row.id}/detail`)
 }
 
-defineExpose({ refresh: fetchAchievementList })
+defineExpose({ refresh: fetchList })
 
 onMounted(() => {
-  fetchAchievementList()
+  fetchList()
 })
 </script>
 

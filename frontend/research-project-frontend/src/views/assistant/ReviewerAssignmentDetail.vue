@@ -118,8 +118,6 @@
                 </div>
                 <div class="reviewer-info-section">
                   <div class="reviewer-name">{{ reviewer.name }}</div>
-                  <div class="reviewer-department">{{ reviewer.department || '未填写' }}</div>
-                  <div class="reviewer-title">{{ reviewer.title || '评审专家' }}</div>
                   <div class="reviewer-expert-types">
                     <el-tag
                       v-for="t in getReviewerExpertTypes(reviewer)"
@@ -137,9 +135,31 @@
               </div>
 
               <div class="reviewer-card-body">
-                <div class="reviewer-expertise">
-                  <div class="expertise-label">研究方向</div>
-                  <div class="expertise-value">{{ reviewer.research_field || '未指定' }}</div>
+                <div class="reviewer-detail-rows">
+                  <div class="detail-row">
+                    <span class="detail-label">所属部门/单位</span>
+                    <span class="detail-value">{{ reviewer.department || '—' }}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">职称/职务</span>
+                    <span class="detail-value">{{ reviewer.title || '—' }}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">邮箱</span>
+                    <span class="detail-value">{{ reviewer.email || '—' }}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">联系电话</span>
+                    <span class="detail-value">{{ reviewer.phone || '—' }}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">研究领域</span>
+                    <span class="detail-value">{{ formatReviewerResearchFields(reviewer) }}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">专业特长描述</span>
+                    <span class="detail-value">{{ reviewer.expertise_description || '—' }}</span>
+                  </div>
                 </div>
 
                 <div class="reviewer-actions">
@@ -189,7 +209,7 @@
             :closable="false"
             show-icon
             class="expert-type-tip"
-            title="可分配全部评审专家；列表中会显示其专家类型，未设置类型者也会显示。"
+            title="勾选即分配专家，无需额外确认。"
           />
           <div class="assign-filters-row">
             <el-input
@@ -271,7 +291,6 @@
               v-for="reviewer in availableReviewers"
               :key="reviewer.id"
               class="reviewer-select-item"
-              :class="{ selected: selectedReviewerIds.includes(reviewer.id) }"
               @click="toggleReviewerSelection(reviewer.id)"
             >
               <div class="reviewer-select-avatar">
@@ -297,28 +316,19 @@
                     </el-tag>
                   </span>
                 </div>
-                <div class="reviewer-select-department">{{ reviewer.department || '未填写' }}</div>
-                <div class="reviewer-select-email" v-if="reviewer.email">{{ reviewer.email }}</div>
-                <div class="reviewer-select-fields">
-                  <el-tag 
-                    v-for="(field, idx) in reviewer.expertise_domains || [reviewer.research_field]" 
-                    :key="idx"
-                    size="small" 
-                    :type="isMatchingDomain(field) ? 'success' : 'info'"
-                    class="field-tag"
-                  >
-                    {{ field || '未指定' }}
-                  </el-tag>
+                <div class="reviewer-select-meta">所属部门/单位：{{ reviewer.department || '—' }}</div>
+                <div class="reviewer-select-meta">职称/职务：{{ reviewer.title || '—' }}</div>
+                <div class="reviewer-select-meta">邮箱：{{ reviewer.email || '—' }}</div>
+                <div class="reviewer-select-meta">联系电话：{{ reviewer.phone || '—' }}</div>
+                <div class="reviewer-select-meta">
+                  研究领域：{{ formatReviewerResearchFields(reviewer) }}
                 </div>
-                <div v-if="reviewer.keywords" class="reviewer-select-keywords">
-                  关键词：{{ reviewer.keywords }}
+                <div v-if="reviewer.expertise_description" class="reviewer-select-desc">
+                  专业特长描述：{{ reviewer.expertise_description }}
                 </div>
               </div>
               <div class="reviewer-select-check">
-                <el-checkbox
-                  :model-value="selectedReviewerIds.includes(reviewer.id)"
-                  @click.stop="toggleReviewerSelection(reviewer.id)"
-                />
+                <el-checkbox @click.stop="toggleReviewerSelection(reviewer.id)" />
               </div>
             </div>
           </div>
@@ -327,15 +337,7 @@
 
       <template #footer>
         <div class="dialog-footer">
-          <el-button @click="showAssignDialog = false">取消</el-button>
-          <el-button
-            type="primary"
-            :disabled="selectedReviewerIds.length === 0"
-            :loading="assignLoading"
-            @click="confirmAssign"
-          >
-            确认分配 {{ selectedReviewerIds.length }} 位专家
-          </el-button>
+          <el-button @click="showAssignDialog = false">关闭</el-button>
         </div>
       </template>
     </el-dialog>
@@ -389,11 +391,11 @@ api.interceptors.response.use(
 // 响应式数据
 const loading = ref(true)
 const assignLoading = ref(false)
+const togglingReviewerId = ref('')
 const showAssignDialog = ref(false)
 const project = ref<any>(null)
 const assignedReviewers = ref<any[]>([])
 const availableReviewers = ref<any[]>([])
-const selectedReviewerIds = ref<string[]>([])
 const reviewerSearch = ref('')
 /** 研究领域下拉（/api/research-domains） */
 const researchDomains = ref<{ id: string; name: string }[]>([])
@@ -409,6 +411,7 @@ const EXPERT_TYPE_LABELS: Record<string, string> = {
   technical: '技术专家',
   investment: '投资专家',
   industry: '产业专家',
+  tech_service: '科技服务专家',
 }
 
 function getReviewerExpertTypes(reviewer: { expert_types?: string[]; expertTypes?: string[] }) {
@@ -418,6 +421,16 @@ function getReviewerExpertTypes(reviewer: { expert_types?: string[]; expertTypes
 
 function expertTypeLabel(type: string) {
   return EXPERT_TYPE_LABELS[type] || type
+}
+
+function formatReviewerResearchFields(reviewer: {
+  research_fields?: string[]
+  expertise_domains?: string[]
+  research_field?: string
+}) {
+  const fields = reviewer.research_fields ?? reviewer.expertise_domains
+  if (Array.isArray(fields) && fields.length) return fields.join('、')
+  return reviewer.research_field || '—'
 }
 
 // 格式化函数
@@ -564,26 +577,21 @@ const loadAssignedReviewers = async () => {
   }
 }
 
-// 确认分配
-const confirmAssign = async () => {
-  if (selectedReviewerIds.value.length === 0) {
-    ElMessage.warning('请选择至少一位评审专家')
-    return
-  }
-
+// 勾选即分配专家
+const toggleReviewerSelection = async (reviewerId: string) => {
+  if (togglingReviewerId.value || assignLoading.value) return
+  togglingReviewerId.value = reviewerId
   assignLoading.value = true
   try {
-    // 修改为正确的 API 路径
     const response = await api.post('/assistant/projects/assign-reviewer', {
       projectId: projectId,
-      reviewerIds: selectedReviewerIds.value,
+      reviewerIds: [reviewerId],
     })
 
     if (response.success) {
-      ElMessage.success(`成功分配 ${selectedReviewerIds.value.length} 位专家`)
-      showAssignDialog.value = false
-      selectedReviewerIds.value = []
+      ElMessage.success('已分配专家')
       await loadAssignedReviewers()
+      await runReviewerSearch()
     } else {
       ElMessage.error(response.error || '分配失败')
     }
@@ -592,6 +600,7 @@ const confirmAssign = async () => {
     ElMessage.error('分配专家失败')
   } finally {
     assignLoading.value = false
+    togglingReviewerId.value = ''
   }
 }
 
@@ -680,26 +689,14 @@ const runReviewerSearch = async () => {
   }
 }
 
-// 切换专家选择
-const toggleReviewerSelection = (reviewerId: string) => {
-  const index = selectedReviewerIds.value.indexOf(reviewerId)
-  if (index > -1) {
-    selectedReviewerIds.value.splice(index, 1)
-  } else {
-    selectedReviewerIds.value.push(reviewerId)
-  }
-}
-
 // 分配更多专家
 const assignMoreReviewer = async () => {
-  selectedReviewerIds.value = []
   reviewerSearch.value = ''
   selectedDomainIds.value = []
   availableReviewers.value = []
   reviewerListShown.value = false
   await loadResearchDomainsForAssign()
   showAssignDialog.value = true
-  // 自动加载与项目领域匹配的专家
   await loadMatchingReviewers()
 }
 
@@ -1084,20 +1081,29 @@ onMounted(() => {
   padding: 16px 20px;
 }
 
-.reviewer-expertise {
+.reviewer-detail-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   margin-bottom: 16px;
 }
 
-.expertise-label {
-  font-size: 12px;
-  color: #666;
-  margin-bottom: 4px;
+.detail-row {
+  display: flex;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
-.expertise-value {
-  font-size: 14px;
-  color: #1a1a1a;
-  font-weight: 500;
+.detail-label {
+  width: 108px;
+  flex-shrink: 0;
+  color: #888;
+}
+
+.detail-value {
+  color: #333;
+  word-break: break-all;
+  flex: 1;
 }
 
 .reviewer-actions {
@@ -1281,37 +1287,18 @@ onMounted(() => {
   flex: 1;
 }
 
-.reviewer-select-department {
+.reviewer-select-meta {
   font-size: 12px;
   color: #666;
-  margin-bottom: 4px;
-}
-
-.reviewer-select-field {
-  font-size: 12px;
-}
-
-.reviewer-select-email {
-  font-size: 12px;
-  color: #999;
-  margin-bottom: 4px;
-}
-
-.reviewer-select-fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.reviewer-select-keywords {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #8c8c8c;
+  margin-top: 2px;
   line-height: 1.5;
 }
 
-.field-tag {
-  margin-right: 0;
+.reviewer-select-desc {
+  font-size: 12px;
+  color: #555;
+  margin-top: 4px;
+  line-height: 1.5;
 }
 
 .reviewers-count {

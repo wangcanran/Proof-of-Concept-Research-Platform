@@ -1,44 +1,58 @@
 <template>
   <div class="assigned-experts-display">
     <div v-if="!experts.length" class="empty-hint">暂未分配专家</div>
-    <div v-else class="expert-groups">
-      <div v-for="group in groupedExperts" :key="group.type" class="expert-group">
-        <div class="group-title">
-          {{ typeLabel(group.type) }}
-          <span class="group-count">({{ group.experts.length }})</span>
+    <div v-else class="expert-cards">
+      <div v-for="expert in experts" :key="expertKey(expert)" class="expert-card">
+        <div class="card-header">
+          <span class="expert-name">{{ expert.expert_name }}</span>
+          <button
+            v-if="editable"
+            type="button"
+            class="btn-remove"
+            :disabled="removingKey === expertKey(expert)"
+            @click="onRemove(expert)"
+          >
+            移除
+          </button>
         </div>
-        <div class="expert-cards">
-          <div v-for="expert in group.experts" :key="expertKey(expert)" class="expert-card">
-            <div class="card-header">
-              <span class="expert-name">{{ expert.expert_name }}</span>
-              <button
-                v-if="editable"
-                type="button"
-                class="btn-remove"
-                :disabled="removingKey === expertKey(expert)"
-                @click="onRemove(expert)"
+        <div class="info-rows">
+          <div class="info-row">
+            <span class="label">专家类型</span>
+            <span class="value type-tags">
+              <el-tag
+                v-for="t in getProfileTypes(expert)"
+                :key="t"
+                size="small"
+                :class="['expert-type-tag', t]"
               >
-                移除
-              </button>
-            </div>
-            <div class="info-rows">
-              <div v-if="expert.department" class="info-row">
-                <span class="label">单位</span>
-                <span class="value">{{ expert.department }}</span>
-              </div>
-              <div v-if="expert.title" class="info-row">
-                <span class="label">职称</span>
-                <span class="value">{{ expert.title }}</span>
-              </div>
-              <div class="info-row">
-                <span class="label">邮箱</span>
-                <span class="value">{{ expert.expert_email || '—' }}</span>
-              </div>
-              <div class="info-row">
-                <span class="label">电话</span>
-                <span class="value">{{ expert.expert_phone || '—' }}</span>
-              </div>
-            </div>
+                {{ typeLabel(t) }}
+              </el-tag>
+              <span v-if="!getProfileTypes(expert).length">—</span>
+            </span>
+          </div>
+          <div class="info-row">
+            <span class="label">所属部门/单位</span>
+            <span class="value">{{ expert.department || '—' }}</span>
+          </div>
+          <div class="info-row">
+            <span class="label">职称/职务</span>
+            <span class="value">{{ expert.title || '—' }}</span>
+          </div>
+          <div class="info-row">
+            <span class="label">邮箱</span>
+            <span class="value">{{ expert.expert_email || '—' }}</span>
+          </div>
+          <div class="info-row">
+            <span class="label">联系电话</span>
+            <span class="value">{{ expert.expert_phone || '—' }}</span>
+          </div>
+          <div class="info-row">
+            <span class="label">研究领域</span>
+            <span class="value">{{ formatResearchFields(expert) }}</span>
+          </div>
+          <div class="info-row">
+            <span class="label">专业特长描述</span>
+            <span class="value">{{ expert.expertise_description || '—' }}</span>
           </div>
         </div>
       </div>
@@ -47,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getApiBaseUrl } from '@/utils/request'
 import axios from 'axios'
@@ -55,7 +69,7 @@ import axios from 'axios'
 export interface AssignedExpertInfo {
   id?: string
   expert_id: string
-  expert_type: 'technical' | 'industry' | 'investment'
+  expert_type?: 'technical' | 'industry' | 'investment' | 'tech_service'
   expert_name: string
   expert_email?: string
   expert_phone?: string
@@ -63,15 +77,19 @@ export interface AssignedExpertInfo {
   title?: string
   profile_types?: string[]
   profileTypes?: string[]
+  expert_types?: string[]
+  expertTypes?: string[]
+  research_fields?: string[]
+  research_field?: string
+  expertise_description?: string | null
 }
 
 const EXPERT_TYPE_LABELS: Record<string, string> = {
   technical: '技术专家',
   industry: '产业专家',
   investment: '投资专家',
+  tech_service: '科技服务专家',
 }
-
-const TYPE_ORDER = ['technical', 'industry', 'investment', '__unset__']
 
 const props = withDefaults(
   defineProps<{
@@ -103,41 +121,27 @@ api.interceptors.request.use((config) => {
 
 const removingKey = ref('')
 
-const typeLabel = (type: string) =>
-  type === '__unset__' ? '未设置类型' : EXPERT_TYPE_LABELS[type] || type
+const typeLabel = (type: string) => EXPERT_TYPE_LABELS[type] || type
 
 const expertKey = (expert: AssignedExpertInfo) =>
-  expert.id || `${expert.expert_id}-${expert.expert_type}`
+  expert.id || `${expert.expert_id}-${expert.expert_type || ''}`
 
 const getProfileTypes = (expert: AssignedExpertInfo) => {
-  const types = expert.profile_types ?? expert.profileTypes ?? []
+  const types =
+    expert.profile_types ??
+    expert.profileTypes ??
+    expert.expert_types ??
+    expert.expertTypes ??
+    []
   return Array.isArray(types) ? types : []
 }
 
-const getGroupKey = (expert: AssignedExpertInfo) => {
-  const profileTypes = getProfileTypes(expert)
-  if (!profileTypes.length) return '__unset__'
-  if (profileTypes.length === 1) return profileTypes[0]
-  if (profileTypes.includes(expert.expert_type)) return expert.expert_type
-  return profileTypes[0]
+const formatResearchFields = (expert: AssignedExpertInfo) => {
+  const fields = expert.research_fields
+  if (Array.isArray(fields) && fields.length) return fields.join('、')
+  if (expert.research_field) return expert.research_field
+  return '—'
 }
-
-const groupedExperts = computed(() => {
-  const map = new Map<string, AssignedExpertInfo[]>()
-  for (const expert of props.experts) {
-    const key = getGroupKey(expert)
-    if (!map.has(key)) map.set(key, [])
-    map.get(key)!.push(expert)
-  }
-  const orderedKeys = [
-    ...TYPE_ORDER.filter((t) => map.has(t)),
-    ...[...map.keys()].filter((k) => !TYPE_ORDER.includes(k)),
-  ]
-  return orderedKeys.map((type) => ({
-    type,
-    experts: map.get(type)!,
-  }))
-})
 
 const onRemove = async (expert: AssignedExpertInfo) => {
   if (props.progressId && expert.id) {
@@ -167,24 +171,6 @@ const onRemove = async (expert: AssignedExpertInfo) => {
   text-align: center;
   color: #9ca3af;
   font-size: 14px;
-}
-
-.expert-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.group-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #374151;
-  margin-bottom: 8px;
-}
-
-.group-count {
-  font-weight: 400;
-  color: #9ca3af;
 }
 
 .expert-cards {
@@ -242,7 +228,7 @@ const onRemove = async (expert: AssignedExpertInfo) => {
 }
 
 .label {
-  width: 48px;
+  width: 108px;
   flex-shrink: 0;
   color: #888;
 }
@@ -250,5 +236,31 @@ const onRemove = async (expert: AssignedExpertInfo) => {
 .value {
   color: #333;
   word-break: break-all;
+  flex: 1;
+}
+
+.type-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.expert-type-tag.technical {
+  --el-tag-bg-color: #ecf5ff;
+  --el-tag-border-color: #b3d8ff;
+  --el-tag-text-color: #409eff;
+}
+
+.expert-type-tag.investment {
+  --el-tag-bg-color: #fdf6ec;
+  --el-tag-border-color: #f5dab1;
+  --el-tag-text-color: #e6a23c;
+}
+
+.expert-type-tag.industry {
+  --el-tag-bg-color: #f0f9eb;
+  --el-tag-border-color: #c2e7b0;
+  --el-tag-text-color: #67c23a;
 }
 </style>

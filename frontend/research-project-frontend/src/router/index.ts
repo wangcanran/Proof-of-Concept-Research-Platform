@@ -196,7 +196,7 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('../views/AchievementManagement/CreateAchievement.vue'),
     meta: {
       requiresAuth: true,
-      role: 'APPLICANT',
+      role: ['APPLICANT', 'PROJECT_MANAGER'],
       permissions: ['create_achievement'],
     },
   },
@@ -214,12 +214,51 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/achievements/:id/detail',
     name: 'AchievementDetail',
-    component: () => import('../views/AchievementManagement/AchievementDetail.vue'),
+    component: () => import('../views/AchievementManagement/ApplicantResearchAchievementDetail.vue'),
     props: true,
     meta: {
       requiresAuth: true,
+      role: ['APPLICANT', 'PROJECT_MANAGER'],
       permissions: ['view_achievement_detail'],
     },
+  },
+
+  // ============ 转化成果登记 ============
+  {
+    path: '/transformation-achievements',
+    redirect: '/transformation-achievements/create',
+  },
+  {
+    path: '/transformation-achievements/create',
+    name: 'CreateTransformationAchievement',
+    component: () => import('../views/TransformationAchievement/CreateTransformationAchievement.vue'),
+    meta: { requiresAuth: true, role: ['APPLICANT', 'PROJECT_MANAGER'], title: '转化成果登记' },
+  },
+  {
+    path: '/transformation-achievements/:id/detail',
+    name: 'TransformationAchievementDetail',
+    component: () => import('../views/TransformationAchievement/TransformationAchievementDetail.vue'),
+    props: true,
+    meta: { requiresAuth: true, role: ['APPLICANT', 'PROJECT_MANAGER'], title: '转化成果详情' },
+  },
+
+  // ============ 企业服务成果登记 ============
+  {
+    path: '/enterprise-service-achievements',
+    redirect: '/enterprise-service-achievements/create',
+  },
+  {
+    path: '/enterprise-service-achievements/create',
+    name: 'CreateEnterpriseServiceAchievement',
+    component: () => import('../views/EnterpriseServiceAchievement/CreateEnterpriseServiceAchievement.vue'),
+    meta: { requiresAuth: true, role: ['APPLICANT', 'PROJECT_MANAGER'], title: '企业服务成果登记' },
+  },
+  {
+    path: '/enterprise-service-achievements/:id/detail',
+    name: 'EnterpriseServiceAchievementDetail',
+    component: () => import('../views/EnterpriseServiceAchievement/EnterpriseServiceAchievementDetail.vue'),
+    props: true,
+    meta: { requiresAuth: true, role: ['APPLICANT', 'PROJECT_MANAGER'], title: '企业服务成果详情' },
   },
 
   // ============ 孵化服务模块（申请人） ============
@@ -240,17 +279,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '活动登记',
       requiresAuth: true,
-      role: 'APPLICANT',
-    },
-  },
-  {
-    path: '/incubation/result-feedback',
-    name: 'ResultFeedback',
-    component: () => import('../views/incubation/ResultFeedback.vue'),
-    meta: {
-      title: '成果反馈',
-      requiresAuth: true,
-      role: 'APPLICANT',
+      role: ['APPLICANT', 'PROJECT_MANAGER'],
     },
   },
   {
@@ -272,6 +301,17 @@ const routes: Array<RouteRecordRaw> = [
       title: '经费申请详情',
       requiresAuth: true,
       role: 'APPLICANT',
+    },
+  },
+  {
+    path: '/incubation/activity-record/:id',
+    name: 'ActivityRecordDetail',
+    component: () => import('../views/incubation/ActivityRecordDetail.vue'),
+    props: true,
+    meta: {
+      title: '活动详情',
+      requiresAuth: true,
+      role: ['APPLICANT', 'PROJECT_MANAGER'],
     },
   },
   // 服务申请详情（申请人和项目经理都可访问）
@@ -476,6 +516,70 @@ const routes: Array<RouteRecordRaw> = [
     },
   },
   {
+    path: '/assistant/achievements/:id/review',
+    name: 'AchievementReviewFeedback',
+    component: () => import('@/views/assistant/AchievementReviewFeedback.vue'),
+    props: true,
+    meta: {
+      title: '科研成果审核',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/transformation-achievements',
+    name: 'TransformationAchievementsReview',
+    component: () => import('@/views/TransformationAchievement/TransformationAchievementsReview.vue'),
+    meta: {
+      title: '转化成果审核',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/transformation-achievements/:id/review',
+    name: 'TransformationAchievementReviewFeedback',
+    component: () => import('@/views/TransformationAchievement/TransformationAchievementReviewFeedback.vue'),
+    props: true,
+    meta: {
+      title: '转化成果审核',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/enterprise-service-achievements',
+    name: 'EnterpriseServiceAchievementsReview',
+    component: () => import('@/views/EnterpriseServiceAchievement/EnterpriseServiceAchievementsReview.vue'),
+    meta: {
+      title: '企业服务成果审核',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/enterprise-service-achievements/:id/review',
+    name: 'EnterpriseServiceAchievementReviewFeedback',
+    component: () => import('@/views/EnterpriseServiceAchievement/EnterpriseServiceAchievementReviewFeedback.vue'),
+    props: true,
+    meta: {
+      title: '企业服务成果审核',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/activity-achievements/:id/review',
+    name: 'ActivityReviewFeedback',
+    component: () => import('@/views/assistant/ActivityReviewFeedback.vue'),
+    props: true,
+    meta: {
+      title: '活动审批',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
     path: '/assistant/activity-achievements',
     name: 'ActivityAchievementReview',
     component: () => import('@/views/assistant/ActivityAchievementReview.vue'),
@@ -571,6 +675,49 @@ const routes: Array<RouteRecordRaw> = [
       role: ['project_manager'],
     },
   },
+  // 服务资源库
+  {
+    path: '/assistant/service-providers',
+    name: 'ServiceProviderManagement',
+    component: () => import('@/views/assistant/ServiceProviderManagement.vue'),
+    meta: {
+      title: '服务资源库',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/service-providers/create',
+    name: 'CreateServiceProvider',
+    component: () => import('@/views/assistant/ServiceProviderEdit.vue'),
+    meta: {
+      title: '新增服务资源',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/service-providers/:id/edit',
+    name: 'EditServiceProvider',
+    component: () => import('@/views/assistant/ServiceProviderEdit.vue'),
+    props: true,
+    meta: {
+      title: '编辑服务资源',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/service-providers/:id',
+    name: 'ServiceProviderDetail',
+    component: () => import('@/views/assistant/ServiceProviderDetail.vue'),
+    props: true,
+    meta: {
+      title: '查看服务资源',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
   // 产业资源管理
   {
     path: '/assistant/enterprise-demands',
@@ -620,7 +767,7 @@ const routes: Array<RouteRecordRaw> = [
     name: 'IncubationRequests',
     component: () => import('@/views/assistant/IncubationRequests.vue'),
     meta: {
-      title: '服务申请处理',
+      title: '服务申请审批',
       requiresAuth: true,
       role: ['project_manager'],
       permissions: ['view_applications', 'review_applications'],

@@ -332,6 +332,7 @@ const expertTypeOptions = [
   { value: 'technical', label: '技术专家' },
   { value: 'industry', label: '产业专家' },
   { value: 'investment', label: '投资专家' },
+  { value: 'tech_service', label: '科技服务专家' },
 ] as const
 
 const router = useRouter()

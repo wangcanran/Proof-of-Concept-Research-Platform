@@ -58,9 +58,9 @@
         </div>
 
         <!-- 申请附件 -->
-        <div v-if="applicationFiles.length > 0" class="attachments-section">
+        <div class="attachments-section">
           <h4 class="attachments-title">申请附件</h4>
-          <div class="attachments-list">
+          <div v-if="applicationFiles.length" class="attachments-list">
             <a 
               v-for="file in applicationFiles" 
               :key="file.id" 
@@ -72,6 +72,7 @@
               <span class="attachment-name">{{ file.file_name }}</span>
             </a>
           </div>
+          <span v-else class="muted-text">—</span>
         </div>
       </div>
 
@@ -121,6 +122,18 @@
                 :experts="expertAssignments"
                 editable
                 @remove="removeExpertAssignment"
+              />
+            </div>
+            <IncubationServiceProviderAssignPanel
+              v-model="providerAssignments"
+              class="form-group provider-assign-block"
+            />
+            <div v-if="providerAssignments.length" class="form-group">
+              <label class="form-label">已选服务机构</label>
+              <IncubationAssignedServiceProvidersDisplay
+                :providers="providerAssignments"
+                editable
+                @remove="removeProviderAssignment"
               />
             </div>
           </template>
@@ -175,6 +188,9 @@ import IncubationExpertAssignPanel, {
   type ExpertAssignment,
 } from '@/components/IncubationExpertAssignPanel.vue'
 import IncubationAssignedExpertsDisplay from '@/components/IncubationAssignedExpertsDisplay.vue'
+import IncubationServiceProviderAssignPanel from '@/components/IncubationServiceProviderAssignPanel.vue'
+import IncubationAssignedServiceProvidersDisplay from '@/components/IncubationAssignedServiceProvidersDisplay.vue'
+import type { AssignedServiceProviderInfo } from '@/components/IncubationAssignedServiceProvidersDisplay.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -202,6 +218,7 @@ const feedbackAction = ref<'approved' | 'rejected'>('approved')
 const feedbackComment = ref('')
 const uploadedFiles = ref<File[]>([])
 const expertAssignments = ref<ExpertAssignment[]>([])
+const providerAssignments = ref<AssignedServiceProviderInfo[]>([])
 
 // 文件分类
 const applicationFiles = computed(() => {
@@ -257,7 +274,13 @@ const removeFile = (index: number) => {
 
 const removeExpertAssignment = (expert: ExpertAssignment) => {
   expertAssignments.value = expertAssignments.value.filter(
-    (e) => !(e.expert_id === expert.expert_id && e.expert_type === expert.expert_type),
+    (e) => e.expert_id !== expert.expert_id,
+  )
+}
+
+const removeProviderAssignment = (provider: AssignedServiceProviderInfo) => {
+  providerAssignments.value = providerAssignments.value.filter(
+    (p) => p.service_provider_id !== provider.service_provider_id,
   )
 }
 
@@ -275,8 +298,10 @@ const submitFeedback = async () => {
     if (feedbackAction.value === 'approved' && expertAssignments.value.length) {
       payload.expert_assignments = expertAssignments.value.map((a) => ({
         expert_id: a.expert_id,
-        expert_type: a.expert_type,
       }))
+    }
+    if (feedbackAction.value === 'approved' && providerAssignments.value.length) {
+      payload.service_provider_ids = providerAssignments.value.map((p) => p.service_provider_id)
     }
     const res = await api.put(`/incubation/requests/${request.value.id}/feedback`, payload)
 
@@ -494,6 +519,11 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.muted-text {
+  color: #999;
+  font-size: 14px;
 }
 
 /* 表单样式 */

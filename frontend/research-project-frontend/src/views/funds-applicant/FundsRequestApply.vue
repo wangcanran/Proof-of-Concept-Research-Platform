@@ -485,7 +485,7 @@ const goToDetail = (id: string) => {
 }
 
 const goToResultFeedback = (id: string) => {
-  router.push(`/incubation/result-feedback?type=funds&requestId=${id}`)
+  router.push(`/funds-request/${id}`)
 }
 
 const openResultForm = (id: string) => {

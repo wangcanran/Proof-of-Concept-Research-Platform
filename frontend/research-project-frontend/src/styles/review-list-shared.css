@@ -1,0 +1,56 @@
+/* PM 审核列表卡片底部按钮（与服务申请审批 IncubationRequests 一致） */
+.review-list-page .card-footer,
+.incubation-requests-page .card-footer {
+  padding: 16px;
+  display: flex;
+  gap: 12px;
+}
+
+.review-list-page .card-footer .btn-view-detail,
+.incubation-requests-page .card-footer .btn-view-detail {
+  flex: 1;
+  padding: 10px 24px;
+  background: #f0f9f0;
+  border: none;
+  border-radius: 6px;
+  color: #2e8b57;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.3s;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.review-list-page .card-footer .btn-view-detail:hover,
+.incubation-requests-page .card-footer .btn-view-detail:hover {
+  background: #e0f0e0;
+}
+
+.review-list-page .card-footer .btn-approve,
+.incubation-requests-page .card-footer .btn-approve {
+  flex: 1;
+  padding: 10px 24px;
+  background: #b22222;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.3s;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.review-list-page .card-footer .btn-approve:hover,
+.incubation-requests-page .card-footer .btn-approve:hover {
+  background: #8b0000;
+}
+
+/* 长文案按钮略缩小字号，保证一行显示 */
+.review-list-page .card-footer .btn-approve.text-long,
+.review-list-page .card-footer .btn-view-detail.text-long,
+.incubation-requests-page .card-footer .btn-approve.text-long,
+.incubation-requests-page .card-footer .btn-view-detail.text-long {
+  font-size: 12px;
+  padding: 10px 14px;
+}

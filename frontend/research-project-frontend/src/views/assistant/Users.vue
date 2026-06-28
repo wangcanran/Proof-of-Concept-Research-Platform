@@ -393,6 +393,7 @@
             <el-checkbox label="technical">技术专家</el-checkbox>
             <el-checkbox label="industry">产业专家</el-checkbox>
             <el-checkbox label="investment">投资专家</el-checkbox>
+            <el-checkbox label="tech_service">科技服务专家</el-checkbox>
           </el-checkbox-group>
         </el-form-item>
 

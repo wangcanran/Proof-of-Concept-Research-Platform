@@ -135,8 +135,8 @@ const feedbackActionLabel = (a: string) =>
 
 const goBack = () => {
   const from = route.query.from as string
-  if (from === 'result-feedback') {
-    router.push('/incubation/result-feedback')
+  if (from === 'funds-apply') {
+    router.push('/funds-request/apply')
   } else {
     router.push('/applicant/dashboard')
   }

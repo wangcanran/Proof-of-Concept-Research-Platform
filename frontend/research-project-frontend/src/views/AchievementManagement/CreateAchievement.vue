@@ -7,8 +7,8 @@
           <span>返回工作台</span>
         </button>
         <h1>{{ pageTitle }}</h1>
-        <div v-if="isApplicant && !isEditMode" class="header-subtitle">
-          查看已登记成果及审核状态；在下方填写表单提交新成果。仅限已入库或孵化中的项目。
+        <div v-if="usesRegistrationFlow" class="header-subtitle">
+          {{ isProjectManager ? '为本人负责的项目登记科研成果，登记后自动生效' : '查看已登记成果及审核状态；在下方填写表单提交新成果。仅限已入库或孵化中的项目。' }}
         </div>
         <div v-else-if="isApplicant" class="header-subtitle">
           登记论文、专利、报告等科研产出；提交后由项目经理审核
@@ -17,17 +17,63 @@
     </div>
 
     <div class="content-wrapper">
-      <ApplicantAchievementList
-        v-if="isApplicant && !isEditMode"
-        ref="achievementListRef"
-      />
+      <!-- 选择项目（申请人登记） -->
+      <div v-if="usesRegistrationFlow" class="section-card">
+        <div class="section-header">
+          <h3 class="section-title">
+            <span class="section-icon">📋</span>
+            选择项目
+          </h3>
+        </div>
+        <div v-if="loading" class="loading-state">
+          <div class="loading-spinner"></div>
+          <p>加载中...</p>
+        </div>
+        <div v-else-if="!projectList.length" class="empty-state">
+          <div class="empty-icon">📭</div>
+          <p>暂无可登记科研成果的项目</p>
+          <p class="empty-subtext">需已入库或孵化中的项目</p>
+        </div>
+        <div v-else class="projects-list">
+          <div
+            v-for="project in projectList"
+            :key="project.id"
+            class="project-item"
+            :class="{ selected: selectedProject?.id === project.id }"
+            @click="selectProject(project)"
+          >
+            <div class="project-header">
+              <span class="project-code">{{ project.project_code || `PRJ-${project.id.substring(0, 8)}` }}</span>
+              <span class="project-status" :class="getProjectStatusClass(project.status)">
+                {{ getProjectStatusText(project.status) }}
+              </span>
+            </div>
+            <h4 class="project-title">{{ project.title }}</h4>
+            <div class="project-meta">
+              <span class="meta-item">
+                <span class="meta-icon">📅</span>
+                批准日期: {{ formatProjectDate(project.approval_date) }}
+              </span>
+              <span class="meta-item">
+                <span class="meta-icon">📝</span>
+                已登记成果: {{ project.achievement_count || 0 }} 条
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
 
-      <div class="section-card" :class="{ 'form-section': isApplicant && !isEditMode }">
-        <div v-if="isApplicant && !isEditMode" class="section-header">
+      <div
+        v-if="!usesRegistrationFlow || isEditMode || selectedProject"
+        class="section-card"
+        :class="{ 'form-section': usesRegistrationFlow }"
+      >
+        <div v-if="usesRegistrationFlow" class="section-header">
           <h3 class="section-title">
             <span class="section-icon">✏️</span>
-            登记新成果
+            填写科研成果
           </h3>
+          <span v-if="selectedProject" class="selected-tag">{{ selectedProject.title }}</span>
         </div>
 
         <div class="form-body">
@@ -51,6 +97,7 @@
                   <el-option label="研究报告" value="report" />
                   <el-option label="原型样品" value="prototype" />
                   <el-option label="技术标准" value="standard" />
+                  <el-option label="获奖成果" value="award" />
                   <el-option label="其他" value="other" />
                 </el-select>
               </el-form-item>
@@ -68,7 +115,7 @@
           </el-row>
 
           <el-row :gutter="20">
-            <el-col :span="12">
+            <el-col v-if="!usesRegistrationFlow || isEditMode" :span="12">
               <el-form-item label="所属项目" prop="project_id">
                 <el-select
                   v-model="formData.project_id"
@@ -86,7 +133,7 @@
                 </el-select>
               </el-form-item>
             </el-col>
-            <el-col :span="12">
+            <el-col :span="usesRegistrationFlow ? 24 : 12">
               <el-form-item label="产出日期" prop="achievement_date">
                 <el-date-picker
                   v-model="formData.achievement_date"
@@ -109,7 +156,7 @@
                 />
               </el-form-item>
             </el-col>
-            <el-col v-if="!isApplicant || isEditMode" :span="12">
+            <el-col v-if="!usesRegistrationFlow || isEditMode" :span="12">
               <el-form-item label="成果状态" prop="status">
                 <el-select
                   v-model="formData.status"
@@ -272,31 +319,31 @@
         <!-- 附件材料 -->
         <div class="form-step">
           <h3>附件材料</h3>
-
-          <!-- 附件上传 -->
-          <el-form-item label="成果附件">
-            <el-upload
-              ref="uploadRef"
-              class="upload-demo"
-              action=""
-              :multiple="true"
-              :limit="10"
-              :file-list="fileList"
-              :on-change="handleFileChange"
-              :on-remove="handleFileRemove"
-              :auto-upload="false"
-              :disabled="isViewing"
-            >
-              <template #trigger>
-                <el-button type="primary">选择文件</el-button>
-              </template>
-              <template #tip>
-                <div class="el-upload__tip">
-                  请上传成果相关附件，支持格式：PDF、DOC、DOCX、JPG、PNG，单个文件不超过20MB
-                </div>
-              </template>
-            </el-upload>
-          </el-form-item>
+          <div class="form-attachment-block">
+            <label class="form-label">附件材料（可选）</label>
+            <div class="upload-area">
+              <input
+                ref="fileInputRef"
+                type="file"
+                multiple
+                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                style="display: none"
+                @change="handleNativeFileChange"
+              />
+              <button type="button" class="upload-btn" @click="triggerFileUpload">
+                <span class="upload-icon">📎</span>
+                选择文件
+              </button>
+              <span class="upload-hint">支持 PDF、Word、图片，单个文件不超过20MB</span>
+            </div>
+            <div v-if="uploadedFiles.length" class="file-list">
+              <div v-for="(file, index) in uploadedFiles" :key="index" class="file-item">
+                <span class="file-icon">📄</span>
+                <span class="file-name">{{ file.name }}</span>
+                <button type="button" class="file-remove" @click="removeUploadedFile(index)">×</button>
+              </div>
+            </div>
+          </div>
 
           <!-- 外部链接 -->
           <el-form-item label="外部链接" prop="external_link">
@@ -306,13 +353,18 @@
       </el-form>
 
       <div class="form-footer">
-        <button type="button" class="btn secondary" @click="goBack">取消</button>
+        <button type="button" class="btn secondary" @click="usesRegistrationFlow ? cancelFormSelection() : goBack()">取消</button>
         <button type="button" class="btn primary" :disabled="saving" @click="handleSave">
-          {{ saving ? '提交中...' : isEditMode ? '更新成果' : isApplicant ? '提交审批' : '创建成果' }}
+          {{ saving ? '提交中...' : isEditMode ? '更新成果' : usesRegistrationFlow ? (isProjectManager ? '提交登记' : '提交审批') : '创建成果' }}
         </button>
       </div>
         </div>
       </div>
+
+      <ApplicantAchievementList
+        v-if="usesRegistrationFlow"
+        ref="achievementListRef"
+      />
     </div>
   </div>
 </template>
@@ -322,8 +374,8 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
-import { projectAPI } from '@/api/projects'
 import { achievementAPI } from '@/api/achievements'
+import request from '@/utils/request'
 import ApplicantAchievementList from './ApplicantAchievementList.vue'
 
 const route = useRoute()
@@ -335,9 +387,15 @@ const isViewing = computed(() => route.name === 'AchievementDetail')
 const isApplicant = computed(
   () => (localStorage.getItem('userRole') || '').toUpperCase() === 'APPLICANT',
 )
+const isProjectManager = computed(
+  () => (localStorage.getItem('userRole') || '').toUpperCase() === 'PROJECT_MANAGER',
+)
+const usesRegistrationFlow = computed(
+  () => (isApplicant.value || isProjectManager.value) && !isEditMode.value,
+)
 const pageTitle = computed(() => {
   if (isEditMode.value) return '编辑科研成果'
-  if (isApplicant.value) return '科研成果登记'
+  if (usesRegistrationFlow.value) return '科研成果登记'
   return '新增成果'
 })
 const achievementId = computed(() => route.params.id)
@@ -346,17 +404,19 @@ const achievementId = computed(() => route.params.id)
 const saving = ref(false)
 const loading = ref(false)
 const formRef = ref()
-const uploadRef = ref()
+const fileInputRef = ref<HTMLInputElement>()
 const achievementListRef = ref<InstanceType<typeof ApplicantAchievementList> | null>(null)
 
 // 项目列表
-const projectList = ref([])
+const projectList = ref<any[]>([])
+const selectedProject = ref<any>(null)
 
 // 输入处理
 const authorsInput = ref('')
 const keywordsInput = ref('')
 const keywordTags = ref([])
-const fileList = ref([])
+const uploadedFiles = ref<File[]>([])
+const existingFileIds = ref<string[]>([])
 
 // 类型特有信息
 const paperInfo = reactive({
@@ -412,10 +472,17 @@ const ACHIEVEMENT_ELIGIBLE_STATUSES = ['approved', 'incubating']
 const loadProjects = async () => {
   loading.value = true
   try {
-    const res = await projectAPI.getProjectsList({ limit: 200 })
-    if (!res.success) {
-      throw new Error(res.error || '加载项目失败')
+    if (usesRegistrationFlow.value) {
+      const res = await request.get('/api/achievements/eligible-projects')
+      if (res.success) {
+        projectList.value = res.data || []
+      } else {
+        ElMessage.error(res.error || '加载项目列表失败')
+        projectList.value = []
+      }
+      return
     }
+    const res = await request.get('/api/projects', { params: { limit: 200 } })
     const raw = res.data
     const projects = Array.isArray(raw) ? raw : raw?.list || raw?.projects || []
     projectList.value = projects
@@ -428,15 +495,44 @@ const loadProjects = async () => {
         project_code: project.project_code || project.code || '无编号',
         status: project.status,
       }))
-    if (!projectList.value.length) {
-      ElMessage.warning('暂无已入库或孵化中的项目，无法登记科研成果')
-    }
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : '加载项目失败'
     ElMessage.error(msg)
   } finally {
     loading.value = false
   }
+}
+
+function selectProject(project: any) {
+  selectedProject.value = project
+  formData.project_id = project.id
+}
+
+function getProjectStatusClass(status: string) {
+  const map: Record<string, string> = {
+    approved: 'approved',
+    incubating: 'incubating',
+  }
+  return map[status] || ''
+}
+
+function getProjectStatusText(status: string) {
+  const map: Record<string, string> = {
+    approved: '已入库',
+    incubating: '孵化中',
+  }
+  return map[status] || status
+}
+
+function formatProjectDate(dateString?: string) {
+  if (!dateString) return '-'
+  return new Date(dateString).toLocaleDateString('zh-CN')
+}
+
+function cancelFormSelection() {
+  selectedProject.value = null
+  formData.project_id = ''
+  resetFormFields()
 }
 
 // 关键词处理
@@ -474,25 +570,35 @@ const handleProjectChange = (projectId) => {
 }
 
 // 文件处理
-const handleFileChange = (file) => {
-  if (file.size > 20 * 1024 * 1024) {
-    ElMessage.error('文件大小不能超过20MB')
-    uploadRef.value.handleRemove(file)
-    return false
-  }
-  return true
+const triggerFileUpload = () => {
+  fileInputRef.value?.click()
 }
 
-const handleFileRemove = async (file: { id?: string; raw?: File }) => {
-  if (file.id) {
-    try {
-      await achievementAPI.deleteFile(file.id)
-      ElMessage.success('附件已删除')
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '删除附件失败'
-      ElMessage.error(msg)
-      return false
+const handleNativeFileChange = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  if (!target.files) return
+  for (const file of Array.from(target.files)) {
+    if (file.size > 20 * 1024 * 1024) {
+      ElMessage.warning(`文件 ${file.name} 超过 20MB，已跳过`)
+      continue
     }
+    uploadedFiles.value.push(file)
+  }
+  target.value = ''
+}
+
+const removeUploadedFile = (index: number) => {
+  uploadedFiles.value.splice(index, 1)
+}
+
+const handleFileRemove = async (fileId: string) => {
+  try {
+    await achievementAPI.deleteFile(fileId)
+    existingFileIds.value = existingFileIds.value.filter((id) => id !== fileId)
+    ElMessage.success('附件已删除')
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '删除附件失败'
+    ElMessage.error(msg)
   }
 }
 
@@ -537,6 +643,10 @@ const buildDescription = () => {
 
 // 保存处理
 const handleSave = async () => {
+  if (usesRegistrationFlow.value && !selectedProject.value) {
+    ElMessage.warning('请先选择项目')
+    return
+  }
   try {
     await formRef.value.validate()
   } catch {
@@ -544,19 +654,42 @@ const handleSave = async () => {
     return
   }
 
-  try {
-    saving.value = true
-    const fullDescription = buildDescription()
-    const submitData = {
-      type: formData.type,
-      title: formData.title,
-      project_id: formData.project_id,
-      description: fullDescription,
+    handleAuthorsBlur()
+    handleKeywordsBlur()
+
+    let description = formData.description
+    if (formData.type === 'award') {
+      const awardParts: string[] = []
+      if (awardInfo.name) awardParts.push(`奖项名称：${awardInfo.name}`)
+      if (awardInfo.level) awardParts.push(`奖项级别：${awardInfo.level}`)
+      if (awardInfo.date) awardParts.push(`颁奖日期：${awardInfo.date}`)
+      if (awardInfo.organization) awardParts.push(`颁奖机构：${awardInfo.organization}`)
+      if (awardParts.length) {
+        description = description
+          ? `${description}\n\n${awardParts.join('\n')}`
+          : awardParts.join('\n')
+      }
+    }
+
+    try {
+      saving.value = true
+      const submitData = {
+        type: formData.type,
+        title: formData.title,
+        project_id: formData.project_id,
+        description,
       keywords: formData.keywords,
-      status: isApplicant.value && !isEditMode.value ? 'submitted' : formData.status,
+      status: usesRegistrationFlow.value ? 'submitted' : formData.status,
       achievement_date: formData.achievement_date,
-      external_link: formData.external_link,
-      authors: formData.authors.length > 0 ? JSON.stringify(formData.authors) : undefined,
+      external_link: formData.external_link || undefined,
+      authors: authorsInput.value || undefined,
+      journal_conference_name: paperInfo.journal || undefined,
+      doi_number: paperInfo.doi || undefined,
+      volume_issue: paperInfo.volume || undefined,
+      publication_date: paperInfo.publishDate || undefined,
+      patent_number: patentInfo.number || undefined,
+      patent_type: patentInfo.type || undefined,
+      authority: patentInfo.authority || undefined,
     }
 
     let savedId = achievementId.value as string
@@ -568,22 +701,24 @@ const handleSave = async () => {
       if (!savedId) throw new Error('创建成果失败')
     }
 
-    const pendingUploads = fileList.value.filter((f: { raw?: File }) => f.raw)
-    for (const item of pendingUploads) {
-      await achievementAPI.uploadFile(savedId, item.raw as File)
+    for (const file of uploadedFiles.value) {
+      await achievementAPI.uploadFile(savedId, file)
     }
+    uploadedFiles.value = []
 
     ElMessage.success(
       isEditMode.value
         ? '成果更新成功'
-        : isApplicant.value
-          ? '科研成果已提交，等待项目经理审批'
+        : usesRegistrationFlow.value
+          ? isProjectManager.value
+            ? '科研成果已登记'
+            : '科研成果已提交，等待项目经理审批'
           : '成果创建成功',
     )
     if (isEditMode.value) {
       router.push('/achievements/create')
-    } else if (isApplicant.value) {
-      resetForm()
+    } else if (usesRegistrationFlow.value) {
+      cancelFormSelection()
       achievementListRef.value?.refresh()
     } else {
       router.push('/applicant/dashboard')
@@ -607,23 +742,30 @@ const loadAchievementData = async () => {
     if (!data) throw new Error('成果不存在')
 
     formData.type = data.type || ''
-    formData.title = data.title || ''
+    formData.title = data.title || data.name || ''
     formData.project_id = data.project_id || ''
-    formData.description = data.description || data.abstract || data.content || ''
-    formData.keywords = ''
+    formData.description = data.description || ''
+    formData.keywords = data.keywords || ''
     formData.status = data.status || 'draft'
-    formData.achievement_date = data.achievement_date || ''
-    formData.external_link = ''
-
-    parseDescriptionDetails(formData.description)
+    formData.achievement_date = data.achievement_date || data.output_date || ''
+    formData.external_link = data.external_link || ''
+    authorsInput.value = Array.isArray(data.authors)
+      ? data.authors.join(', ')
+      : (data.authors || '')
+    keywordsInput.value = data.keywords || ''
+    if (data.keywords) {
+      keywordTags.value = String(data.keywords).split(/[,，;；]/).map((k) => k.trim()).filter(Boolean)
+    }
+    paperInfo.journal = data.journal_conference_name || ''
+    paperInfo.doi = data.doi_number || ''
+    paperInfo.volume = data.volume_issue || ''
+    paperInfo.publishDate = data.publication_date || ''
+    patentInfo.number = data.patent_number || ''
+    patentInfo.type = data.patent_type || ''
+    patentInfo.authority = data.authority || ''
 
     if (data.files?.length) {
-      fileList.value = data.files.map((f) => ({
-        id: f.id,
-        name: f.file_name,
-        url: f.file_path,
-        status: 'success',
-      }))
+      existingFileIds.value = data.files.map((f) => f.id)
     }
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : '加载成果数据失败'
@@ -679,15 +821,15 @@ const goBack = () => {
   if (isEditMode.value && isApplicant.value) {
     router.push('/achievements/create')
   } else {
-    router.push('/applicant/dashboard')
+    router.push(isProjectManager.value ? '/assistant/dashboard' : '/applicant/dashboard')
   }
 }
 
-const resetForm = () => {
+const resetFormFields = () => {
   formRef.value?.resetFields()
   formData.type = ''
   formData.title = ''
-  formData.project_id = ''
+  formData.project_id = selectedProject.value?.id || ''
   formData.description = ''
   formData.keywords = ''
   formData.achievement_date = ''
@@ -696,10 +838,15 @@ const resetForm = () => {
   authorsInput.value = ''
   keywordsInput.value = ''
   keywordTags.value = []
-  fileList.value = []
+  uploadedFiles.value = []
+  existingFileIds.value = []
   Object.assign(paperInfo, { journal: '', doi: '', volume: '', publishDate: '' })
   Object.assign(patentInfo, { number: '', type: '', authority: '' })
   Object.assign(awardInfo, { name: '', level: '', date: '', organization: '' })
+}
+
+const resetForm = () => {
+  resetFormFields()
 }
 
 onMounted(async () => {
@@ -719,6 +866,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+@import '@/styles/form-upload-shared.css';
 .achievement-register-page {
   min-height: 100vh;
   background: #f5f7fa;
@@ -774,7 +922,126 @@ onMounted(async () => {
   padding: 24px;
   max-width: 1200px;
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
+
+.projects-list {
+  padding: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.project-item {
+  padding: 16px;
+  border: 2px solid #f0f0f0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s;
+  background: #fff;
+}
+
+.project-item:hover {
+  border-color: #b31b1b;
+  box-shadow: 0 4px 12px rgba(179, 27, 27, 0.1);
+}
+
+.project-item.selected {
+  border-color: #b31b1b;
+  background: rgba(179, 27, 27, 0.02);
+}
+
+.project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.project-code {
+  font-size: 12px;
+  color: #b31b1b;
+  background: rgba(179, 27, 27, 0.06);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.project-status {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.project-status.approved {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.project-status.incubating {
+  background: #e6f7ff;
+  color: #1890ff;
+}
+
+.project-title {
+  margin: 0 0 12px 0;
+  font-size: 15px;
+  color: #333;
+  font-weight: 500;
+}
+
+.project-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: #999;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.loading-state {
+  padding: 60px 20px;
+  text-align: center;
+  color: #999;
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #f0f0f0;
+  border-top-color: #b31b1b;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 12px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.empty-state {
+  padding: 60px 20px;
+  text-align: center;
+  color: #999;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.empty-subtext {
+  font-size: 13px;
+  color: #bbb;
+  margin-top: 8px;
+}
+
+.selected-tag { font-size: 13px; color: #666; }
 
 .section-card {
   background: white;

@@ -1,6 +1,6 @@
 <!-- src/views/assistant/IncubationRequests.vue -->
 <template>
-  <div class="incubation-requests-page">
+  <div class="incubation-requests-page review-list-page">
     <!-- 页面头部 -->
     <div class="page-header">
       <div class="header-left">
@@ -8,8 +8,8 @@
           <el-icon><ArrowLeft /></el-icon>
           <span>返回工作台</span>
         </button>
-        <h1>服务申请处理</h1>
-        <div class="header-subtitle">处理申请人提交的孵化服务申请</div>
+        <h1>服务申请审批</h1>
+        <div class="header-subtitle">处理申请人提交的孵化服务申请，审批时可分配专家顾问或服务机构</div>
       </div>
     </div>
 
@@ -50,26 +50,28 @@
             <div class="card-header" @click="goToDetail(request.id)">
               <div class="card-title-row">
                 <span class="card-project-code">{{ request.project_code || '-' }}</span>
-                <span class="card-status" :class="getStatusClass(request.status)">
-                  {{ getStatusText(request.status) }}
+                <span class="card-status" :class="getCardStatusClass(request)">
+                  {{ getCardStatusText(request) }}
                 </span>
               </div>
               <h4 class="card-project-title">{{ request.project_title }}</h4>
             </div>
             <div class="card-body" @click="goToDetail(request.id)">
               <div class="card-info">
-                <span class="info-label">申请人</span>
-                <span class="info-value">{{ request.applicant_name }}</span>
+                <span class="info-label">服务类别</span>
+                <span class="info-value">{{ getCategoryDisplay(request.service_categories) }}</span>
+              </div>
+              <div class="card-info">
+                <span class="info-label">所属项目</span>
+                <span class="info-value">{{ request.project_title || '-' }}</span>
+              </div>
+              <div class="card-info">
+                <span class="info-label">项目编号</span>
+                <span class="info-value">{{ request.project_code || '-' }}</span>
               </div>
               <div class="card-info">
                 <span class="info-label">申请时间</span>
                 <span class="info-value">{{ formatDateTime(request.application_date) }}</span>
-              </div>
-              <div class="card-info" v-if="request.feedback_action">
-                <span class="info-label">反馈结果</span>
-                <span class="info-value" :class="request.feedback_action === 'approved' ? 'success' : 'danger'">
-                  {{ request.feedback_action === 'approved' ? '已同意' : '已拒绝' }}
-                </span>
               </div>
             </div>
             <div class="card-footer">
@@ -77,7 +79,7 @@
               <!-- 对于status为pending的，显示审批服务申请按钮 -->
               <button 
                 v-if="request.status === 'pending'" 
-                class="btn-approve" 
+                class="btn-approve text-long" 
                 @click.stop="goToFeedback(request.id)"
               >审批服务申请</button>
             </div>
@@ -186,7 +188,7 @@ api.interceptors.request.use((config) => {
 const loading = ref(false)
 const submitting = ref(false)
 const requests = ref<any[]>([])
-const currentTab = ref('pending')
+const currentTab = ref('all')
 const showModal = ref(false)
 const selectedRequest = ref<any>(null)
 const feedbackAction = ref<'approved' | 'rejected'>('approved')
@@ -196,15 +198,30 @@ const fileInput = ref<HTMLInputElement>()
 
 // 状态标签
 const statusTabs = computed(() => [
-  { value: 'pending', label: '待处理', count: requests.value.filter(r => r.status === 'pending').length },
-  { value: 'feedback_given', label: '已反馈', count: requests.value.filter(r => r.status === 'feedback_given').length },
-  { value: 'result_submitted', label: '已完成', count: requests.value.filter(r => r.status === 'result_submitted').length },
   { value: 'all', label: '全部', count: requests.value.length },
+  { value: 'pending', label: '待反馈', count: requests.value.filter(r => r.status === 'pending').length },
+  {
+    value: 'approved',
+    label: '已批准',
+    count: requests.value.filter(r => r.status === 'feedback_given' && r.feedback_action === 'approved').length,
+  },
+  {
+    value: 'rejected',
+    label: '已驳回',
+    count: requests.value.filter(r => r.status === 'feedback_given' && r.feedback_action === 'rejected').length,
+  },
 ])
 
 const filteredRequests = computed(() => {
   if (currentTab.value === 'all') return requests.value
-  return requests.value.filter(r => r.status === currentTab.value)
+  if (currentTab.value === 'pending') return requests.value.filter(r => r.status === 'pending')
+  if (currentTab.value === 'approved') {
+    return requests.value.filter(r => r.status === 'feedback_given' && r.feedback_action === 'approved')
+  }
+  if (currentTab.value === 'rejected') {
+    return requests.value.filter(r => r.status === 'feedback_given' && r.feedback_action === 'rejected')
+  }
+  return requests.value
 })
 
 const categoryModalLine = computed(() =>
@@ -342,27 +359,28 @@ const goToFeedback = (requestId: string) => {
 }
 
 // 工具函数
-const getStatusClass = (status: string) => {
-  const map: Record<string, string> = {
-    pending: 'pending',
-    feedback_given: 'feedback',
-    result_submitted: 'completed'
-  }
-  return map[status] || ''
+const getCardStatusClass = (request: { status: string; feedback_action?: string }) => {
+  if (request.status === 'pending') return 'pending'
+  if (request.feedback_action === 'approved') return 'approved'
+  if (request.feedback_action === 'rejected') return 'rejected'
+  return 'feedback'
 }
 
-const getStatusText = (status: string) => {
-  const map: Record<string, string> = {
-    pending: '待处理',
-    feedback_given: '已反馈',
-    result_submitted: '已完成'
-  }
-  return map[status] || status
+const getCardStatusText = (request: { status: string; feedback_action?: string }) => {
+  if (request.status === 'pending') return '待反馈'
+  if (request.feedback_action === 'approved') return '已批准'
+  if (request.feedback_action === 'rejected') return '已驳回'
+  return '已反馈'
 }
 
 const formatDateTime = (dateString: string) => {
   if (!dateString) return '-'
   return new Date(dateString).toLocaleString('zh-CN')
+}
+
+const getCategoryDisplay = (categories: unknown) => {
+  const text = formatServiceCategoriesDisplay(categories)
+  return text || '-'
 }
 
 const getFileUrl = (fileId: string) => {
@@ -402,15 +420,15 @@ onMounted(() => {
 }
 
 .header-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 .back-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+  margin-bottom: 12px;
   padding: 8px 16px;
   background: #f5f5f5;
   border: 1px solid #e8e8e8;
@@ -418,6 +436,7 @@ onMounted(() => {
   color: #666;
   cursor: pointer;
   transition: all 0.3s;
+  font-size: 14px;
 }
 
 .back-btn:hover {
@@ -433,6 +452,7 @@ onMounted(() => {
 }
 
 .header-subtitle {
+  margin-top: 6px;
   color: #999;
   font-size: 14px;
 }
@@ -1013,6 +1033,16 @@ onMounted(() => {
   color: #1890ff;
 }
 
+.card-status.approved {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.card-status.rejected {
+  background: #fff1f0;
+  color: #ff4d4f;
+}
+
 .card-status.completed {
   background: #f6ffed;
   color: #52c41a;
@@ -1062,36 +1092,8 @@ onMounted(() => {
   display: flex;
   gap: 12px;
 }
+</style>
 
-.btn-view-detail {
-  flex: 1;
-  padding: 10px 24px;
-  background: #F0F9F0;
-  border: none;
-  border-radius: 6px;
-  color: #2E8B57;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.3s;
-}
-
-.btn-view-detail:hover {
-  background: #E0F0E0;
-}
-
-.btn-approve {
-  flex: 1;
-  padding: 10px 24px;
-  background: #B22222;
-  border: none;
-  border-radius: 6px;
-  color: white;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.3s;
-}
-
-.btn-approve:hover {
-  background: #8B0000;
-}
+<style>
+@import '@/styles/review-list-shared.css';
 </style>

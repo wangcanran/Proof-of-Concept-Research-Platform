@@ -5,7 +5,7 @@
       :closable="false"
       show-icon
       class="expert-type-tip"
-      title="专家类型筛选仅用于缩小列表（仅显示已在个人中心设置该类型的专家）；不筛选时显示全部。分配时按专家个人已设置的类型归类，而非手动指定。"
+      title="专家类型筛选仅用于缩小列表；勾选即选中，提交反馈时一并生效。"
     />
 
     <div class="assign-filters-row">
@@ -59,7 +59,7 @@
           v-for="expert in availableExperts"
           :key="expert.id"
           class="expert-select-item"
-          :class="{ selected: selectedExpertIds.includes(expert.id) }"
+          :class="{ selected: isExpertSelected(expert.id) }"
           @click="toggleExpertSelection(expert.id)"
         >
           <div class="expert-select-avatar">
@@ -85,30 +85,25 @@
                 </el-tag>
               </span>
             </div>
-            <div class="expert-select-department">{{ expert.department || '未填写' }}</div>
-            <div v-if="expert.title" class="expert-select-title">{{ expert.title }}</div>
-            <div v-if="expert.email" class="expert-select-email">{{ expert.email }}</div>
-            <div v-if="expert.keywords" class="expert-select-keywords">关键词：{{ expert.keywords }}</div>
+            <div class="expert-select-meta">所属部门/单位：{{ expert.department || '—' }}</div>
+            <div class="expert-select-meta">职称/职务：{{ expert.title || '—' }}</div>
+            <div class="expert-select-meta">邮箱：{{ expert.email || '—' }}</div>
+            <div class="expert-select-meta">联系电话：{{ expert.phone || '—' }}</div>
+            <div class="expert-select-meta">
+              研究领域：{{ formatResearchFields(expert) }}
+            </div>
+            <div v-if="expert.expertise_description" class="expert-select-desc">
+              专业特长描述：{{ expert.expertise_description }}
+            </div>
           </div>
           <div class="expert-select-check">
             <el-checkbox
-              :model-value="selectedExpertIds.includes(expert.id)"
+              :model-value="isExpertSelected(expert.id)"
               @click.stop="toggleExpertSelection(expert.id)"
             />
           </div>
         </div>
       </div>
-    </div>
-
-    <div class="panel-footer">
-      <el-button
-        type="primary"
-        :disabled="selectedExpertIds.length === 0"
-        :loading="assignLoading"
-        @click="confirmAssign"
-      >
-        确认分配 {{ selectedExpertIds.length }} 位专家
-      </el-button>
     </div>
   </div>
 </template>
@@ -127,12 +122,14 @@ const EXPERT_TYPES = [
   { value: 'technical' as const, label: '技术专家' },
   { value: 'industry' as const, label: '产业专家' },
   { value: 'investment' as const, label: '投资专家' },
+  { value: 'tech_service' as const, label: '科技服务专家' },
 ]
 
 const EXPERT_TYPE_LABELS: Record<string, string> = {
   technical: '技术专家',
   industry: '产业专家',
   investment: '投资专家',
+  tech_service: '科技服务专家',
 }
 
 const props = withDefaults(
@@ -174,7 +171,13 @@ function expertTypeLabel(type: string) {
   return EXPERT_TYPE_LABELS[type] || type
 }
 
-const TYPE_ORDER = ['technical', 'industry', 'investment'] as const
+function formatResearchFields(expert: { research_fields?: string[]; research_field?: string }) {
+  const fields = expert.research_fields
+  if (Array.isArray(fields) && fields.length) return fields.join('、')
+  return expert.research_field || '—'
+}
+
+const TYPE_ORDER = ['technical', 'industry', 'investment', 'tech_service'] as const
 
 function resolveAssignmentType(
   expert: { expert_types?: string[]; expertTypes?: string[] },
@@ -194,10 +197,9 @@ function resolveAssignmentType(
 const keyword = ref('')
 const selectedTypeFilters = ref<string[]>([])
 const searchLoading = ref(false)
-const assignLoading = ref(false)
+const togglingId = ref('')
 const listShown = ref(false)
 const availableExperts = ref<any[]>([])
-const selectedExpertIds = ref<string[]>([])
 const loadedAssigned = ref<ExpertAssignment[]>([])
 
 const selectedList = computed({
@@ -213,6 +215,20 @@ const allAssignedIds = computed(() => {
   return new Set([...fromManage, ...fromDraft].map((e) => e.expert_id))
 })
 
+/** 已从服务端持久化的分配（manage 模式下列表排除用） */
+const persistedAssignedIds = computed(() => {
+  if (props.manageMode) {
+    const list = loadedAssigned.value.length ? loadedAssigned.value : props.assignedExperts || []
+    return new Set(list.map((e) => e.expert_id))
+  }
+  return new Set((props.assignedExperts || []).map((e) => e.expert_id))
+})
+
+const isExpertSelected = (expertId: string) => {
+  if (props.manageMode) return persistedAssignedIds.value.has(expertId)
+  return selectedList.value.some((e) => e.expert_id === expertId)
+}
+
 const mapExpertRow = (r: any): ExpertAssignment => ({
   id: r.id,
   expert_id: r.expert_id,
@@ -222,7 +238,10 @@ const mapExpertRow = (r: any): ExpertAssignment => ({
   expert_phone: r.expert_phone,
   department: r.department,
   title: r.title,
-  profile_types: r.profile_types ?? r.profileTypes ?? [],
+  profile_types: r.profile_types ?? r.profileTypes ?? r.expert_types ?? [],
+  research_fields: r.research_fields,
+  research_field: r.research_field,
+  expertise_description: r.expertise_description,
 })
 
 const loadAssigned = async () => {
@@ -251,9 +270,10 @@ const runExpertSearch = async () => {
       params,
     })
     if (res.data.success) {
-      availableExperts.value = (res.data.data || []).filter(
-        (e: any) => !allAssignedIds.value.has(e.id),
-      )
+      availableExperts.value = (res.data.data || []).filter((e: any) => {
+        if (props.manageMode) return !persistedAssignedIds.value.has(e.id)
+        return !e.already_assigned
+      })
       listShown.value = true
     }
   } catch (err: any) {
@@ -270,15 +290,6 @@ const clearTypeFilter = () => {
   runExpertSearch()
 }
 
-const toggleExpertSelection = (expertId: string) => {
-  const index = selectedExpertIds.value.indexOf(expertId)
-  if (index > -1) {
-    selectedExpertIds.value.splice(index, 1)
-  } else {
-    selectedExpertIds.value.push(expertId)
-  }
-}
-
 const buildAssignment = (expert: any): ExpertAssignment => ({
   expert_id: expert.id,
   expert_type: resolveAssignmentType(expert, selectedTypeFilters.value),
@@ -288,48 +299,46 @@ const buildAssignment = (expert: any): ExpertAssignment => ({
   department: expert.department,
   title: expert.title,
   profile_types: getExpertTypes(expert),
+  research_fields: expert.research_fields,
+  research_field: formatResearchFields(expert),
+  expertise_description: expert.expertise_description,
 })
 
-const confirmAssign = async () => {
-  if (selectedExpertIds.value.length === 0) {
-    ElMessage.warning('请选择至少一位专家')
-    return
-  }
+const toggleExpertSelection = async (expertId: string) => {
+  if (togglingId.value) return
+  const expert = availableExperts.value.find((e) => e.id === expertId)
+  if (!expert) return
 
-  const picked = availableExperts.value.filter((e) => selectedExpertIds.value.includes(e.id))
-  if (!picked.length) {
-    ElMessage.warning('所选专家无效或已分配')
-    return
-  }
-
-  assignLoading.value = true
-  try {
-    if (props.manageMode) {
+  if (props.manageMode) {
+    if (allAssignedIds.value.has(expertId)) return
+    togglingId.value = expertId
+    try {
       await api.put(`/incubation/requests/${props.progressId}/experts`, {
-        assignments: picked.map((e) => ({
-          expert_id: e.id,
-          expert_type: resolveAssignmentType(e, selectedTypeFilters.value),
-        })),
+        assignments: [
+          {
+            expert_id: expertId,
+            expert_type: resolveAssignmentType(expert, selectedTypeFilters.value),
+          },
+        ],
       })
       await loadAssigned()
       emit('changed')
-      ElMessage.success(`成功分配 ${picked.length} 位专家`)
-    } else {
-      const next = [...selectedList.value]
-      for (const expert of picked) {
-        if (!next.some((e) => e.expert_id === expert.id)) {
-          next.push(buildAssignment(expert))
-        }
-      }
-      selectedList.value = next
-      ElMessage.success(`已选择 ${picked.length} 位专家`)
+      await runExpertSearch()
+    } catch (err: any) {
+      ElMessage.error(err.response?.data?.error || '分配专家失败')
+    } finally {
+      togglingId.value = ''
     }
-    selectedExpertIds.value = []
-    await runExpertSearch()
-  } catch (err: any) {
-    ElMessage.error(err.response?.data?.error || '分配专家失败')
-  } finally {
-    assignLoading.value = false
+    return
+  }
+
+  const idx = selectedList.value.findIndex((e) => e.expert_id === expertId)
+  if (idx >= 0) {
+    const next = [...selectedList.value]
+    next.splice(idx, 1)
+    selectedList.value = next
+  } else {
+    selectedList.value = [...selectedList.value, buildAssignment(expert)]
   }
 }
 
@@ -338,7 +347,6 @@ defineExpose({ loadAssigned })
 watch(
   () => props.progressId,
   async () => {
-    selectedExpertIds.value = []
     listShown.value = false
     if (props.manageMode) await loadAssigned()
     await runExpertSearch()
@@ -397,7 +405,6 @@ onMounted(async () => {
 
 .available-experts-list {
   min-height: 240px;
-  margin-bottom: 12px;
 }
 
 .empty-experts {
@@ -420,7 +427,7 @@ onMounted(async () => {
 
 .expert-select-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 16px;
   padding: 12px;
   border: 1px solid #f0f0f0;
@@ -483,19 +490,17 @@ onMounted(async () => {
   --el-tag-text-color: #67c23a;
 }
 
-.expert-select-department,
-.expert-select-title,
-.expert-select-email,
-.expert-select-keywords {
+.expert-select-meta {
   font-size: 12px;
   color: #666;
   margin-top: 2px;
+  line-height: 1.5;
 }
 
-.panel-footer {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 8px;
-  border-top: 1px solid #eee;
+.expert-select-desc {
+  font-size: 12px;
+  color: #555;
+  margin-top: 4px;
+  line-height: 1.5;
 }
 </style>
