@@ -209,7 +209,7 @@
       <div v-if="activeTab === 'incubationAchievements'" class="tab-panel">
         <div class="section">
           <h3>活动</h3>
-          <p class="section-desc">已通过审批的活动记录（路演、产业交流等）。</p>
+          <p class="section-desc">已通过审批的路演、产业交流等推广对接类活动记录。</p>
           <ProjectIncubationAchievementsPanel v-if="project" :project-id="project.id" />
         </div>
       </div>
@@ -275,7 +275,7 @@
           <div class="content-box">
             <p><strong>当前状态：</strong>{{ getStatusDescription(project.status) }}</p>
             <p v-if="project.manager_name"><strong>项目经理：</strong>{{ project.manager_name }}</p>
-            <p v-if="project.review_count > 0"><strong>评审专家数：</strong>{{ project.review_count }} 人</p>
+            <p v-if="project.review_count > 0"><strong>专家顾问数：</strong>{{ project.review_count }} 人</p>
           </div>
         </div>
       </div>
@@ -357,10 +357,10 @@
       <!-- 评审意见（项目经理特有） -->
       <div v-if="activeTab === 'reviews'" class="tab-panel">
         <div class="section">
-          <h3>评审专家意见</h3>
+          <h3>专家顾问意见</h3>
           <div v-if="reviewFeedback.length === 0" class="empty-state">
             <p>暂无评审意见</p>
-            <p v-if="canAssignReviewers && !isFundsManagerMode" class="hint">您可以分配评审专家来获取评审意见</p>
+            <p v-if="canAssignReviewers && !isFundsManagerMode" class="hint">您可以分配专家顾问来获取评审意见</p>
           </div>
           <div v-else class="reviews-list">
             <div v-for="(review, index) in reviewFeedback" :key="index" class="review-card-modern">
@@ -376,7 +376,7 @@
               <div class="reviewer-info-section">
                 <div class="info-row">
                   <div class="info-item">
-                    <span class="info-label">评审专家</span>
+                    <span class="info-label">专家顾问</span>
                     <span class="info-value name">{{ review.reviewer_name || '未知专家' }}</span>
                   </div>
                   <div class="info-item">
@@ -425,7 +425,7 @@
           class="action-btn primary" 
           @click="assignReviewers"
         >
-          分配评审专家
+          分配专家顾问
         </button>
       </div>
     </div>

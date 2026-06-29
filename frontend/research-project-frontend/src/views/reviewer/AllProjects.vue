@@ -253,7 +253,7 @@ const loadAllProjects = async () => {
     const data = error?.response?.data
     const hint =
       status === 403
-        ? '没有权限（请用评审专家账号登录）'
+        ? '没有权限（请用专家顾问账号登录）'
         : status === 404
           ? '接口不存在，请确认后端已启动且为最新代码'
           : data?.error || data?.message || error?.message || '网络或服务器错误'

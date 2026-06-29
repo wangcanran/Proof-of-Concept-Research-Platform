@@ -23,7 +23,7 @@ echo '<template>
 
 echo '<template>
   <div>
-    <h2>评审任务（评审专家）</h2>
+    <h2>评审任务（专家顾问）</h2>
     <p>这里将展示待评审的项目列表</p>
     <el-button @click="$router.back()">返回</el-button>
   </div>

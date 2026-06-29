@@ -16,7 +16,7 @@
           :disabled="dialogType === 'view'"
         >
           <el-option label="项目申请人" value="applicant" />
-          <el-option label="评审专家" value="reviewer" />
+          <el-option label="专家顾问" value="reviewer" />
           <el-option label="科研助理" value="project_manager" />
           <el-option label="经费管理员" value="funds_manager" />
           <el-option label="系统管理员" value="admin" />
@@ -107,7 +107,6 @@
         >
           <el-option label="活跃" value="active" />
           <el-option label="非活跃" value="inactive" />
-          <el-option label="待激活" value="pending" />
         </el-select>
       </el-form-item>
     </el-form>
@@ -250,11 +249,15 @@ const loadUserData = async (userId: string) => {
   loading.value = true
   try {
     const response = await request({
-      url: `/admin/users/${userId}`,
+      url: `/api/admin/users/${userId}`,
       method: 'GET',
     })
 
-    Object.assign(formData, response)
+    if (response?.success) {
+      Object.assign(formData, response.data)
+    } else {
+      ElMessage.error(response?.error || '加载用户数据失败')
+    }
   } catch (error) {
     console.error('加载用户数据失败:', error)
     ElMessage.error('加载用户数据失败')
@@ -304,22 +307,31 @@ const handleSubmit = async () => {
     delete submitData.confirmPassword
 
     if (props.dialogType === 'create') {
-      await request({
-        url: '/admin/users',
+      const response = await request({
+        url: '/api/admin/users',
         method: 'POST',
         data: submitData,
       })
-      ElMessage.success('创建用户成功')
+      if (response?.success) {
+        ElMessage.success('创建用户成功')
+      } else {
+        throw new Error(response?.error || '创建失败')
+      }
     } else if (props.dialogType === 'edit') {
       // 编辑时不更新密码
       delete submitData.password
+      if (submitData.status === 'pending') submitData.status = 'inactive'
 
-      await request({
-        url: `/admin/users/${props.userData?.id}`,
+      const response = await request({
+        url: `/api/admin/users/${props.userData?.id}`,
         method: 'PUT',
         data: submitData,
       })
-      ElMessage.success('更新用户成功')
+      if (response?.success) {
+        ElMessage.success('更新用户成功')
+      } else {
+        throw new Error(response?.error || '更新失败')
+      }
     }
 
     emit('success')

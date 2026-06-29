@@ -320,7 +320,7 @@
                   <div class="action-icon">📦</div>
                   <div class="action-content">
                     <h4>活动登记</h4>
-                    <p>记录项目推广对接类活动和产出</p>
+                    <p>登记路演、产业交流等推广对接类活动</p>
                   </div>
                 </button>
                 <button class="action-card" @click="navigateTo('enterprise-demands')">
@@ -617,7 +617,7 @@ const userInitial = computed(() => {
 const userRoleName = computed(() => {
   const roleMap: Record<string, string> = {
     applicant: '项目申请人',
-    reviewer: '评审专家',
+    reviewer: '专家顾问',
     project_manager: '项目经理',
     admin: '系统管理员',
   }

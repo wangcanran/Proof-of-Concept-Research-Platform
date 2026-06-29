@@ -163,7 +163,7 @@
               </span>
               <div class="stat-pill-body">
                 <span class="stat-pill-num">{{ stats.reviewerCount }}</span>
-                <span class="stat-pill-label">评审专家</span>
+                <span class="stat-pill-label">专家顾问</span>
               </div>
             </div>
             <div class="stat-pill">

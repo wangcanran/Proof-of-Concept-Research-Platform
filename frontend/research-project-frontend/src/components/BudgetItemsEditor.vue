@@ -1,4 +1,4 @@
-<!-- 经费预算明细编辑（与创建项目预算一致：表单内金额为万元） -->
+<!-- 经费预算明细编辑（金额单位：元，与库内 FundsRequestItem 一致） -->
 <template>
   <div class="budget-editor">
     <p v-if="hint" class="budget-hint">{{ hint }}</p>
@@ -9,7 +9,7 @@
             <th style="width: 140px">预算科目</th>
             <th style="width: 160px">项目名称</th>
             <th>详细说明</th>
-            <th style="width: 120px">金额（万元）</th>
+            <th style="width: 120px">金额（元）</th>
             <th style="width: 56px"></th>
           </tr>
         </thead>
@@ -58,8 +58,8 @@
         </tbody>
         <tfoot v-if="modelValue.length > 0">
           <tr>
-            <td colspan="3" class="total-label">合计（万元）</td>
-            <td class="total-value">{{ totalWan.toFixed(2) }}</td>
+            <td colspan="3" class="total-label">合计（元）</td>
+            <td class="total-value">{{ totalYuan.toFixed(2) }}</td>
             <td></td>
           </tr>
         </tfoot>
@@ -79,7 +79,7 @@ const props = withDefaults(
     hint?: string
   }>(),
   {
-    hint: '金额请按万元填写，提交时自动换算为元写入系统。',
+    hint: '金额请按元填写。',
   },
 )
 
@@ -87,7 +87,7 @@ const emit = defineEmits<{
   'update:modelValue': [BudgetRow[]]
 }>()
 
-const totalWan = computed(() =>
+const totalYuan = computed(() =>
   props.modelValue.reduce((sum, r) => sum + (Number(r.amount) || 0), 0),
 )
 

@@ -38,7 +38,7 @@
           </div>
 
           <div class="info-item">
-            <label>评审专家：</label>
+            <label>专家顾问：</label>
             <span>{{ reviewData.reviewer_name }}</span>
             <span v-if="reviewData.reviewer_title" class="title">{{
               reviewData.reviewer_title

@@ -10,6 +10,17 @@
       <div class="header-right">
         <el-button type="primary" @click="openCreateDialog" :icon="Plus"> 新增用户 </el-button>
         <el-button @click="exportUsers" :icon="Download">导出</el-button>
+        <el-dropdown @command="handleExpertImportCommand">
+          <el-button :icon="Upload">
+            批量导入专家顾问 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="download-template">下载 Excel 模板</el-dropdown-item>
+              <el-dropdown-item command="open-import">上传 Excel 导入</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button @click="refreshData" :icon="Refresh">刷新</el-button>
       </div>
     </div>
@@ -38,8 +49,9 @@
           @change="handleSearch"
         >
           <el-option label="申请人" value="applicant" />
-          <el-option label="评审专家" value="reviewer" />
+          <el-option label="专家顾问" value="reviewer" />
           <el-option label="科研助理" value="project_manager" />
+          <el-option label="经费管理员" value="funds_manager" />
           <el-option label="管理员" value="admin" />
         </el-select>
 
@@ -52,7 +64,6 @@
         >
           <el-option label="活跃" value="active" />
           <el-option label="非活跃" value="inactive" />
-          <el-option label="待激活" value="pending" />
         </el-select>
 
         <el-button type="primary" @click="handleSearch" :icon="Search"> 搜索 </el-button>
@@ -73,7 +84,11 @@
 
     <!-- 数据统计卡片 -->
     <div class="stats-cards">
-      <div class="stat-card" @click="filterByRole('applicant')">
+      <div
+        class="stat-card"
+        :class="{ active: activeStatFilter.type === 'role' && activeStatFilter.value === 'applicant' }"
+        @click.stop="filterByRole('applicant')"
+      >
         <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><User /></el-icon>
         </div>
@@ -83,17 +98,27 @@
         </div>
       </div>
 
-      <div class="stat-card" @click="filterByRole('reviewer')">
+      <div
+        class="stat-card"
+        :class="{ active: activeStatFilter.type === 'role' && activeStatFilter.value === 'reviewer' }"
+        @click.stop="filterByRole('reviewer')"
+      >
         <div class="stat-icon" style="background: rgba(179, 27, 27, 0.12); color: #b31b1b">
           <el-icon><Star /></el-icon>
         </div>
         <div class="stat-content">
           <div class="stat-value">{{ stats.totalReviewers }}</div>
-          <div class="stat-label">评审专家</div>
+          <div class="stat-label">专家顾问</div>
         </div>
       </div>
 
-      <div class="stat-card" @click="filterByRole('project_manager')">
+      <div
+        class="stat-card"
+        :class="{
+          active: activeStatFilter.type === 'role' && activeStatFilter.value === 'project_manager',
+        }"
+        @click.stop="filterByRole('project_manager')"
+      >
         <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><Setting /></el-icon>
         </div>
@@ -103,7 +128,27 @@
         </div>
       </div>
 
-      <div class="stat-card" @click="filterByRole('admin')">
+      <div
+        class="stat-card"
+        :class="{
+          active: activeStatFilter.type === 'role' && activeStatFilter.value === 'funds_manager',
+        }"
+        @click.stop="filterByRole('funds_manager')"
+      >
+        <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
+          <el-icon><Wallet /></el-icon>
+        </div>
+        <div class="stat-content">
+          <div class="stat-value">{{ stats.totalFundsManagers }}</div>
+          <div class="stat-label">经费管理员</div>
+        </div>
+      </div>
+
+      <div
+        class="stat-card"
+        :class="{ active: activeStatFilter.type === 'role' && activeStatFilter.value === 'admin' }"
+        @click.stop="filterByRole('admin')"
+      >
         <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><Lock /></el-icon>
         </div>
@@ -113,7 +158,11 @@
         </div>
       </div>
 
-      <div class="stat-card" @click="filterByStatus('active')">
+      <div
+        class="stat-card"
+        :class="{ active: activeStatFilter.type === 'status' && activeStatFilter.value === 'active' }"
+        @click.stop="filterByStatus('active')"
+      >
         <div class="stat-icon" style="background: #b31b1b20; color: #b31b1b">
           <el-icon><Check /></el-icon>
         </div>
@@ -124,6 +173,14 @@
       </div>
     </div>
 
+    <!-- 当前筛选提示 -->
+    <div v-if="activeFilterLabel" class="active-filter-bar">
+      <span>当前筛选：{{ activeFilterLabel }}（共 {{ pagination.total }} 人）</span>
+      <el-button type="primary" link @click="resetFilters">清除筛选</el-button>
+    </div>
+
+    <!-- 用户列表区域 -->
+    <div ref="listContainerRef">
     <!-- 列表视图 -->
     <div v-if="viewMode === 'list'" class="list-container">
       <el-table
@@ -226,7 +283,7 @@
             <div class="user-avatar-large">{{ getInitial(user.name) }}</div>
             <div class="user-basic-info">
               <h3 class="user-name">{{ user.name }}</h3>
-              <p class="user-username">@{{ user.username }}</p>
+              <p class="user-username">{{ '@' + user.username }}</p>
             </div>
             <el-dropdown @command="handleCardCommand($event, user)" trigger="click">
               <span class="card-menu">
@@ -309,6 +366,7 @@
         />
       </div>
     </div>
+    </div>
 
     <!-- 创建/编辑用户对话框 -->
     <el-dialog
@@ -361,8 +419,9 @@
         <el-form-item label="角色" prop="role">
           <el-select v-model="dialog.form.role" placeholder="请选择角色" style="width: 100%">
             <el-option label="申请人" value="applicant" />
-            <el-option label="评审专家" value="reviewer" />
+            <el-option label="专家顾问" value="reviewer" />
             <el-option label="科研助理" value="project_manager" />
+            <el-option label="经费管理员" value="funds_manager" />
             <el-option label="管理员" value="admin" />
           </el-select>
         </el-form-item>
@@ -401,7 +460,6 @@
           <el-radio-group v-model="dialog.form.status">
             <el-radio label="active">活跃</el-radio>
             <el-radio label="inactive">非活跃</el-radio>
-            <el-radio label="pending">待激活</el-radio>
           </el-radio-group>
         </el-form-item>
       </el-form>
@@ -456,24 +514,108 @@
         </span>
       </template>
     </el-dialog>
+
+    <!-- 专家顾问批量导入 -->
+    <el-dialog
+      v-model="expertImportDialog.visible"
+      title="批量导入专家顾问"
+      width="720px"
+      @closed="resetExpertImportDialog"
+    >
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="请先下载模板，按列填写后上传。系统将自动创建专家顾问账号（角色 reviewer），并生成初始登录密码。导入账号默认为未激活，需激活后方可登录。"
+        style="margin-bottom: 16px"
+      />
+      <el-upload
+        drag
+        accept=".xlsx,.xls"
+        :auto-upload="false"
+        :limit="1"
+        :on-change="onExpertImportFileChange"
+        :on-remove="onExpertImportFileRemove"
+        :file-list="expertImportDialog.fileList"
+      >
+        <el-icon class="el-icon--upload"><Upload /></el-icon>
+        <div class="el-upload__text">将 Excel 拖到此处，或<em>点击选择</em></div>
+        <template #tip>
+          <div class="el-upload__tip">字段：姓名、专业领域、工作单位、工作职务、职称、手机、个人简介、专家类型</div>
+        </template>
+      </el-upload>
+
+      <el-alert
+        v-if="expertImportDialog.result"
+        :title="getExpertImportAlertTitle(expertImportDialog.result)"
+        :type="getExpertImportAlertType(expertImportDialog.result)"
+        :description="expertImportDialog.result.message"
+        show-icon
+        :closable="false"
+        style="margin-bottom: 16px"
+      />
+
+      <div v-if="expertImportDialog.result" class="import-result-panel">
+        <el-table
+          v-if="expertImportDialog.result.data?.successes?.length"
+          :data="expertImportDialog.result.data.successes"
+          size="small"
+          max-height="220"
+          style="margin-top: 12px"
+        >
+          <el-table-column prop="rowNumber" label="行号" width="60" />
+          <el-table-column prop="name" label="姓名" width="90" />
+          <el-table-column prop="username" label="用户名" width="120" />
+          <el-table-column prop="defaultPassword" label="初始密码" width="120" />
+          <el-table-column prop="phone" label="手机" width="120" />
+        </el-table>
+        <el-table
+          v-if="expertImportDialog.result.data?.failures?.length"
+          :data="expertImportDialog.result.data.failures"
+          size="small"
+          max-height="160"
+          style="margin-top: 12px"
+        >
+          <el-table-column prop="rowNumber" label="行号" width="60" />
+          <el-table-column prop="name" label="姓名" width="90" />
+          <el-table-column prop="error" label="失败原因" min-width="200" />
+        </el-table>
+      </div>
+
+      <template #footer>
+        <el-button @click="expertImportDialog.visible = false">关闭</el-button>
+        <el-button @click="downloadExpertImportTemplate">下载模板</el-button>
+        <el-button
+          type="primary"
+          :loading="expertImportDialog.loading"
+          :disabled="!expertImportDialog.file"
+          @click="submitExpertImport"
+        >
+          开始导入
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import { ElMessage, ElMessageBox, ElNotification, type FormInstance } from 'element-plus'
 import request from '@/utils/request'
 import {
   Search,
   Plus,
   Download,
   Refresh,
+  Upload,
+  ArrowDown,
   User,
   Star,
   Setting,
   Lock,
   Check,
+  Wallet,
   More,
   Message,
   UserFilled,
@@ -517,8 +659,26 @@ const stats = reactive({
   totalApplicants: 0,
   totalReviewers: 0,
   totalAssistants: 0,
+  totalFundsManagers: 0,
   totalAdmins: 0,
   activeUsers: 0,
+})
+
+const activeStatFilter = reactive({ type: '' as '' | 'role' | 'status', value: '' })
+
+const listContainerRef = ref<HTMLElement | null>(null)
+
+const activeFilterLabel = computed(() => {
+  if (activeStatFilter.type === 'role') {
+    return getRoleText(activeStatFilter.value)
+  }
+  if (activeStatFilter.type === 'status') {
+    return activeStatFilter.value === 'active' ? '活跃用户' : '非活跃用户'
+  }
+  if (filter.role) return getRoleText(filter.role)
+  if (filter.status) return filter.status === 'active' ? '活跃用户' : '非活跃用户'
+  if (filter.keyword) return `关键词「${filter.keyword}」`
+  return ''
 })
 
 // 用户数据
@@ -529,6 +689,7 @@ const dialog = reactive({
   visible: false,
   loading: false,
   isEdit: false,
+  editUserId: '',
   form: {
     username: '',
     password: '',
@@ -612,8 +773,9 @@ const getInitial = (name: string) => {
 const getRoleText = (role: string) => {
   const map: Record<string, string> = {
     applicant: '申请人',
-    reviewer: '评审专家',
+    reviewer: '专家顾问',
     project_manager: '科研助理',
+    funds_manager: '经费管理员',
     admin: '管理员',
   }
   return map[role] || role
@@ -624,6 +786,7 @@ const getRoleTagType = (role: string) => {
     applicant: 'primary',
     reviewer: 'success',
     project_manager: 'warning',
+    funds_manager: 'info',
     admin: 'danger',
   }
   return map[role] || 'info'
@@ -672,11 +835,6 @@ const loadUsers = async () => {
     if (response.success) {
       users.value = response.data.users
       pagination.total = response.data.pagination.total
-
-      // 更新统计数据
-      if (response.data.stats) {
-        Object.assign(stats, response.data.stats)
-      }
     }
   } catch (error) {
     console.error('加载用户数据失败:', error)
@@ -690,15 +848,40 @@ const loadStats = async () => {
   try {
     const response = await request.get('/api/assistant/users/stats')
     if (response.success) {
-      Object.assign(stats, response.data)
+      Object.assign(stats, response.data.overview || response.data)
+      return
     }
   } catch (error) {
     console.error('加载统计数据失败:', error)
   }
+
+  // stats 接口异常时，从未筛选的列表接口兜底
+  try {
+    const fallback = await request.get('/api/assistant/users', { params: { page: 1, pageSize: 1 } })
+    if (fallback.success && fallback.data?.stats) {
+      Object.assign(stats, fallback.data.stats)
+    }
+  } catch (error) {
+    console.error('加载统计兜底数据失败:', error)
+  }
+}
+
+const scrollToList = () => {
+  listContainerRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 // 搜索和筛选
 const handleSearch = () => {
+  if (filter.role) {
+    activeStatFilter.type = 'role'
+    activeStatFilter.value = filter.role
+  } else if (filter.status) {
+    activeStatFilter.type = 'status'
+    activeStatFilter.value = filter.status
+  } else if (!filter.keyword) {
+    activeStatFilter.type = ''
+    activeStatFilter.value = ''
+  }
   pagination.current = 1
   loadUsers()
 }
@@ -708,20 +891,54 @@ const resetFilters = () => {
   filter.role = ''
   filter.status = ''
   filter.department = ''
+  activeStatFilter.type = ''
+  activeStatFilter.value = ''
   pagination.current = 1
   loadUsers()
 }
 
 const filterByRole = (role: string) => {
-  filter.role = role
+  if (activeStatFilter.type === 'role' && activeStatFilter.value === role) {
+    filter.role = ''
+    filter.keyword = ''
+    activeStatFilter.type = ''
+    activeStatFilter.value = ''
+  } else {
+    filter.role = role
+    filter.status = ''
+    filter.keyword = ''
+    activeStatFilter.type = 'role'
+    activeStatFilter.value = role
+  }
   pagination.current = 1
-  loadUsers()
+  loadUsers().then(() => {
+    scrollToList()
+    if (filter.role) {
+      ElMessage.success(`已筛选：${getRoleText(filter.role)}`)
+    }
+  })
 }
 
 const filterByStatus = (status: string) => {
-  filter.status = status
+  if (activeStatFilter.type === 'status' && activeStatFilter.value === status) {
+    filter.status = ''
+    filter.keyword = ''
+    activeStatFilter.type = ''
+    activeStatFilter.value = ''
+  } else {
+    filter.status = status
+    filter.role = ''
+    filter.keyword = ''
+    activeStatFilter.type = 'status'
+    activeStatFilter.value = status
+  }
   pagination.current = 1
-  loadUsers()
+  loadUsers().then(() => {
+    scrollToList()
+    if (filter.status) {
+      ElMessage.success(`已筛选：${status === 'active' ? '活跃用户' : '非活跃用户'}`)
+    }
+  })
 }
 
 // 分页处理
@@ -738,11 +955,12 @@ const handleCurrentChange = (page: number) => {
 
 // 用户操作
 const viewUserDetail = (user: any) => {
-  router.push(`/assistant/users/${user.id}`)
+  editUser(user)
 }
 
 const editUser = (user: any) => {
   dialog.isEdit = true
+  dialog.editUserId = user.id
   dialog.visible = true
 
   // 填充表单数据
@@ -755,7 +973,7 @@ const editUser = (user: any) => {
     title: user.title || '',
     research_field: user.research_field || '',
     phone: user.phone || '',
-    status: user.status,
+    status: user.status === 'pending' ? 'inactive' : user.status,
     expert_types: Array.isArray(user.expert_types) ? [...user.expert_types] : [],
     password: '',
     confirmPassword: '',
@@ -764,6 +982,7 @@ const editUser = (user: any) => {
 
 const openCreateDialog = () => {
   dialog.isEdit = false
+  dialog.editUserId = ''
   dialog.visible = true
 
   // 重置表单
@@ -802,9 +1021,14 @@ const submitUserForm = async () => {
 
     const formData = { ...dialog.form }
     delete formData.confirmPassword
+    if (formData.status === 'pending') formData.status = 'inactive'
+    if (dialog.isEdit) {
+      delete formData.username
+      delete formData.password
+    }
 
     const url = dialog.isEdit
-      ? `/api/assistant/users/${getCurrentEditUserId()}`
+      ? `/api/assistant/users/${dialog.editUserId}`
       : '/api/assistant/users'
 
     const method = dialog.isEdit ? 'put' : 'post'
@@ -824,11 +1048,6 @@ const submitUserForm = async () => {
   } finally {
     dialog.loading = false
   }
-}
-
-const getCurrentEditUserId = () => {
-  const user = users.value.find((u) => u.username === dialog.form.username)
-  return user?.id || ''
 }
 
 const handleStatusChange = async (user: any) => {
@@ -932,6 +1151,141 @@ const exportUsers = async () => {
   }
 }
 
+const EXPERT_IMPORT_API = '/api/assistant/users/expert-import'
+
+const expertImportDialog = reactive({
+  visible: false,
+  loading: false,
+  file: null as File | null,
+  fileList: [] as any[],
+  result: null as any,
+})
+
+const handleExpertImportCommand = (command: string) => {
+  if (command === 'download-template') {
+    downloadExpertImportTemplate()
+  } else if (command === 'open-import') {
+    resetExpertImportDialog()
+    expertImportDialog.visible = true
+  }
+}
+
+const downloadExpertImportTemplate = async () => {
+  try {
+    const blob = await request.get(`${EXPERT_IMPORT_API}/template`, { responseType: 'blob' })
+    const url = window.URL.createObjectURL(new Blob([blob]))
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', '专家顾问批量导入模板.xlsx')
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('模板下载成功')
+  } catch (error) {
+    console.error('下载模板失败:', error)
+    ElMessage.error('下载模板失败')
+  }
+}
+
+const onExpertImportFileChange = (uploadFile: any) => {
+  expertImportDialog.file = uploadFile.raw || null
+  expertImportDialog.fileList = uploadFile.raw ? [uploadFile] : []
+  expertImportDialog.result = null
+}
+
+const onExpertImportFileRemove = () => {
+  expertImportDialog.file = null
+  expertImportDialog.fileList = []
+  expertImportDialog.result = null
+}
+
+const resetExpertImportDialog = () => {
+  expertImportDialog.loading = false
+  expertImportDialog.file = null
+  expertImportDialog.fileList = []
+  expertImportDialog.result = null
+}
+
+const getExpertImportAlertType = (result: any) => {
+  const ok = result?.data?.successCount ?? 0
+  const fail = result?.data?.failCount ?? 0
+  if (ok > 0 && fail === 0) return 'success'
+  if (ok > 0) return 'warning'
+  return 'error'
+}
+
+const getExpertImportAlertTitle = (result: any) => {
+  const ok = result?.data?.successCount ?? 0
+  const fail = result?.data?.failCount ?? 0
+  if (ok > 0 && fail === 0) return '导入成功'
+  if (ok > 0) return '部分导入成功'
+  return '导入失败'
+}
+
+const notifyExpertImportResult = (response: any) => {
+  const ok = response?.data?.successCount ?? 0
+  const fail = response?.data?.failCount ?? 0
+  if (ok > 0 && fail === 0) {
+    ElNotification({
+      title: '导入成功',
+      message: `已成功导入 ${ok} 位专家顾问（默认未激活），请在下方查看用户名与初始密码，激活后即可登录。`,
+      type: 'success',
+      duration: 6000,
+    })
+    ElMessage.success(`导入成功，共 ${ok} 位专家顾问（默认未激活）`)
+    return
+  }
+  if (ok > 0) {
+    ElNotification({
+      title: '部分导入成功',
+      message: `成功 ${ok} 条，失败 ${fail} 条，请查看下方明细。`,
+      type: 'warning',
+      duration: 6000,
+    })
+    ElMessage.warning(`部分导入成功：成功 ${ok} 条，失败 ${fail} 条`)
+    return
+  }
+  ElNotification({
+    title: '导入失败',
+    message: response?.message || '没有成功导入任何专家顾问',
+    type: 'error',
+    duration: 6000,
+  })
+  ElMessage.error(response?.message || '导入失败')
+}
+
+const submitExpertImport = async () => {
+  if (!expertImportDialog.file) {
+    ElMessage.warning('请先选择 Excel 文件')
+    return
+  }
+  expertImportDialog.loading = true
+  expertImportDialog.result = null
+  try {
+    const formData = new FormData()
+    formData.append('file', expertImportDialog.file)
+    const response = await request.post(EXPERT_IMPORT_API, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    if (response.success) {
+      expertImportDialog.result = response
+      expertImportDialog.file = null
+      expertImportDialog.fileList = []
+      notifyExpertImportResult(response)
+      loadUsers()
+      loadStats()
+    } else {
+      ElMessage.error(response.error || '导入失败')
+    }
+  } catch (error: any) {
+    if (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '')) return
+    ElMessage.error(error.response?.data?.error || error.message || '导入失败')
+  } finally {
+    expertImportDialog.loading = false
+  }
+}
+
 const refreshData = () => {
   loadUsers()
   loadStats()
@@ -949,6 +1303,16 @@ onMounted(() => {
   padding: 20px;
   background: #f5f7fa;
   min-height: calc(100vh - 70px);
+}
+
+.import-result-panel {
+  margin-top: 16px;
+}
+
+.import-result-summary {
+  margin: 0;
+  font-size: 14px;
+  color: #333;
 }
 
 /* 顶部标题栏 */
@@ -1021,7 +1385,7 @@ onMounted(() => {
 /* 统计卡片 */
 .stats-cards {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -1041,6 +1405,24 @@ onMounted(() => {
 .stat-card:hover {
   transform: translateY(-4px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.stat-card.active {
+  border: 2px solid #b31b1b;
+  background: rgba(179, 27, 27, 0.04);
+}
+
+.active-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding: 10px 16px;
+  background: rgba(179, 27, 27, 0.06);
+  border: 1px solid rgba(179, 27, 27, 0.15);
+  border-radius: 8px;
+  color: #b31b1b;
+  font-size: 14px;
 }
 
 .stat-icon {

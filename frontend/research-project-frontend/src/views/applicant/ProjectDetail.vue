@@ -264,7 +264,7 @@
       <!-- 评审意见 -->
       <div v-if="activeTab === 'reviews'" class="tab-panel">
         <div class="section">
-          <h3>评审专家意见</h3>
+          <h3>专家顾问意见</h3>
           <div v-if="reviewFeedback.length === 0" class="empty-state">
             <p>暂无评审意见</p>
             <p class="hint" v-if="project && ['submitted', 'under_review'].includes(project.status)">
@@ -285,7 +285,7 @@
               <div class="reviewer-info-section">
                 <div class="info-row">
                   <div class="info-item">
-                    <span class="info-label">评审专家</span>
+                    <span class="info-label">专家顾问</span>
                     <span class="info-value name">{{ review.reviewer_name || '未知专家' }}</span>
                   </div>
                   <div class="info-item">
@@ -330,7 +330,7 @@
       <div v-if="activeTab === 'incubationAchievements'" class="tab-panel">
         <div class="section">
           <h3>活动</h3>
-          <p class="section-desc">本项目已通过审批的活动记录。登记新活动请前往工作台「快速操作 → 活动登记」。</p>
+          <p class="section-desc">本项目已通过审批的路演、产业交流等推广对接类活动记录。登记新活动请前往工作台「快速操作 → 活动登记」。</p>
           <ProjectIncubationAchievementsPanel v-if="project" :project-id="project.id" />
         </div>
       </div>
@@ -1011,7 +1011,7 @@ const getMemberRoleClass = (role?: string) => {
 const getUserRoleText = (role?: string) => {
   const roleMap: Record<string, string> = {
     applicant: '申请人',
-    reviewer: '评审专家',
+    reviewer: '专家顾问',
     project_manager: '项目经理',
     admin: '管理员',
   }

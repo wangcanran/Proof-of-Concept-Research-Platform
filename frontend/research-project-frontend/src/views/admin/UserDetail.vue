@@ -50,7 +50,7 @@
       </div>
 
       <!-- 用户信息标签页 -->
-      <el-tabs v-model="activeTab" class="user-tabs">
+      <el-tabs v-model="activeTab" class="user-tabs" @tab-change="handleTabChange">
         <el-tab-pane label="基本信息" name="basic">
           <div class="info-grid">
             <div class="info-item">
@@ -273,10 +273,14 @@ const fetchUserDetail = async () => {
   loading.value = true
   try {
     const response = await request({
-      url: `/admin/users/${userId.value}`,
+      url: `/api/admin/users/${userId.value}`,
       method: 'GET',
     })
-    userData.value = response
+    if (response?.success) {
+      userData.value = response.data
+    } else {
+      ElMessage.error(response?.error || '获取用户详情失败')
+    }
   } catch (error) {
     console.error('获取用户详情失败:', error)
     ElMessage.error('获取用户详情失败')
@@ -289,10 +293,12 @@ const fetchUserDetail = async () => {
 const fetchUserProjects = async () => {
   try {
     const response = await request({
-      url: `/admin/users/${userId.value}/projects`,
+      url: `/api/admin/users/${userId.value}/projects`,
       method: 'GET',
     })
-    userProjects.value = response || []
+    if (response?.success) {
+      userProjects.value = response.data || []
+    }
   } catch (error) {
     console.error('获取用户项目失败:', error)
   }
@@ -302,10 +308,12 @@ const fetchUserProjects = async () => {
 const fetchReviewRecords = async () => {
   try {
     const response = await request({
-      url: `/admin/users/${userId.value}/reviews`,
+      url: `/api/admin/users/${userId.value}/reviews`,
       method: 'GET',
     })
-    reviewRecords.value = response || []
+    if (response?.success) {
+      reviewRecords.value = response.data || []
+    }
   } catch (error) {
     console.error('获取评审记录失败:', error)
   }
@@ -321,11 +329,13 @@ const fetchUserLogs = async () => {
     }
 
     const response = await request({
-      url: `/admin/users/${userId.value}/logs`,
+      url: `/api/admin/users/${userId.value}/logs`,
       method: 'GET',
       params,
     })
-    userLogs.value = response || []
+    if (response?.success) {
+      userLogs.value = response.data || []
+    }
   } catch (error) {
     console.error('获取用户日志失败:', error)
   }
@@ -391,14 +401,18 @@ const toggleUserStatus = async () => {
 
     const newStatus = userData.value?.status === 'active' ? 'inactive' : 'active'
 
-    await request({
-      url: `/admin/users/${userId.value}/status`,
+    const response = await request({
+      url: `/api/admin/users/${userId.value}/status`,
       method: 'PUT',
       data: { status: newStatus },
     })
 
-    ElMessage.success('操作成功')
-    fetchUserDetail()
+    if (response?.success) {
+      ElMessage.success('操作成功')
+      fetchUserDetail()
+    } else {
+      ElMessage.error(response?.error || '操作失败')
+    }
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('操作失败')
@@ -409,22 +423,31 @@ const toggleUserStatus = async () => {
 // 重置用户密码
 const resetUserPassword = async () => {
   try {
-    await ElMessageBox.confirm(
-      `确定要重置用户 ${userData.value?.name} 的密码吗？重置后密码将设置为默认密码。`,
+    const { value: newPassword } = await ElMessageBox.prompt(
+      `请输入用户 ${userData.value?.name} 的新密码（至少 6 位）`,
       '重置密码',
       {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
-        type: 'warning',
+        inputType: 'password',
+        inputValidator: (val) => {
+          if (!val || val.length < 6) return '密码长度至少 6 位'
+          return true
+        },
       },
     )
 
-    await request({
-      url: `/admin/users/${userId.value}/reset-password`,
-      method: 'POST',
+    const response = await request({
+      url: `/api/admin/users/${userId.value}/reset-password`,
+      method: 'PUT',
+      data: { newPassword, notifyUser: true },
     })
 
-    ElMessage.success('密码重置成功')
+    if (response?.success) {
+      ElMessage.success('密码重置成功')
+    } else {
+      ElMessage.error(response?.error || '密码重置失败')
+    }
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('密码重置失败')
@@ -450,13 +473,17 @@ const deleteUser = async () => {
       },
     )
 
-    await request({
-      url: `/admin/users/${userId.value}`,
+    const response = await request({
+      url: `/api/admin/users/${userId.value}`,
       method: 'DELETE',
     })
 
-    ElMessage.success('删除成功')
-    router.push('/admin/users')
+    if (response?.success) {
+      ElMessage.success('删除成功')
+      router.push('/admin/users')
+    } else {
+      ElMessage.error(response?.error || '删除失败')
+    }
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('删除失败')
@@ -494,8 +521,9 @@ const goBack = () => {
 const getRoleText = (role: string) => {
   const roleMap: Record<string, string> = {
     applicant: '项目申请人',
-    reviewer: '评审专家',
+    reviewer: '专家顾问',
     project_manager: '科研助理',
+    funds_manager: '经费管理员',
     admin: '系统管理员',
   }
   return roleMap[role] || role
@@ -506,6 +534,7 @@ const getRoleTagType = (role: string) => {
     applicant: 'primary',
     reviewer: 'warning',
     project_manager: 'success',
+    funds_manager: 'info',
     admin: 'danger',
   }
   return typeMap[role] || 'info'
@@ -515,7 +544,6 @@ const getStatusText = (status: string) => {
   const statusMap: Record<string, string> = {
     active: '活跃',
     inactive: '非活跃',
-    pending: '待激活',
   }
   return statusMap[status] || status
 }

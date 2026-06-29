@@ -56,6 +56,30 @@
         </div>
 
         <div class="nav-section">
+          <h4 v-if="!sidebarCollapsed" class="nav-section-title">数据管理</h4>
+          <router-link to="/admin/achievements" class="nav-link" active-class="active">
+            <span class="nav-icon">📜</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">科研成果</span>
+          </router-link>
+          <router-link to="/admin/transformation-achievements" class="nav-link" active-class="active">
+            <span class="nav-icon">🔄</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">转化成果</span>
+          </router-link>
+          <router-link to="/admin/enterprise-service-achievements" class="nav-link" active-class="active">
+            <span class="nav-icon">🏢</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">企业服务成果</span>
+          </router-link>
+          <router-link to="/admin/experts" class="nav-link" active-class="active">
+            <span class="nav-icon">🎓</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">专家资源库</span>
+          </router-link>
+          <router-link to="/admin/service-providers" class="nav-link" active-class="active">
+            <span class="nav-icon">🏛️</span>
+            <span v-if="!sidebarCollapsed" class="nav-text">服务资源库</span>
+          </router-link>
+        </div>
+
+        <div class="nav-section">
           <h4 v-if="!sidebarCollapsed" class="nav-section-title">个人中心</h4>
           <router-link to="/profile" class="nav-link" active-class="active">
             <span class="nav-icon">👤</span>

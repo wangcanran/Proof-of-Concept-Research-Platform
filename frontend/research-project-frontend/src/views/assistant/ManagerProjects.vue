@@ -146,7 +146,7 @@
               <span class="meta-value">{{ project.research_field || '未指定' }}</span>
             </div>
             <div class="meta-item">
-              <span class="meta-label">评审专家：</span>
+              <span class="meta-label">专家顾问：</span>
               <span class="meta-value">{{ project.expert_count || 0 }} 人</span>
             </div>
           </div>

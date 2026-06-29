@@ -44,6 +44,7 @@
 
         <el-button type="primary" class="ruc-btn-primary" @click="loadList" :icon="Search">搜索</el-button>
         <el-button @click="resetFilters">重置</el-button>
+        <el-button v-if="isAdmin" :loading="exporting" :icon="Download" @click="handleExport">导出</el-button>
       </div>
     </div>
 
@@ -116,14 +117,18 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, ArrowLeft, View } from '@element-plus/icons-vue'
+import { Plus, Search, ArrowLeft, View, Download } from '@element-plus/icons-vue'
 import request from '@/utils/request'
+import { useIsAdmin } from '@/composables/useIsAdmin'
+import { adminExportExcel } from '@/utils/exportDownload'
 import {
   SERVICE_PROVIDER_CATEGORIES,
   parseCategoryList,
 } from '@/constants/serviceProviderCategories'
 
 const router = useRouter()
+const { isAdmin } = useIsAdmin()
+const exporting = ref(false)
 const loading = ref(false)
 const providerList = ref<any[]>([])
 const total = ref(0)
@@ -188,7 +193,27 @@ function goView(id: string) {
   router.push(`/assistant/service-providers/${id}`)
 }
 function goDashboard() {
-  router.push('/assistant/dashboard')
+  router.push(isAdmin.value ? '/admin/dashboard' : '/assistant/dashboard')
+}
+
+async function handleExport() {
+  exporting.value = true
+  try {
+    await adminExportExcel(
+      request,
+      '/api/admin/export/service-providers',
+      {
+        keyword: filters.value.keyword || undefined,
+        category: filters.value.category || undefined,
+      },
+      `服务资源库导出_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    )
+    ElMessage.success('导出成功')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
 }
 
 async function handleDelete(row: any) {

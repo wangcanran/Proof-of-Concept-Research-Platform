@@ -423,7 +423,7 @@ const currentDate = computed(() => {
 const getRoleText = (role: string) => {
   const roleMap: Record<string, string> = {
     applicant: '申请人',
-    reviewer: '评审专家',
+    reviewer: '专家顾问',
     project_manager: '科研助理',
     admin: '管理员',
   }

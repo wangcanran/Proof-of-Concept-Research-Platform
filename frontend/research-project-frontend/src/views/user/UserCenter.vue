@@ -368,7 +368,7 @@ const isReviewer = computed(() => profile.value.role === 'reviewer')
 const roleLabel = computed(() => {
   const map: Record<string, string> = {
     applicant: '申请人',
-    reviewer: '评审专家',
+    reviewer: '专家顾问',
     project_manager: '项目经理',
     admin: '系统管理员',
     funds_manager: '经费管理员',

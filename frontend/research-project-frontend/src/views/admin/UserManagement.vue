@@ -4,12 +4,23 @@
     <!-- 页面标题栏 -->
     <div class="page-header">
       <div class="header-left">
-        <h1 class="page-title">用户管理</h1>
-        <div class="page-description">管理系统中的所有用户账户和权限</div>
+        <h1 class="page-title">{{ pageTitle }}</h1>
+        <div class="page-description">{{ pageDescription }}</div>
       </div>
       <div class="header-right">
         <el-button type="primary" @click="openCreateDialog" :icon="Plus"> 新增用户 </el-button>
-        <el-button @click="exportUsers" :icon="Download">导出用户</el-button>
+        <el-button @click="exportUsers" :icon="Download">导出</el-button>
+        <el-dropdown @command="handleExpertImportCommand">
+          <el-button :icon="Upload">
+            批量导入专家顾问 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="download-template">下载 Excel 模板</el-dropdown-item>
+              <el-dropdown-item command="open-import">上传 Excel 导入</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button @click="refreshData" :icon="Refresh">刷新</el-button>
         <el-dropdown @command="handleBatchCommand">
           <el-button :icon="Operation"> 批量操作 </el-button>
@@ -67,8 +78,9 @@
           @change="handleSearch"
         >
           <el-option label="申请人" value="applicant" />
-          <el-option label="评审专家" value="reviewer" />
+          <el-option label="专家顾问" value="reviewer" />
           <el-option label="科研助理" value="project_manager" />
+          <el-option label="经费管理员" value="funds_manager" />
           <el-option label="管理员" value="admin" />
         </el-select>
 
@@ -84,7 +96,6 @@
         >
           <el-option label="活跃" value="active" />
           <el-option label="非活跃" value="inactive" />
-          <el-option label="待激活" value="pending" />
         </el-select>
 
         <el-select
@@ -216,8 +227,8 @@
         <span class="stat-value">{{ stats.activeCount || 0 }}</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label">待激活：</span>
-        <span class="stat-value">{{ stats.pendingCount || 0 }}</span>
+        <span class="stat-label">非活跃：</span>
+        <span class="stat-value">{{ stats.inactiveCount || 0 }}</span>
       </div>
     </div>
 
@@ -248,7 +259,7 @@
                 <div class="user-avatar-small">{{ getInitial(row.name) }}</div>
                 <div class="user-info">
                   <div class="user-name">{{ row.name }}</div>
-                  <div class="user-username">@{{ row.username }}</div>
+                  <div class="user-username">{{ '@' + row.username }}</div>
                 </div>
               </div>
             </template>
@@ -394,7 +405,7 @@
               </div>
               <div class="user-basic-info">
                 <h3 class="user-name">{{ user.name }}</h3>
-                <p class="user-username">@{{ user.username }}</p>
+                <p class="user-username">{{ '@' + user.username }}</p>
                 <div class="user-role">
                   <el-tag :type="getRoleTagType(user.role)" size="small">
                     {{ getRoleText(user.role) }}
@@ -562,8 +573,9 @@
             <el-form-item label="角色" prop="role">
               <el-select v-model="dialog.form.role" placeholder="请选择角色" style="width: 100%">
                 <el-option label="申请人" value="applicant" />
-                <el-option label="评审专家" value="reviewer" />
+                <el-option label="专家顾问" value="reviewer" />
                 <el-option label="科研助理" value="project_manager" />
+                <el-option label="经费管理员" value="funds_manager" />
                 <el-option label="管理员" value="admin" />
               </el-select>
             </el-form-item>
@@ -572,7 +584,6 @@
               <el-radio-group v-model="dialog.form.status">
                 <el-radio label="active">活跃</el-radio>
                 <el-radio label="inactive">非活跃</el-radio>
-                <el-radio label="pending">待激活</el-radio>
               </el-radio-group>
             </el-form-item>
           </el-tab-pane>
@@ -600,6 +611,15 @@
 
             <el-form-item label="联系电话" prop="phone">
               <el-input v-model="dialog.form.phone" placeholder="请输入联系电话" />
+            </el-form-item>
+
+            <el-form-item v-if="dialog.form.role === 'reviewer'" label="专家类型">
+              <el-checkbox-group v-model="dialog.form.expert_types">
+                <el-checkbox label="technical">技术专家</el-checkbox>
+                <el-checkbox label="industry">产业专家</el-checkbox>
+                <el-checkbox label="investment">投资专家</el-checkbox>
+                <el-checkbox label="tech_service">科技服务专家</el-checkbox>
+              </el-checkbox-group>
             </el-form-item>
 
             <el-form-item label="个人简介" prop="bio">
@@ -787,20 +807,103 @@
         </span>
       </template>
     </el-dialog>
+
+    <!-- 专家顾问批量导入 -->
+    <el-dialog
+      v-model="expertImportDialog.visible"
+      title="批量导入专家顾问"
+      width="720px"
+      @closed="resetExpertImportDialog"
+    >
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="请先下载模板，按列填写后上传。系统将自动创建专家顾问账号（角色 reviewer），并生成初始登录密码。导入账号默认为未激活，需激活后方可登录。"
+        style="margin-bottom: 16px"
+      />
+      <el-upload
+        drag
+        accept=".xlsx,.xls"
+        :auto-upload="false"
+        :limit="1"
+        :on-change="onExpertImportFileChange"
+        :on-remove="onExpertImportFileRemove"
+        :file-list="expertImportDialog.fileList"
+      >
+        <el-icon class="el-icon--upload"><Upload /></el-icon>
+        <div class="el-upload__text">将 Excel 拖到此处，或<em>点击选择</em></div>
+        <template #tip>
+          <div class="el-upload__tip">字段：姓名、专业领域、工作单位、工作职务、职称、手机、个人简介、专家类型</div>
+        </template>
+      </el-upload>
+
+      <el-alert
+        v-if="expertImportDialog.result"
+        :title="getExpertImportAlertTitle(expertImportDialog.result)"
+        :type="getExpertImportAlertType(expertImportDialog.result)"
+        :description="expertImportDialog.result.message"
+        show-icon
+        :closable="false"
+        style="margin-bottom: 16px"
+      />
+
+      <div v-if="expertImportDialog.result" class="import-result-panel">
+        <el-table
+          v-if="expertImportDialog.result.data?.successes?.length"
+          :data="expertImportDialog.result.data.successes"
+          size="small"
+          max-height="220"
+          style="margin-top: 12px"
+        >
+          <el-table-column prop="rowNumber" label="行号" width="60" />
+          <el-table-column prop="name" label="姓名" width="90" />
+          <el-table-column prop="username" label="用户名" width="120" />
+          <el-table-column prop="defaultPassword" label="初始密码" width="120" />
+          <el-table-column prop="phone" label="手机" width="120" />
+        </el-table>
+        <el-table
+          v-if="expertImportDialog.result.data?.failures?.length"
+          :data="expertImportDialog.result.data.failures"
+          size="small"
+          max-height="160"
+          style="margin-top: 12px"
+        >
+          <el-table-column prop="rowNumber" label="行号" width="60" />
+          <el-table-column prop="name" label="姓名" width="90" />
+          <el-table-column prop="error" label="失败原因" min-width="200" />
+        </el-table>
+      </div>
+
+      <template #footer>
+        <el-button @click="expertImportDialog.visible = false">关闭</el-button>
+        <el-button @click="downloadExpertImportTemplate">下载模板</el-button>
+        <el-button
+          type="primary"
+          :loading="expertImportDialog.loading"
+          :disabled="!expertImportDialog.file"
+          @click="submitExpertImport"
+        >
+          开始导入
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import { useRouter, useRoute } from 'vue-router'
+import { ElMessage, ElMessageBox, ElNotification, type FormInstance } from 'element-plus'
 import { useClipboard } from '@vueuse/core'
 import request from '@/utils/request'
+import { adminExportExcel } from '@/utils/exportDownload'
 import {
   Search,
   Plus,
   Download,
   Refresh,
+  Upload,
   Operation,
   ArrowDown,
   More,
@@ -812,7 +915,18 @@ import {
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
+const route = useRoute()
 const { copy } = useClipboard()
+
+const isExpertsPage = computed(
+  () => route.name === 'AdminExperts' || route.meta?.preset === 'experts',
+)
+const pageTitle = computed(() => (isExpertsPage.value ? '专家资源库' : '用户管理'))
+const pageDescription = computed(() =>
+  isExpertsPage.value
+    ? '查看与管理平台专家顾问资源，支持按条件筛选并导出'
+    : '管理系统中的所有用户账户和权限，支持按角色筛选并导出',
+)
 
 // 响应式数据
 const loading = ref(false)
@@ -933,6 +1047,7 @@ const dialog = reactive({
   visible: false,
   loading: false,
   isEdit: false,
+  editUserId: '',
   activeTab: 'basic',
   form: {
     username: '',
@@ -947,6 +1062,7 @@ const dialog = reactive({
     phone: '',
     bio: '',
     status: 'active',
+    expert_types: [] as string[],
     permissions: [] as string[],
   },
   rules: {
@@ -1034,7 +1150,7 @@ const resetPasswordDialog = reactive({
 const batchDialog = reactive({
   visible: false,
   loading: false,
-  type: '' as 'status' | 'reset-password' | 'delete',
+  type: '' as ('status' | 'reset-password' | 'delete'),
   title: '',
   form: {
     status: 'active',
@@ -1054,8 +1170,9 @@ const getInitial = (name: string) => {
 const getRoleText = (role: string) => {
   const map: Record<string, string> = {
     applicant: '申请人',
-    reviewer: '评审专家',
+    reviewer: '专家顾问',
     project_manager: '科研助理',
+    funds_manager: '经费管理员',
     admin: '管理员',
   }
   return map[role] || role
@@ -1066,6 +1183,7 @@ const getRoleTagType = (role: string) => {
     applicant: 'primary',
     reviewer: 'success',
     project_manager: 'warning',
+    funds_manager: 'info',
     admin: 'danger',
   }
   return map[role] || 'info'
@@ -1085,7 +1203,7 @@ const getStatusText = (status: string) => {
   const map: Record<string, string> = {
     active: '活跃',
     inactive: '非活跃',
-    pending: '待激活',
+    pending: '非活跃',
   }
   return map[status] || status
 }
@@ -1300,6 +1418,7 @@ const viewUserDetail = (user: any) => {
 
 const editUser = (user: any) => {
   dialog.isEdit = true
+  dialog.editUserId = user.id
   dialog.visible = true
   dialog.activeTab = 'basic'
 
@@ -1314,7 +1433,8 @@ const editUser = (user: any) => {
     research_field: user.research_field || '',
     phone: user.phone || '',
     bio: user.bio || '',
-    status: user.status,
+    status: user.status === 'pending' ? 'inactive' : user.status,
+    expert_types: Array.isArray(user.expert_types) ? [...user.expert_types] : [],
     permissions: user.permissions || [],
     password: '',
     confirmPassword: '',
@@ -1323,6 +1443,7 @@ const editUser = (user: any) => {
 
 const openCreateDialog = () => {
   dialog.isEdit = false
+  dialog.editUserId = ''
   dialog.visible = true
   dialog.activeTab = 'basic'
 
@@ -1343,6 +1464,7 @@ const openCreateDialog = () => {
     phone: '',
     bio: '',
     status: 'active',
+    expert_types: [],
     permissions: [],
   }
 }
@@ -1374,8 +1496,15 @@ const submitUserForm = async () => {
 
     const formData = { ...dialog.form }
     delete formData.confirmPassword
+    delete formData.bio
+    delete formData.permissions
+    if (formData.status === 'pending') formData.status = 'inactive'
+    if (dialog.isEdit) {
+      delete formData.username
+      delete formData.password
+    }
 
-    const url = dialog.isEdit ? `/api/admin/users/${getCurrentEditUserId()}` : '/api/admin/users'
+    const url = dialog.isEdit ? `/api/admin/users/${dialog.editUserId}` : '/api/admin/users'
 
     const method = dialog.isEdit ? 'put' : 'post'
 
@@ -1393,11 +1522,6 @@ const submitUserForm = async () => {
   } finally {
     dialog.loading = false
   }
-}
-
-const getCurrentEditUserId = () => {
-  const user = users.value.find((u) => u.username === dialog.form.username)
-  return user?.id || ''
 }
 
 const handleUserCommand = (command: string, user: any) => {
@@ -1651,33 +1775,27 @@ const batchDeleteUsers = async (userIds: string[], form: any) => {
   }
 }
 
-// 导出功能
+// 导出功能（Excel，按当前筛选条件）
 const exportUsers = async () => {
   try {
-    const params = {
+    const params: Record<string, string | undefined> = {
       keyword: filter.keyword || undefined,
-      role: filter.role.join(',') || undefined,
-      status: filter.status.join(',') || undefined,
+      status: filter.status.length ? filter.status.join(',') : undefined,
       department: filter.department || undefined,
     }
-
-    const response = await request.get('/api/admin/users/export', {
-      params,
-      responseType: 'blob',
-    })
-
-    const url = window.URL.createObjectURL(new Blob([response]))
-    const link = document.createElement('a')
-    link.href = url
-    link.setAttribute('download', `users_${new Date().getTime()}.xlsx`)
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-
-    ElMessage.success('用户数据导出成功')
-  } catch (error) {
+    let api = '/api/admin/users/export'
+    let filename = `用户数据导出_${new Date().toISOString().slice(0, 10)}.xlsx`
+    if (isExpertsPage.value) {
+      api = '/api/admin/export/experts'
+      filename = `专家资源库导出_${new Date().toISOString().slice(0, 10)}.xlsx`
+    } else if (filter.role.length) {
+      params.role = filter.role.join(',')
+    }
+    await adminExportExcel(request, api, params, filename)
+    ElMessage.success('导出成功')
+  } catch (error: any) {
     console.error('导出失败:', error)
-    ElMessage.error('导出失败')
+    ElMessage.error(error?.message || '导出失败')
   }
 }
 
@@ -1686,8 +1804,145 @@ const refreshData = () => {
   loadDepartments()
 }
 
+const EXPERT_IMPORT_API = '/api/admin/users/expert-import'
+
+const expertImportDialog = reactive({
+  visible: false,
+  loading: false,
+  file: null as File | null,
+  fileList: [] as any[],
+  result: null as any,
+})
+
+const handleExpertImportCommand = (command: string) => {
+  if (command === 'download-template') {
+    downloadExpertImportTemplate()
+  } else if (command === 'open-import') {
+    resetExpertImportDialog()
+    expertImportDialog.visible = true
+  }
+}
+
+const downloadExpertImportTemplate = async () => {
+  try {
+    const blob = await request.get(`${EXPERT_IMPORT_API}/template`, { responseType: 'blob' })
+    const url = window.URL.createObjectURL(new Blob([blob]))
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', '专家顾问批量导入模板.xlsx')
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('模板下载成功')
+  } catch (error) {
+    console.error('下载模板失败:', error)
+    ElMessage.error('下载模板失败')
+  }
+}
+
+const onExpertImportFileChange = (uploadFile: any) => {
+  expertImportDialog.file = uploadFile.raw || null
+  expertImportDialog.fileList = uploadFile.raw ? [uploadFile] : []
+  expertImportDialog.result = null
+}
+
+const onExpertImportFileRemove = () => {
+  expertImportDialog.file = null
+  expertImportDialog.fileList = []
+  expertImportDialog.result = null
+}
+
+const resetExpertImportDialog = () => {
+  expertImportDialog.loading = false
+  expertImportDialog.file = null
+  expertImportDialog.fileList = []
+  expertImportDialog.result = null
+}
+
+const getExpertImportAlertType = (result: any) => {
+  const ok = result?.data?.successCount ?? 0
+  const fail = result?.data?.failCount ?? 0
+  if (ok > 0 && fail === 0) return 'success'
+  if (ok > 0) return 'warning'
+  return 'error'
+}
+
+const getExpertImportAlertTitle = (result: any) => {
+  const ok = result?.data?.successCount ?? 0
+  const fail = result?.data?.failCount ?? 0
+  if (ok > 0 && fail === 0) return '导入成功'
+  if (ok > 0) return '部分导入成功'
+  return '导入失败'
+}
+
+const notifyExpertImportResult = (response: any) => {
+  const ok = response?.data?.successCount ?? 0
+  const fail = response?.data?.failCount ?? 0
+  if (ok > 0 && fail === 0) {
+    ElNotification({
+      title: '导入成功',
+      message: `已成功导入 ${ok} 位专家顾问（默认未激活），请在下方查看用户名与初始密码，激活后即可登录。`,
+      type: 'success',
+      duration: 6000,
+    })
+    ElMessage.success(`导入成功，共 ${ok} 位专家顾问（默认未激活）`)
+    return
+  }
+  if (ok > 0) {
+    ElNotification({
+      title: '部分导入成功',
+      message: `成功 ${ok} 条，失败 ${fail} 条，请查看下方明细。`,
+      type: 'warning',
+      duration: 6000,
+    })
+    ElMessage.warning(`部分导入成功：成功 ${ok} 条，失败 ${fail} 条`)
+    return
+  }
+  ElNotification({
+    title: '导入失败',
+    message: response?.message || '没有成功导入任何专家顾问',
+    type: 'error',
+    duration: 6000,
+  })
+  ElMessage.error(response?.message || '导入失败')
+}
+
+const submitExpertImport = async () => {
+  if (!expertImportDialog.file) {
+    ElMessage.warning('请先选择 Excel 文件')
+    return
+  }
+  expertImportDialog.loading = true
+  expertImportDialog.result = null
+  try {
+    const formData = new FormData()
+    formData.append('file', expertImportDialog.file)
+    const response = await request.post(EXPERT_IMPORT_API, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    if (response.success) {
+      expertImportDialog.result = response
+      expertImportDialog.file = null
+      expertImportDialog.fileList = []
+      notifyExpertImportResult(response)
+      loadUsers()
+    } else {
+      ElMessage.error(response.error || '导入失败')
+    }
+  } catch (error: any) {
+    if (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '')) return
+    ElMessage.error(error.response?.data?.error || error.message || '导入失败')
+  } finally {
+    expertImportDialog.loading = false
+  }
+}
+
 // 初始化
 onMounted(() => {
+  if (isExpertsPage.value) {
+    filter.role = ['reviewer']
+  }
   loadUsers()
   loadDepartments()
 })
@@ -1698,6 +1953,16 @@ watch(() => resetPasswordDialog.form.newPassword, checkPasswordStrength)
 </script>
 
 <style scoped>
+.import-result-panel {
+  margin-top: 16px;
+}
+
+.import-result-summary {
+  margin: 0;
+  font-size: 14px;
+  color: #333;
+}
+
 .user-management {
   min-height: 0;
 }

@@ -337,8 +337,8 @@ const routes: Array<RouteRecordRaw> = [
     },
   },
 
-  // ============ 评审专家路由 ============
-  // 评审专家路由
+  // ============ 专家顾问路由 ============
+  // 专家顾问路由
   {
     path: '/reviewer',
     name: 'ReviewerLayout',
@@ -350,7 +350,7 @@ const routes: Array<RouteRecordRaw> = [
         name: 'ReviewerDashboard',
         component: () => import('@/views/reviewer/ReviewerDashboard.vue'),
         meta: {
-          title: '评审专家工作台',
+          title: '专家顾问工作台',
           permissions: ['view_reviewer_dashboard'],
         },
       },
@@ -443,7 +443,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '科研助理工作台',
       requiresAuth: true,
-      role: ['project_manager'], // 注意：这里应该小写，与数据库一致
+      role: ['project_manager', 'admin'], // 注意：这里应该小写，与数据库一致
       permissions: ['view_assistant_dashboard'],
     },
   },
@@ -455,7 +455,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '项目管理',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
       permissions: ['view_applications', 'review_applications'],
     },
   },
@@ -467,7 +467,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '待领取项目',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
       permissions: ['view_applications', 'review_applications'],
     },
   },
@@ -479,7 +479,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '我的项目',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
       permissions: ['view_applications', 'review_applications'],
     },
   },
@@ -491,7 +491,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '项目详情',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
       permissions: ['view_application_detail', 'review_applications'],
     },
   },
@@ -511,7 +511,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '科研成果审核',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
       permissions: ['view_achievements', 'review_achievements'],
     },
   },
@@ -523,7 +523,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '科研成果审核',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -533,7 +533,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '转化成果审核',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -544,7 +544,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '转化成果审核',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -554,7 +554,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '企业服务成果审核',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -565,7 +565,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '企业服务成果审核',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -576,7 +576,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '活动审批',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -586,7 +586,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '活动审核',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -596,7 +596,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '用户管理',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
       permissions: ['view_users', 'manage_users'],
     },
   },
@@ -607,7 +607,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '邀请码管理',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -617,7 +617,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '活动日志',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
       permissions: ['view_activities'],
     },
   },
@@ -629,7 +629,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '终止项目',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   // 新闻公告管理
@@ -640,7 +640,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '新闻公告管理',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -650,7 +650,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '创建新闻',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -661,7 +661,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '编辑新闻',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -672,7 +672,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '查看新闻',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   // 服务资源库
@@ -683,7 +683,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '服务资源库',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -693,7 +693,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '新增服务资源',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -704,7 +704,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '编辑服务资源',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -715,7 +715,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '查看服务资源',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   // 产业资源管理
@@ -726,7 +726,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '产业资源管理',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -736,7 +736,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '创建产业资源',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -747,7 +747,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '编辑产业资源',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   {
@@ -758,7 +758,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '查看产业资源',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   // 孵化服务处理
@@ -769,7 +769,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '服务申请审批',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
       permissions: ['view_applications', 'review_applications'],
     },
   },
@@ -779,7 +779,7 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('../views/assistant/AuditProjects.vue'),
     meta: {
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
       permissions: ['audit_projects'],
     },
   },
@@ -790,7 +790,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '科研成果审核',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
       permissions: ['audit_achievements'],
     },
   },
@@ -801,7 +801,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: {
       title: '活动审核',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
     },
   },
   // 专家分配功能整合到项目管理中
@@ -811,9 +811,9 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('@/views/assistant/ReviewerAssignmentDetail.vue'),
     props: true,
     meta: {
-      title: '分配评审专家',
+      title: '分配专家顾问',
       requiresAuth: true,
-      role: ['project_manager'],
+      role: ['project_manager', 'admin'],
       permissions: ['manage_reviewer_assignment'],
     },
   },
@@ -895,6 +895,52 @@ const routes: Array<RouteRecordRaw> = [
         meta: {
           title: '角色权限管理',
           permissions: ['manage_roles'],
+        },
+      },
+      {
+        path: 'achievements',
+        name: 'AdminAchievements',
+        component: () => import('@/views/assistant/Achievements.vue'),
+        meta: {
+          title: '科研成果登记',
+          permissions: ['view_admin_dashboard'],
+        },
+      },
+      {
+        path: 'transformation-achievements',
+        name: 'AdminTransformationAchievements',
+        component: () => import('@/views/TransformationAchievement/TransformationAchievementsReview.vue'),
+        meta: {
+          title: '转化成果登记',
+          permissions: ['view_admin_dashboard'],
+        },
+      },
+      {
+        path: 'enterprise-service-achievements',
+        name: 'AdminEnterpriseServiceAchievements',
+        component: () => import('@/views/EnterpriseServiceAchievement/EnterpriseServiceAchievementsReview.vue'),
+        meta: {
+          title: '企业服务成果登记',
+          permissions: ['view_admin_dashboard'],
+        },
+      },
+      {
+        path: 'experts',
+        name: 'AdminExperts',
+        component: () => import('@/views/admin/UserManagement.vue'),
+        meta: {
+          title: '专家资源库',
+          preset: 'experts',
+          permissions: ['manage_users'],
+        },
+      },
+      {
+        path: 'service-providers',
+        name: 'AdminServiceProviders',
+        component: () => import('@/views/assistant/ServiceProviderManagement.vue'),
+        meta: {
+          title: '服务资源库',
+          permissions: ['view_admin_dashboard'],
         },
       },
       {

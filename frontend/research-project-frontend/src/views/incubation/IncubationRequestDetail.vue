@@ -188,19 +188,13 @@
                 {{ showExpertEditor ? '收起分配' : '调整专家分配' }}
               </button>
             </div>
-            <div class="content-box">
-              <div v-if="assignedExperts.length" class="expert-inline-list">
-                <div v-for="expert in assignedExperts" :key="expertKey(expert)" class="expert-inline-item">
-                  <span class="expert-inline-name">{{ expert.expert_name }}</span>
-                  <span
-                    v-for="t in getExpertProfileTypes(expert)"
-                    :key="t"
-                    class="inline-type-tag"
-                  >{{ expertTypeLabel(t) }}</span>
-                  <span v-if="!getExpertProfileTypes(expert).length" class="inline-type-tag empty">—</span>
-                </div>
-              </div>
-              <span v-else class="muted-text">—</span>
+            <div class="content-box content-box--assignments">
+              <IncubationAssignedExpertsDisplay
+                :experts="assignedExperts"
+                :editable="canManageExperts"
+                :progress-id="request.id"
+                @changed="onExpertsChanged"
+              />
             </div>
             <div v-if="canManageExperts && showExpertEditor" class="content-box expert-editor-box">
               <IncubationExpertAssignPanel
@@ -224,18 +218,13 @@
                 {{ showProviderEditor ? '收起分配' : '调整机构分配' }}
               </button>
             </div>
-            <div class="content-box">
-              <div v-if="assignedProviders.length" class="provider-inline-list">
-                <div v-for="provider in assignedProviders" :key="providerKey(provider)" class="provider-inline-item">
-                  <span class="provider-inline-name">{{ provider.provider_name || provider.name }}</span>
-                  <span
-                    v-for="cat in getProviderCategoryTags(provider.category)"
-                    :key="cat"
-                    class="inline-type-tag"
-                  >{{ cat }}</span>
-                </div>
-              </div>
-              <span v-else class="muted-text">—</span>
+            <div class="content-box content-box--assignments">
+              <IncubationAssignedServiceProvidersDisplay
+                :providers="assignedProviders"
+                :editable="canManageExperts"
+                :progress-id="request.id"
+                @changed="onProvidersChanged"
+              />
             </div>
             <div v-if="canManageExperts && showProviderEditor" class="content-box expert-editor-box">
               <IncubationServiceProviderAssignPanel
@@ -637,40 +626,6 @@ const getRequestStatusText = (req: { status: string; feedback_action?: string })
   return '待反馈'
 }
 
-const EXPERT_TYPE_LABELS: Record<string, string> = {
-  technical: '技术专家',
-  industry: '产业专家',
-  investment: '投资专家',
-  tech_service: '科技服务专家',
-}
-
-function expertKey(expert: { expert_id?: string; id?: string }) {
-  return expert.expert_id || expert.id || ''
-}
-
-function providerKey(provider: { service_provider_id?: string; id?: string }) {
-  return provider.service_provider_id || provider.id || ''
-}
-
-function getExpertProfileTypes(expert: Record<string, unknown>) {
-  const types =
-    (expert.profile_types as string[]) ||
-    (expert.profileTypes as string[]) ||
-    (expert.expert_types as string[]) ||
-    (expert.expertTypes as string[]) ||
-    (expert.expert_type ? [expert.expert_type as string] : [])
-  return Array.isArray(types) ? types.filter(Boolean) : []
-}
-
-function expertTypeLabel(t: string) {
-  return EXPERT_TYPE_LABELS[t] || t
-}
-
-function getProviderCategoryTags(category?: string) {
-  if (!category) return []
-  return category.split(/[,，;；]/).map((s) => s.trim()).filter(Boolean)
-}
-
 const getStatusClass = (status: string) => {
   const map: Record<string, string> = {
     pending: 'pending',
@@ -1021,6 +976,11 @@ onMounted(() => {
   background: #fafafa;
   padding: 12px 16px;
   border-radius: 6px;
+}
+
+.content-box--assignments {
+  padding: 8px 10px;
+  background: transparent;
 }
 
 .content-box.pre-wrap {

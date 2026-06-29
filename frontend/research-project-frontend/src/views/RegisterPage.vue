@@ -110,7 +110,7 @@
                 required
               />
               <p class="field-hint">
-                评审专家、项目经理与经费管理员须凭有效邀请码注册（由系统管理员或项目经理在「邀请码管理」中生成），邀请码与所选身份须一致。
+                专家顾问、项目经理与经费管理员须凭有效邀请码注册（由系统管理员或项目经理在「邀请码管理」中生成），邀请码与所选身份须一致。
               </p>
             </div>
 
@@ -175,7 +175,7 @@ const formData = ref({
 /** 自助注册可选身份（系统管理员仅可由超级管理员在后台创建，不提供自助注册） */
 const registerRoles = [
   { value: 'applicant', name: '项目申请人', icon: '📝' },
-  { value: 'reviewer', name: '评审专家', icon: '⭐' },
+  { value: 'reviewer', name: '专家顾问', icon: '⭐' },
   { value: 'project_manager', name: '项目经理', icon: '📊' },
   { value: 'funds_manager', name: '经费管理员', icon: '💰' },
 ]
@@ -226,7 +226,7 @@ const nextStep = async () => {
 
   if (currentStep.value === 2) {
     if (needsInvitationCode.value && !String(formData.value.invitationCode || '').trim()) {
-      registerError.value = '注册评审专家、项目经理或经费管理员必须填写邀请码'
+      registerError.value = '注册专家顾问、项目经理或经费管理员必须填写邀请码'
       return
     }
     if (!canRegister.value) {

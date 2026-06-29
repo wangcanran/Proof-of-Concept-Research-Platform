@@ -82,7 +82,7 @@
           </div>
           <h1 class="logo">科研项目管理系统</h1>
           <div class="breadcrumb">
-            <span class="current-page">评审专家工作台</span>
+            <span class="current-page">专家顾问工作台</span>
           </div>
         </div>
         <div class="header-right">
@@ -628,7 +628,7 @@ const userInitial = computed(() => {
 })
 
 const userRoleName = computed(() => {
-  return '评审专家'
+  return '专家顾问'
 })
 
 const currentDate = computed(() => {
@@ -1414,7 +1414,7 @@ const loadDashboardData = async () => {
   loading.value = true
 
   try {
-    console.log('正在获取评审专家仪表板数据...')
+    console.log('正在获取专家顾问仪表板数据...')
 
     // 测试系统连接
     await testSystemConnection()
@@ -1437,7 +1437,7 @@ const loadDashboardData = async () => {
       sessionStorage.clear()
       router.push('/login')
     } else if (error.response?.status === 403) {
-      ElMessage.error('没有权限访问评审专家工作台')
+      ElMessage.error('没有权限访问专家顾问工作台')
       router.push('/')
     } else {
       ElMessage.error('加载数据失败，将显示模拟数据')
@@ -1450,7 +1450,7 @@ const loadDashboardData = async () => {
 
 // 组件生命周期
 onMounted(() => {
-  console.log('=== 初始化评审专家工作台页面 ===')
+  console.log('=== 初始化专家顾问工作台页面 ===')
   console.log('当前路由路径:', route.path)
   console.log('用户角色期望: reviewer')
 
@@ -1464,7 +1464,7 @@ onMounted(() => {
 
     // 检查角色是否匹配
     if (userRole.value.toLowerCase() !== 'reviewer') {
-      console.warn(`⚠️ 警告：当前用户角色 "${userRole.value}" 不匹配评审专家角色`)
+      console.warn(`⚠️ 警告：当前用户角色 "${userRole.value}" 不匹配专家顾问角色`)
       ElMessage.warning(`检测到您是${userRoleName.value}，将跳转到对应工作台`)
 
       setTimeout(() => {

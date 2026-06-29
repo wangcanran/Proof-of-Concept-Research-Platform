@@ -18,6 +18,9 @@
           <input v-model="searchQuery" type="text" class="search-input" placeholder="搜索成果标题、项目名称" @keyup.enter="loadList" />
           <button type="button" class="search-btn" @click="loadList">搜索</button>
           <button type="button" class="reset-btn" @click="resetSearch">重置</button>
+          <button v-if="isAdmin" type="button" class="export-btn" :disabled="exporting" @click="handleExport">
+            {{ exporting ? '导出中…' : '导出' }}
+          </button>
         </div>
         <div class="filter-tabs">
           <button v-for="tab in statusTabs" :key="tab.value" class="tab-btn" :class="{ active: currentTab === tab.value }" @click="switchTab(tab.value)">
@@ -57,9 +60,14 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import request from '@/utils/request'
+import { useIsAdmin } from '@/composables/useIsAdmin'
+import { adminExportExcel } from '@/utils/exportDownload'
 
 const router = useRouter()
+const { isAdmin } = useIsAdmin()
+const exporting = ref(false)
 const loading = ref(false)
 const allList = ref<any[]>([])
 const searchQuery = ref('')
@@ -123,8 +131,29 @@ function resetSearch() {
   loadList()
 }
 function goDashboard() {
-  router.push('/assistant/dashboard')
+  router.push(isAdmin.value ? '/admin/dashboard' : '/assistant/dashboard')
 }
+
+async function handleExport() {
+  exporting.value = true
+  try {
+    await adminExportExcel(
+      request,
+      '/api/admin/export/research-achievements',
+      {
+        search: appliedSearch.value || undefined,
+        status: currentTab.value === 'all' ? undefined : currentTab.value,
+      },
+      `科研成果登记导出_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    )
+    ElMessage.success('导出成功')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
 function goDetail(id: string) {
   router.push(`/achievements/${id}/detail`)
 }
@@ -146,9 +175,11 @@ onMounted(loadList)
 .toolbar { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .search-box { display: flex; gap: 8px; flex-wrap: wrap; }
 .search-input { padding: 8px 12px; border: 1px solid #e8e8e8; border-radius: 6px; width: 240px; font-size: 14px; }
-.search-btn, .reset-btn { padding: 8px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none; }
+.search-btn, .reset-btn, .export-btn { padding: 8px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none; }
 .search-btn { background: #b31b1b; color: white; }
 .reset-btn { background: #f5f5f5; color: #666; border: 1px solid #e8e8e8; }
+.export-btn { background: #fff; color: #b31b1b; border: 1px solid #b31b1b; }
+.export-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .filter-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
 .tab-btn { padding: 8px 16px; border: 1px solid #e8e8e8; border-radius: 8px; background: white; color: #666; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
 .tab-btn.active { background: #b31b1b; border-color: #b31b1b; color: white; }

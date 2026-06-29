@@ -8,7 +8,7 @@
           <span>返回工作台</span>
         </button>
         <h1>活动登记</h1>
-        <div class="header-subtitle">为已入库或孵化中的项目登记路演、产业交流等活动情况，提交后由项目经理审批</div>
+        <div class="header-subtitle">登记路演、产业交流等推广对接类活动，提交后由项目经理审批</div>
       </div>
     </div>
 

@@ -21,7 +21,7 @@ export const dashboardAPI = {
     return api.get('/api/dashboard/applicant')
   },
 
-  // 获取评审专家的仪表板数据
+  // 获取专家顾问的仪表板数据
   getReviewerDashboard() {
     return api.get('/api/dashboard/reviewer')
   },

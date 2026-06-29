@@ -893,7 +893,7 @@ const loadAuditLogs = async (achievementData: AchievementDetail) => {
       mockAuditLogs.push({
         id: '2',
         action: achievementData.status === 'approved' ? 'approve' : 'reject',
-        user: '评审专家',
+        user: '专家顾问',
         time: achievementData.approvalDate || achievementData.updateTime,
         comment:
           achievementData.status === 'rejected' ? achievementData.rejectionReason : '审核通过',
@@ -953,7 +953,7 @@ const loadMockData = () => {
       {
         id: '2',
         action: 'approve',
-        user: '李老师（评审专家）',
+        user: '李老师（专家顾问）',
         time: '2024-01-20 09:15:00',
         comment: '研究成果具有创新性，建议通过审核',
       },

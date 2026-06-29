@@ -147,13 +147,13 @@ async function assertProjectManagerApprovePreconditions(poolConn, projectId, use
   if (total === 0) {
     return {
       ok: false,
-      error: '请先分配评审专家；分配后项目将进入「评审中」，专家完成评审后您可在此确认立项通过。',
+      error: '请先分配专家顾问；分配后项目将进入「评审中」，专家完成评审后您可在此确认立项通过。',
     };
   }
   if (still > 0) {
     return {
       ok: false,
-      error: '尚有评审专家未完成评审，请待全部评审结束后再确认立项通过。',
+      error: '尚有专家顾问未完成评审，请待全部评审结束后再确认立项通过。',
     };
   }
   return { ok: true };
@@ -604,6 +604,7 @@ function formatEnterpriseDemandPushRow(row) {
   if (!row) return row;
   return {
     ...row,
+    demand_id: row.demand_id ?? row.resource_id,
     created_at: row.created_at ? row.created_at.toISOString?.() || row.created_at : null,
     claimed_at: row.claimed_at ? row.claimed_at.toISOString?.() || row.claimed_at : null,
     updated_at: row.updated_at ? row.updated_at.toISOString?.() || row.updated_at : null,
@@ -870,6 +871,415 @@ async function attachExpertTypesToUsers(users) {
     }
   });
   return users;
+}
+
+// ==================== 专家顾问 Excel 批量导入 ====================
+
+const EXPERT_IMPORT_HEADERS = [
+  '姓名',
+  '专业领域',
+  '工作单位',
+  '工作职务',
+  '职称',
+  '手机',
+  '个人简介',
+  '专家类型',
+];
+
+const EXPERT_TYPE_ZH_TO_CODE = {
+  技术专家: 'technical',
+  产业专家: 'industry',
+  投资专家: 'investment',
+  科技服务专家: 'tech_service',
+  technical: 'technical',
+  industry: 'industry',
+  investment: 'investment',
+  tech_service: 'tech_service',
+};
+
+function parseExpertTypesFromImportCell(text) {
+  if (text == null || String(text).trim() === '') return [];
+  return [
+    ...new Set(
+      String(text)
+        .split(/[,，、;；/|]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((label) => EXPERT_TYPE_ZH_TO_CODE[label] || EXPERT_TYPE_ZH_TO_CODE[label.toLowerCase()])
+        .filter((t) => t && VALID_EXPERT_TYPES.includes(t)),
+    ),
+  ];
+}
+
+function buildExpertImportTitle(jobTitle, rankTitle) {
+  const job = jobTitle != null ? String(jobTitle).trim() : '';
+  const rank = rankTitle != null ? String(rankTitle).trim() : '';
+  if (job && rank) return `${job}，${rank}`;
+  return job || rank || null;
+}
+
+function buildExpertImportExpertise(field, bio) {
+  const parts = [];
+  const f = field != null ? String(field).trim() : '';
+  const b = bio != null ? String(bio).trim() : '';
+  if (f) parts.push(`【专业领域】${f}`);
+  if (b) parts.push(`【个人简介】${b}`);
+  return parts.length ? parts.join('\n') : null;
+}
+
+async function buildExpertImportTemplateWorkbook() {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('专家顾问导入', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  sheet.addRow(EXPERT_IMPORT_HEADERS);
+  sheet.addRow([
+    '张三',
+    '人工智能、机器学习',
+    '某某大学计算机学院',
+    '系主任',
+    '教授',
+    '13800138000',
+    '长期从事人工智能方向研究',
+    '技术专家、产业专家',
+  ]);
+  const headerRow = sheet.getRow(1);
+  headerRow.font = { bold: true };
+  headerRow.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFFCE4E4' },
+  };
+  sheet.columns = [
+    { width: 12 },
+    { width: 24 },
+    { width: 22 },
+    { width: 14 },
+    { width: 12 },
+    { width: 14 },
+    { width: 28 },
+    { width: 22 },
+  ];
+
+  const guide = workbook.addWorksheet('填写说明');
+  guide.addRow(['字段', '说明']);
+  guide.addRow(['姓名', '必填']);
+  guide.addRow(['专业领域', '选填，如：人工智能、生物医药']);
+  guide.addRow(['工作单位', '选填，对应系统「所属部门/单位」']);
+  guide.addRow(['工作职务', '选填，如：系主任、技术总监']);
+  guide.addRow(['职称', '选填，如：教授、高级工程师']);
+  guide.addRow(['手机', '选填，若填写则不可与已有用户重复']);
+  guide.addRow(['个人简介', '选填，写入专家扩展信息']);
+  guide.addRow([
+    '专家类型',
+    '选填，可多选：技术专家、产业专家、投资专家、科技服务专家（用顿号、逗号分隔）',
+  ]);
+  guide.addRow(['', '导入后系统将自动生成登录用户名、邮箱及初始密码（可在导入结果中查看）']);
+  guide.addRow(['', '导入账号默认为未激活状态，需管理员激活后方可登录']);
+  guide.getColumn(1).width = 14;
+  guide.getColumn(2).width = 56;
+  guide.getRow(1).font = { bold: true };
+
+  return workbook;
+}
+
+function sendExcelDownload(res, buffer, filename) {
+  res.writeHead(200, {
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    'Content-Length': Buffer.byteLength(buffer),
+  });
+  res.end(Buffer.from(buffer));
+}
+
+/** 通用：按列定义生成 Excel 工作簿 buffer */
+async function buildSimpleExcelBuffer(sheetName, columns, rows) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet(sheetName, {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  sheet.addRow(columns.map((c) => c.label));
+  sheet.getRow(1).font = { bold: true };
+  for (const row of rows) {
+    sheet.addRow(
+      columns.map((c) => {
+        const v = row[c.key];
+        if (v == null || v === '') return '';
+        if (c.format === 'date') return formatExportDateValue(v);
+        if (c.format === 'datetime') return formatExportDateTimeValue(v);
+        return String(v);
+      }),
+    );
+  }
+  sheet.columns.forEach((col) => {
+    let max = 10;
+    col.eachCell({ includeEmpty: false }, (cell) => {
+      const len = cell.value != null ? String(cell.value).length : 0;
+      if (len > max) max = Math.min(len, 48);
+    });
+    col.width = max + 2;
+  });
+  return workbook.xlsx.writeBuffer();
+}
+
+const USER_EXPORT_ROLE_LABELS = {
+  applicant: '项目申请人',
+  reviewer: '专家顾问',
+  project_manager: '项目经理',
+  funds_manager: '经费管理员',
+  admin: '管理员',
+};
+
+const RESEARCH_ACHIEVEMENT_TYPE_LABELS = {
+  paper: '论文',
+  patent: '专利',
+  software: '软件著作权',
+  report: '研究报告',
+  prototype: '原型样机',
+  standard: '技术标准',
+  award: '奖项',
+  other: '其他',
+};
+
+const ACHIEVEMENT_STATUS_LABELS = {
+  draft: '草稿',
+  submitted: '待审核',
+  verified: '已核实',
+  rejected: '已驳回',
+};
+
+async function assertAdminForExport(req, res) {
+  const admin = await verifyToken(req.headers.authorization);
+  if (!admin || admin.role !== 'admin') {
+    sendResponse(res, 403, { success: false, error: '仅管理员可导出数据' });
+    return null;
+  }
+  return admin;
+}
+
+async function sendAdminExcelExport(res, sheetName, filenamePrefix, columns, rows) {
+  if (!rows.length) {
+    sendResponse(res, 400, { success: false, error: '没有数据可导出' });
+    return;
+  }
+  const buffer = await buildSimpleExcelBuffer(sheetName, columns, rows);
+  sendExcelDownload(res, buffer, `${filenamePrefix}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+async function parseExpertImportRowsFromFile(filePath) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(filePath);
+  const sheet =
+    workbook.getWorksheet('专家顾问导入') ||
+    workbook.worksheets.find((ws) => ws.name !== '填写说明') ||
+    workbook.worksheets[0];
+  if (!sheet) throw new Error('Excel 中未找到工作表');
+
+  const colMap = {};
+  const headerRow = sheet.getRow(1);
+  headerRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+    colMap[colNumber] = String(cell.value ?? '').trim();
+  });
+  if (!Object.values(colMap).includes('姓名')) {
+    throw new Error('模板首行须包含「姓名」列，请下载最新模板');
+  }
+
+  const rows = [];
+  sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    if (rowNumber <= 1) return;
+    const obj = {};
+    row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+      const header = colMap[colNumber];
+      if (!header) return;
+      const val = cell.value;
+      obj[header] =
+        val == null
+          ? ''
+          : typeof val === 'object' && val.text != null
+            ? String(val.text).trim()
+            : String(val).trim();
+    });
+    const name = obj['姓名'];
+    if (!name) return;
+    rows.push({
+      rowNumber,
+      name,
+      field: obj['专业领域'] || '',
+      department: obj['工作单位'] || '',
+      jobTitle: obj['工作职务'] || '',
+      rankTitle: obj['职称'] || '',
+      phone: obj['手机'] || '',
+      bio: obj['个人简介'] || '',
+      expertTypes: obj['专家类型'] || '',
+    });
+  });
+  return rows;
+}
+
+async function generateUniqueImportUsername(name) {
+  const base =
+    String(name)
+      .replace(/\s+/g, '')
+      .slice(0, 20)
+      .replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '') || 'expert';
+  for (let i = 0; i < 20; i++) {
+    const suffix = i === 0 ? '' : `_${i}`;
+    const candidate = `exp_${base}${suffix}`.slice(0, 48);
+    const [rows] = await pool.query('SELECT id FROM `User` WHERE username = ? LIMIT 1', [candidate]);
+    if (!rows.length) return candidate;
+  }
+  return `exp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+async function generateUniqueImportEmail() {
+  for (let i = 0; i < 20; i++) {
+    const candidate = `expert.import.${randomUUID().slice(0, 8)}@placeholder.local`;
+    const [rows] = await pool.query('SELECT id FROM `User` WHERE email = ? LIMIT 1', [candidate]);
+    if (!rows.length) return candidate;
+  }
+  throw new Error('无法生成唯一邮箱，请稍后重试');
+}
+
+async function importSingleExpertAdvisorRow(row, operatorId, { hashedPassword, defaultPassword }) {
+  const name = String(row.name || '').trim();
+  if (!name) throw new Error('姓名为必填');
+
+  const phone = row.phone ? String(row.phone).trim() : null;
+  if (phone) {
+    const [dupPhone] = await pool.query('SELECT id, name FROM `User` WHERE phone = ? LIMIT 1', [phone]);
+    if (dupPhone.length) {
+      throw new Error(`手机号 ${phone} 已被用户「${dupPhone[0].name}」使用`);
+    }
+  }
+
+  const [dupNameDept] = await pool.query(
+    'SELECT id FROM `User` WHERE name = ? AND role = ? AND IFNULL(department,\'\') = IFNULL(?, \'\') LIMIT 1',
+    [name, 'reviewer', row.department || ''],
+  );
+  if (dupNameDept.length) {
+    throw new Error(`同名同单位专家顾问已存在：${name}`);
+  }
+
+  const userId = randomUUID();
+  const username = await generateUniqueImportUsername(name);
+  const email = await generateUniqueImportEmail();
+  const title = buildExpertImportTitle(row.jobTitle, row.rankTitle);
+  const department = row.department ? String(row.department).trim() : null;
+  const expertise = buildExpertImportExpertise(row.field, row.bio);
+  const expertTypes = parseExpertTypesFromImportCell(row.expertTypes);
+  const now = new Date();
+
+  await pool.query(
+    `INSERT INTO \`User\` (
+      id, username, password, name, email, role, department, title, phone, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'reviewer', ?, ?, ?, 'inactive', ?, ?)`,
+    [userId, username, hashedPassword, name, email, department, title, phone, now, now],
+  );
+
+  await upsertExpertiseDescription(pool, userId, expertise);
+  if (expertTypes.length) {
+    await replaceExpertTypes(userId, expertTypes);
+  }
+
+  await pool.query(
+    `INSERT INTO \`AuditLog\` (user_id, action, table_name, record_id, new_values, created_at)
+     VALUES (?, 'expert_import', 'User', ?, ?, NOW())`,
+    [operatorId, userId, JSON.stringify({ name, username, email, phone, department, expertTypes })],
+  );
+
+  return {
+    rowNumber: row.rowNumber,
+    userId,
+    name,
+    username,
+    email,
+    phone,
+    defaultPassword,
+    expertTypes,
+  };
+}
+
+async function handleExpertImportUpload(req, res, operatorId) {
+  const tmpDir = path.join(__dirname, 'uploads', 'expert-import');
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+
+  const form = formidable({
+    uploadDir: tmpDir,
+    keepExtensions: true,
+    maxFileSize: 5 * 1024 * 1024,
+    filename: (_name, ext) => `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`,
+  });
+
+  form.parse(req, async (err, _fields, files) => {
+    let filePath = null;
+    try {
+      if (err) {
+        sendResponse(res, 500, { success: false, error: '文件上传失败' });
+        return;
+      }
+      const rawFile = files.file || files.excel;
+      if (!rawFile) {
+        sendResponse(res, 400, { success: false, error: '请上传 Excel 文件（字段名 file）' });
+        return;
+      }
+      const fileData = Array.isArray(rawFile) ? rawFile[0] : rawFile;
+      filePath = fileData.filepath || fileData.path;
+      const origName = (fileData.originalFilename || fileData.name || '').toLowerCase();
+      if (filePath && origName && !origName.endsWith('.xlsx') && !origName.endsWith('.xls')) {
+        sendResponse(res, 400, { success: false, error: '仅支持 .xlsx / .xls 格式' });
+        return;
+      }
+
+      const importRows = await parseExpertImportRowsFromFile(filePath);
+      if (!importRows.length) {
+        sendResponse(res, 400, { success: false, error: '未解析到有效数据行（请填写「姓名」）' });
+        return;
+      }
+
+      const successes = [];
+      const failures = [];
+      const bcrypt = require('bcryptjs');
+      const defaultPassword = process.env.EXPERT_IMPORT_DEFAULT_PASSWORD || 'Expert@123456';
+      const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+      const importCredentials = { hashedPassword, defaultPassword };
+
+      for (const row of importRows) {
+        try {
+          const created = await importSingleExpertAdvisorRow(row, operatorId, importCredentials);
+          successes.push(created);
+        } catch (e) {
+          failures.push({
+            rowNumber: row.rowNumber,
+            name: row.name,
+            error: e.message || '导入失败',
+          });
+        }
+      }
+
+      sendResponse(res, 200, {
+        success: true,
+        message: `导入完成：成功 ${successes.length} 条，失败 ${failures.length} 条`,
+        data: {
+          total: importRows.length,
+          successCount: successes.length,
+          failCount: failures.length,
+          successes,
+          failures,
+        },
+      });
+    } catch (e) {
+      console.error('专家顾问批量导入失败:', e);
+      sendResponse(res, 500, { success: false, error: e.message || '批量导入失败' });
+    } finally {
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    }
+  });
 }
 
 /** SQL：按专家类型筛选（ExpertProfile.expert_types SET） */
@@ -2704,8 +3114,8 @@ const server = http.createServer(async (req, res) => {
 
         const [rows] = await pool.query(
           `SELECT d.*, u.name AS publisher_name,
-            (SELECT COUNT(*) FROM \`ProjectEnterpriseDemand\` ped WHERE ped.demand_id = d.id AND ped.status != 'withdrawn') AS push_count
-           FROM \`EnterpriseDemand\` d
+            (SELECT COUNT(*) FROM \`ProjectIndustryResource\` ped WHERE ped.resource_id = d.id AND ped.status != 'withdrawn') AS push_count
+           FROM \`IndustryResource\` d
            LEFT JOIN \`User\` u ON d.publisher_id = u.id
            ${where}
            ORDER BY d.published_at DESC, d.created_at DESC
@@ -2713,7 +3123,7 @@ const server = http.createServer(async (req, res) => {
           [...params, pageSize, offset],
         );
         const [cnt] = await pool.query(
-          `SELECT COUNT(*) AS total FROM \`EnterpriseDemand\` d ${where}`,
+          `SELECT COUNT(*) AS total FROM \`IndustryResource\` d ${where}`,
           params,
         );
         sendResponse(res, 200, {
@@ -2752,7 +3162,7 @@ const server = http.createServer(async (req, res) => {
         const publisherId = user.id || user.userId;
         const id = randomUUID();
         await pool.query(
-          `INSERT INTO \`EnterpriseDemand\`
+          `INSERT INTO \`IndustryResource\`
             (id, title, summary, content, enterprise_name, industry, source_url, source_note,
              contact_name, contact_phone, contact_email, status, publisher_id, published_at, deadline)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -2775,7 +3185,7 @@ const server = http.createServer(async (req, res) => {
           ],
         );
         const [created] = await pool.query(
-          `SELECT d.*, u.name AS publisher_name FROM \`EnterpriseDemand\` d
+          `SELECT d.*, u.name AS publisher_name FROM \`IndustryResource\` d
            LEFT JOIN \`User\` u ON d.publisher_id = u.id WHERE d.id = ?`,
           [id],
         );
@@ -2823,8 +3233,8 @@ const server = http.createServer(async (req, res) => {
 
           if (demandId) {
             await pool.query(
-              `INSERT INTO \`EnterpriseDemandMedia\`
-                (id, demand_id, file_type, file_url, file_name, file_size, mime_type, uploaded_by)
+              `INSERT INTO \`IndustryResourceMedia\`
+                (id, resource_id, file_type, file_url, file_name, file_size, mime_type, uploaded_by)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 mediaId,
@@ -2870,7 +3280,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const [rows] = await pool.query(
-          `SELECT d.*, u.name AS publisher_name FROM \`EnterpriseDemand\` d
+          `SELECT d.*, u.name AS publisher_name FROM \`IndustryResource\` d
            LEFT JOIN \`User\` u ON d.publisher_id = u.id WHERE d.id = ?`,
           [demandId],
         );
@@ -2879,7 +3289,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const [media] = await pool.query(
-          `SELECT * FROM \`EnterpriseDemandMedia\` WHERE demand_id = ? ORDER BY sort_order, created_at`,
+          `SELECT * FROM \`IndustryResourceMedia\` WHERE resource_id = ? ORDER BY sort_order, created_at`,
           [demandId],
         );
         const content = rows[0].content || '';
@@ -2932,7 +3342,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const body = await parseRequestBody(req);
-        const [check] = await pool.query(`SELECT status FROM \`EnterpriseDemand\` WHERE id = ?`, [demandId]);
+        const [check] = await pool.query(`SELECT status FROM \`IndustryResource\` WHERE id = ?`, [demandId]);
         if (!check.length) {
           sendResponse(res, 404, { success: false, error: '产业资源不存在' });
           return;
@@ -2972,9 +3382,9 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         values.push(demandId);
-        await pool.query(`UPDATE \`EnterpriseDemand\` SET ${fields.join(', ')} WHERE id = ?`, values);
+        await pool.query(`UPDATE \`IndustryResource\` SET ${fields.join(', ')} WHERE id = ?`, values);
         const [updated] = await pool.query(
-          `SELECT d.*, u.name AS publisher_name FROM \`EnterpriseDemand\` d
+          `SELECT d.*, u.name AS publisher_name FROM \`IndustryResource\` d
            LEFT JOIN \`User\` u ON d.publisher_id = u.id WHERE d.id = ?`,
           [demandId],
         );
@@ -2999,7 +3409,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         await pool.query(
-          `UPDATE \`EnterpriseDemand\` SET status = 'published', published_at = ? WHERE id = ?`,
+          `UPDATE \`IndustryResource\` SET status = 'published', published_at = ? WHERE id = ?`,
           [new Date(), demandId],
         );
         sendResponse(res, 200, { success: true, message: '发布成功' });
@@ -3018,7 +3428,7 @@ const server = http.createServer(async (req, res) => {
           sendResponse(res, 403, { success: false, error: '无权操作' });
           return;
         }
-        await pool.query(`UPDATE \`EnterpriseDemand\` SET status = 'offline' WHERE id = ?`, [demandId]);
+        await pool.query(`UPDATE \`IndustryResource\` SET status = 'offline' WHERE id = ?`, [demandId]);
         sendResponse(res, 200, { success: true, message: '下架成功' });
       } catch (error) {
         console.error('下架产业资源失败:', error);
@@ -3035,7 +3445,7 @@ const server = http.createServer(async (req, res) => {
           sendResponse(res, 403, { success: false, error: '无权操作' });
           return;
         }
-        await pool.query(`UPDATE \`EnterpriseDemand\` SET status = 'closed' WHERE id = ?`, [demandId]);
+        await pool.query(`UPDATE \`IndustryResource\` SET status = 'closed' WHERE id = ?`, [demandId]);
         sendResponse(res, 200, { success: true, message: '已关闭' });
       } catch (error) {
         console.error('关闭产业资源失败:', error);
@@ -3056,7 +3466,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const [media] = await pool.query(
-          `SELECT file_url FROM \`EnterpriseDemandMedia\` WHERE demand_id = ?`,
+          `SELECT file_url FROM \`IndustryResourceMedia\` WHERE resource_id = ?`,
           [demandId],
         );
         for (const m of media) {
@@ -3065,7 +3475,7 @@ const server = http.createServer(async (req, res) => {
             try { fs.unlinkSync(diskPath); } catch (e) { /* ignore */ }
           }
         }
-        await pool.query(`DELETE FROM \`EnterpriseDemand\` WHERE id = ?`, [demandId]);
+        await pool.query(`DELETE FROM \`IndustryResource\` WHERE id = ?`, [demandId]);
         sendResponse(res, 200, { success: true, message: '删除成功' });
       } catch (error) {
         console.error('删除产业资源失败:', error);
@@ -3084,7 +3494,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const [demandRows] = await pool.query(
-          'SELECT id, status FROM `EnterpriseDemand` WHERE id = ?',
+          'SELECT id, status FROM `IndustryResource` WHERE id = ?',
           [demandId],
         );
         if (!demandRows.length) {
@@ -3098,11 +3508,11 @@ const server = http.createServer(async (req, res) => {
             p.status AS project_status,
             ua.name AS applicant_name,
             uc.name AS claimed_by_name
-           FROM \`ProjectEnterpriseDemand\` ped
+           FROM \`ProjectIndustryResource\` ped
            INNER JOIN \`Project\` p ON ped.project_id = p.id
            LEFT JOIN \`User\` ua ON p.applicant_id = ua.id
            LEFT JOIN \`User\` uc ON ped.claimed_by = uc.id
-           WHERE ped.demand_id = ?
+           WHERE ped.resource_id = ?
            ORDER BY ped.created_at DESC`,
           [demandId],
         );
@@ -3134,7 +3544,7 @@ const server = http.createServer(async (req, res) => {
         }
         const remark = body.remark != null ? String(body.remark).trim() || null : null;
         const [demandRows] = await pool.query(
-          'SELECT id, status, title FROM `EnterpriseDemand` WHERE id = ?',
+          'SELECT id, status, title FROM `IndustryResource` WHERE id = ?',
           [demandId],
         );
         if (!demandRows.length) {
@@ -3170,7 +3580,7 @@ const server = http.createServer(async (req, res) => {
             continue;
           }
           const [existing] = await pool.query(
-            'SELECT id, status FROM `ProjectEnterpriseDemand` WHERE project_id = ? AND demand_id = ?',
+            'SELECT id, status FROM `ProjectIndustryResource` WHERE project_id = ? AND resource_id = ?',
             [projectId, demandId],
           );
           if (existing.length && existing[0].status === 'claimed') {
@@ -3179,7 +3589,7 @@ const server = http.createServer(async (req, res) => {
           }
           if (existing.length) {
             await pool.query(
-              `UPDATE \`ProjectEnterpriseDemand\`
+              `UPDATE \`ProjectIndustryResource\`
                SET status = 'pushed', pushed_by = ?, remark = ?, claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
                WHERE id = ?`,
               [pmId, remark, existing[0].id],
@@ -3188,8 +3598,8 @@ const server = http.createServer(async (req, res) => {
           } else {
             const pushId = randomUUID();
             await pool.query(
-              `INSERT INTO \`ProjectEnterpriseDemand\`
-                (id, project_id, demand_id, pushed_by, remark, status)
+              `INSERT INTO \`ProjectIndustryResource\`
+                (id, project_id, resource_id, pushed_by, remark, status)
                VALUES (?, ?, ?, ?, ?, 'pushed')`,
               [pushId, projectId, demandId, pmId, remark],
             );
@@ -3231,9 +3641,9 @@ const server = http.createServer(async (req, res) => {
         }
         const [rows] = await pool.query(
           `SELECT ped.*, p.manager_id
-           FROM \`ProjectEnterpriseDemand\` ped
+           FROM \`ProjectIndustryResource\` ped
            INNER JOIN \`Project\` p ON ped.project_id = p.id
-           WHERE ped.id = ? AND ped.demand_id = ?`,
+           WHERE ped.id = ? AND ped.resource_id = ?`,
           [pushId, demandId],
         );
         if (!rows.length) {
@@ -3254,7 +3664,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         await pool.query(
-          `UPDATE \`ProjectEnterpriseDemand\` SET status = 'withdrawn', updated_at = NOW() WHERE id = ?`,
+          `UPDATE \`ProjectIndustryResource\` SET status = 'withdrawn', updated_at = NOW() WHERE id = ?`,
           [pushId],
         );
         sendResponse(res, 200, { success: true, message: '已撤回推荐' });
@@ -3308,9 +3718,9 @@ const server = http.createServer(async (req, res) => {
         const offset = (page - 1) * pageSize;
         const recommendExistsSql = `
           EXISTS (
-            SELECT 1 FROM \`ProjectEnterpriseDemand\` ped
+            SELECT 1 FROM \`ProjectIndustryResource\` ped
             INNER JOIN \`Project\` p ON ped.project_id = p.id
-            WHERE ped.demand_id = d.id
+            WHERE ped.resource_id = d.id
               AND ped.pushed_by IS NOT NULL
               AND ped.status = 'pushed'
               AND (
@@ -3331,7 +3741,7 @@ const server = http.createServer(async (req, res) => {
         const [rows] = await pool.query(
           `SELECT d.*, u.name AS publisher_name,
             ${recommendExistsSql} AS is_recommended
-           FROM \`EnterpriseDemand\` d
+           FROM \`IndustryResource\` d
            LEFT JOIN \`User\` u ON d.publisher_id = u.id
            ${where}
            ORDER BY is_recommended DESC, d.published_at DESC, d.created_at DESC
@@ -3339,7 +3749,7 @@ const server = http.createServer(async (req, res) => {
           [...params, pageSize, offset],
         );
         const [cnt] = await pool.query(
-          `SELECT COUNT(*) AS total FROM \`EnterpriseDemand\` d ${where}`,
+          `SELECT COUNT(*) AS total FROM \`IndustryResource\` d ${where}`,
           params,
         );
 
@@ -3347,11 +3757,11 @@ const server = http.createServer(async (req, res) => {
         let applicationMap = {};
         if (demandIds.length) {
           const [apps] = await pool.query(
-            `SELECT ped.demand_id, ped.id AS push_id, ped.status, ped.project_id, ped.pushed_by,
+            `SELECT ped.resource_id AS demand_id, ped.id AS push_id, ped.status, ped.project_id, ped.pushed_by,
               p.title AS project_title, p.project_code
-             FROM \`ProjectEnterpriseDemand\` ped
+             FROM \`ProjectIndustryResource\` ped
              INNER JOIN \`Project\` p ON ped.project_id = p.id
-             WHERE ped.demand_id IN (?)
+             WHERE ped.resource_id IN (?)
                AND ped.status != 'withdrawn'
                AND (
                  p.applicant_id = ?
@@ -3409,9 +3819,9 @@ const server = http.createServer(async (req, res) => {
         const [rows] = await pool.query(
           `SELECT d.*, u.name AS publisher_name,
             EXISTS (
-              SELECT 1 FROM \`ProjectEnterpriseDemand\` ped
+              SELECT 1 FROM \`ProjectIndustryResource\` ped
               INNER JOIN \`Project\` p ON ped.project_id = p.id
-              WHERE ped.demand_id = d.id
+              WHERE ped.resource_id = d.id
                 AND ped.pushed_by IS NOT NULL
                 AND ped.status = 'pushed'
                 AND (
@@ -3419,7 +3829,7 @@ const server = http.createServer(async (req, res) => {
                   OR EXISTS (SELECT 1 FROM \`ProjectMember\` pm WHERE pm.project_id = p.id AND pm.user_id = ?)
                 )
             ) AS is_recommended
-           FROM \`EnterpriseDemand\` d
+           FROM \`IndustryResource\` d
            LEFT JOIN \`User\` u ON d.publisher_id = u.id
            WHERE d.id = ? AND d.status = 'published'
              AND (d.deadline IS NULL OR d.deadline >= CURDATE())`,
@@ -3430,20 +3840,20 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         await pool.query(
-          `UPDATE \`EnterpriseDemand\` SET view_count = view_count + 1 WHERE id = ?`,
+          `UPDATE \`IndustryResource\` SET view_count = view_count + 1 WHERE id = ?`,
           [demandId],
         );
         const [media] = await pool.query(
-          `SELECT * FROM \`EnterpriseDemandMedia\` WHERE demand_id = ? ORDER BY sort_order, created_at`,
+          `SELECT * FROM \`IndustryResourceMedia\` WHERE resource_id = ? ORDER BY sort_order, created_at`,
           [demandId],
         );
         const [apps] = await pool.query(
           `SELECT ped.id AS push_id, ped.status, ped.project_id, ped.pushed_by, ped.remark,
               ped.created_at, ped.claimed_at,
               p.title AS project_title, p.project_code
-           FROM \`ProjectEnterpriseDemand\` ped
+           FROM \`ProjectIndustryResource\` ped
            INNER JOIN \`Project\` p ON ped.project_id = p.id
-           WHERE ped.demand_id = ? AND ped.status != 'withdrawn'
+           WHERE ped.resource_id = ? AND ped.status != 'withdrawn'
              AND (
                p.applicant_id = ?
                OR EXISTS (SELECT 1 FROM \`ProjectMember\` pm WHERE pm.project_id = p.id AND pm.user_id = ?)
@@ -3508,7 +3918,7 @@ const server = http.createServer(async (req, res) => {
         const remark = body.remark != null ? String(body.remark).trim() || null : null;
 
         const [demandRows] = await pool.query(
-          `SELECT id, title, status, deadline FROM \`EnterpriseDemand\` WHERE id = ?`,
+          `SELECT id, title, status, deadline FROM \`IndustryResource\` WHERE id = ?`,
           [demandId],
         );
         if (!demandRows.length) {
@@ -3553,7 +3963,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const [existing] = await pool.query(
-          'SELECT id, status FROM `ProjectEnterpriseDemand` WHERE project_id = ? AND demand_id = ?',
+          'SELECT id, status FROM `ProjectIndustryResource` WHERE project_id = ? AND resource_id = ?',
           [projectId, demandId],
         );
         if (existing.length) {
@@ -3565,7 +3975,7 @@ const server = http.createServer(async (req, res) => {
           if (st === 'pushed') {
             const pushId = existing[0].id;
             await pool.query(
-              `UPDATE \`ProjectEnterpriseDemand\`
+              `UPDATE \`ProjectIndustryResource\`
                SET status = 'claimed', remark = COALESCE(?, remark), claimed_by = ?, claimed_at = NOW(), updated_at = NOW()
                WHERE id = ?`,
               [remark, userId, pushId],
@@ -3580,7 +3990,7 @@ const server = http.createServer(async (req, res) => {
           }
           const pushId = existing[0].id;
           await pool.query(
-            `UPDATE \`ProjectEnterpriseDemand\`
+            `UPDATE \`ProjectIndustryResource\`
              SET status = 'claimed', pushed_by = NULL, remark = ?, claimed_by = ?, claimed_at = NOW(), updated_at = NOW()
              WHERE id = ?`,
             [remark, userId, pushId],
@@ -3596,8 +4006,8 @@ const server = http.createServer(async (req, res) => {
 
         const pushId = randomUUID();
         await pool.query(
-          `INSERT INTO \`ProjectEnterpriseDemand\`
-            (id, project_id, demand_id, pushed_by, remark, status, claimed_by, claimed_at)
+          `INSERT INTO \`ProjectIndustryResource\`
+            (id, project_id, resource_id, pushed_by, remark, status, claimed_by, claimed_at)
            VALUES (?, ?, ?, NULL, ?, 'claimed', ?, NOW())`,
           [pushId, projectId, demandId, remark, userId],
         );
@@ -3635,9 +4045,9 @@ const server = http.createServer(async (req, res) => {
         }
 
         let rowQuery = `SELECT ped.*, p.applicant_id
-           FROM \`ProjectEnterpriseDemand\` ped
+           FROM \`ProjectIndustryResource\` ped
            INNER JOIN \`Project\` p ON ped.project_id = p.id
-           WHERE ped.demand_id = ?`;
+           WHERE ped.resource_id = ?`;
         const rowParams = [demandId];
         if (pushId) {
           rowQuery += ' AND ped.id = ?';
@@ -3669,13 +4079,13 @@ const server = http.createServer(async (req, res) => {
 
         if (row.pushed_by) {
           await pool.query(
-            `UPDATE \`ProjectEnterpriseDemand\`
+            `UPDATE \`ProjectIndustryResource\`
              SET status = 'pushed', claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
              WHERE id = ?`,
             [row.id],
           );
         } else {
-          await pool.query('DELETE FROM `ProjectEnterpriseDemand` WHERE id = ?', [row.id]);
+          await pool.query('DELETE FROM `ProjectIndustryResource` WHERE id = ?', [row.id]);
         }
         sendResponse(res, 200, { success: true, message: '已取消报名' });
       } catch (error) {
@@ -3723,8 +4133,8 @@ const server = http.createServer(async (req, res) => {
             d.source_url,
             d.source_note,
             up.name AS pushed_by_name
-           FROM \`ProjectEnterpriseDemand\` ped
-           INNER JOIN \`EnterpriseDemand\` d ON ped.demand_id = d.id
+           FROM \`ProjectIndustryResource\` ped
+           INNER JOIN \`IndustryResource\` d ON ped.resource_id = d.id
            LEFT JOIN \`User\` up ON ped.pushed_by = up.id
            WHERE ped.project_id = ? AND ped.status != 'withdrawn'
            ORDER BY
@@ -3881,7 +4291,7 @@ const server = http.createServer(async (req, res) => {
         if (!body.role || !allowedRoles.includes(String(body.role).trim())) {
           sendResponse(res, 400, {
             success: false,
-            error: '请选择有效的身份类型（项目申请人 / 评审专家 / 项目经理 / 经费管理员 / 系统管理员）',
+            error: '请选择有效的身份类型（项目申请人 / 专家顾问 / 项目经理 / 经费管理员 / 系统管理员）',
           });
           return;
         }
@@ -3940,7 +4350,7 @@ const server = http.createServer(async (req, res) => {
         if (requestedRole !== user.role) {
           const roleLabel = {
             applicant: '项目申请人',
-            reviewer: '评审专家',
+            reviewer: '专家顾问',
             project_manager: '项目经理',
             funds_manager: '经费管理员',
             admin: '系统管理员',
@@ -4102,7 +4512,7 @@ const server = http.createServer(async (req, res) => {
             if (!code) {
               sendResponse(res, 400, {
                 success: false,
-                error: '注册评审专家、项目经理或经费管理员必须填写有效邀请码'
+                error: '注册专家顾问、项目经理或经费管理员必须填写有效邀请码'
               });
               return;
             }
@@ -4224,7 +4634,7 @@ const server = http.createServer(async (req, res) => {
           if (!code) {
             sendResponse(res, 400, {
               success: false,
-              error: '注册评审专家、项目经理或经费管理员必须填写有效邀请码'
+              error: '注册专家顾问、项目经理或经费管理员必须填写有效邀请码'
             });
             return;
           }
@@ -4494,7 +4904,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (authUser.role !== 'reviewer') {
-        sendResponse(res, 403, { success: false, error: '仅评审专家可设置擅长领域' });
+        sendResponse(res, 403, { success: false, error: '仅专家顾问可设置擅长领域' });
         return;
       }
       try {
@@ -4529,7 +4939,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (authUser.role !== 'reviewer') {
-        sendResponse(res, 403, { success: false, error: '仅评审专家可设置专家类型' });
+        sendResponse(res, 403, { success: false, error: '仅专家顾问可设置专家类型' });
         return;
       }
       try {
@@ -4620,7 +5030,7 @@ const server = http.createServer(async (req, res) => {
       if (targetRole !== 'reviewer' && targetRole !== 'project_manager' && targetRole !== 'funds_manager') {
         sendResponse(res, 400, {
           success: false,
-          error: '邀请角色仅支持：评审专家(reviewer)、项目经理(project_manager)、经费管理员(funds_manager)'
+          error: '邀请角色仅支持：专家顾问(reviewer)、项目经理(project_manager)、经费管理员(funds_manager)'
         });
         return;
       }
@@ -5460,7 +5870,7 @@ const server = http.createServer(async (req, res) => {
         status,
         created_at
       FROM \`User\`
-      WHERE status = 'pending'
+      WHERE status = 'inactive'
       ORDER BY created_at DESC
       LIMIT ?
     `, [limit]);
@@ -6044,7 +6454,7 @@ const server = http.createServer(async (req, res) => {
               orderBy = 'u.created_at ASC';
               break;
             case 'last_login_desc':
-              orderBy = 'u.last_login DESC NULLS LAST';
+              orderBy = 'u.last_login IS NULL, u.last_login DESC';
               break;
             case 'last_login_asc':
               orderBy = 'u.last_login ASC';
@@ -6094,14 +6504,16 @@ const server = http.createServer(async (req, res) => {
       LIMIT ? OFFSET ?
     `, [...queryParams, pageSize, offset]);
 
+        await attachExpertTypesToUsers(users);
+
         // 获取统计数据
         const [statsResult] = await pool.query(`
       SELECT 
         COUNT(*) as totalCount,
-        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as activeCount,
-        SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) as inactiveCount,
-        0 as pendingCount
-      FROM \`User\`
+        SUM(CASE WHEN u.status = 'active' THEN 1 ELSE 0 END) as activeCount,
+        SUM(CASE WHEN u.status = 'inactive' THEN 1 ELSE 0 END) as inactiveCount,
+        SUM(CASE WHEN u.status = 'inactive' THEN 1 ELSE 0 END) as pendingCount
+      FROM \`User\` u
       WHERE ${whereClause}
     `, queryParams);
 
@@ -6247,9 +6659,14 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 管理员更新用户信息
-    if (pathname.startsWith('/api/admin/users/') && req.method === 'PUT') {
-      const match = pathname.match(/\/api\/admin\/users\/(.+)/);
+    // 管理员更新用户信息（排除子路径 reset-password / status）
+    if (
+      pathname.startsWith('/api/admin/users/')
+      && req.method === 'PUT'
+      && !pathname.includes('/reset-password')
+      && !pathname.includes('/status')
+    ) {
+      const match = pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
       if (!match) return;
 
       const userId = match[1];
@@ -6302,6 +6719,7 @@ const server = http.createServer(async (req, res) => {
         userCols.forEach((field) => {
           if (body[field] !== undefined) updates[field] = body[field];
         });
+        if (updates.status === 'pending') updates.status = 'inactive';
 
         // 如果是更新角色，需要检查权限链
         if (body.role && body.role !== oldUser.role) {
@@ -6566,7 +6984,7 @@ const server = http.createServer(async (req, res) => {
 
     // 管理员删除用户
     if (pathname.startsWith('/api/admin/users/') && req.method === 'DELETE') {
-      const match = pathname.match(/\/api\/admin\/users\/(.+)/);
+      const match = pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
       if (!match) return;
 
       const userId = match[1];
@@ -6896,43 +7314,70 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 导出用户数据
-    if (pathname === '/api/admin/users/export' && req.method === 'GET') {
+    // 专家顾问批量导入：下载 Excel 模板
+    if (pathname === '/api/admin/users/expert-import/template' && req.method === 'GET') {
       const token = req.headers.authorization;
       const admin = await verifyToken(token);
-
       if (!admin || !canManageUsers(admin.role)) {
         sendResponse(res, 403, { success: false, error: '没有权限' });
         return;
       }
+      try {
+        const workbook = await buildExpertImportTemplateWorkbook();
+        const buffer = await workbook.xlsx.writeBuffer();
+        sendExcelDownload(res, buffer, '专家顾问批量导入模板.xlsx');
+      } catch (e) {
+        console.error('生成专家顾问导入模板失败:', e);
+        sendResponse(res, 500, { success: false, error: '生成模板失败' });
+      }
+      return;
+    }
+
+    // 专家顾问批量导入：上传 Excel
+    if (pathname === '/api/admin/users/expert-import' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const admin = await verifyToken(token);
+      if (!admin || !canManageUsers(admin.role)) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      await handleExpertImportUpload(req, res, admin.id);
+      return;
+    }
+
+    // 导出用户数据（Excel，仅管理员）
+    if (pathname === '/api/admin/users/export' && req.method === 'GET') {
+      const admin = await assertAdminForExport(req, res);
+      if (!admin) return;
 
       try {
         const query = url.parse(req.url, true).query;
 
-        console.log('导出用户数据，管理员ID:', admin.id);
-
-        // 构建查询条件（与获取用户列表类似）
         let whereClauses = ['1=1'];
         let queryParams = [];
 
         if (query.keyword) {
-          whereClauses.push('(username LIKE ? OR name LIKE ? OR email LIKE ? OR department LIKE ?)');
+          whereClauses.push('(username LIKE ? OR name LIKE ? OR email LIKE ? OR department LIKE ? OR phone LIKE ?)');
           const keyword = `%${query.keyword}%`;
-          queryParams.push(keyword, keyword, keyword, keyword);
+          queryParams.push(keyword, keyword, keyword, keyword, keyword);
         }
 
         if (query.role) {
-          const roles = query.role.split(',');
-          const placeholders = roles.map(() => '?').join(',');
-          whereClauses.push(`role IN (${placeholders})`);
-          queryParams.push(...roles);
+          const roles = String(query.role).split(',').map((r) => r.trim()).filter(Boolean);
+          if (roles.length) {
+            const placeholders = roles.map(() => '?').join(',');
+            whereClauses.push(`role IN (${placeholders})`);
+            queryParams.push(...roles);
+          }
         }
 
         if (query.status) {
-          const statuses = query.status.split(',');
-          const placeholders = statuses.map(() => '?').join(',');
-          whereClauses.push(`status IN (${placeholders})`);
-          queryParams.push(...statuses);
+          const statuses = String(query.status).split(',').map((s) => s.trim()).filter(Boolean);
+          if (statuses.length) {
+            const placeholders = statuses.map(() => '?').join(',');
+            whereClauses.push(`status IN (${placeholders})`);
+            queryParams.push(...statuses);
+          }
         }
 
         if (query.department) {
@@ -6942,63 +7387,394 @@ const server = http.createServer(async (req, res) => {
 
         const whereClause = whereClauses.join(' AND ');
 
-        // 获取用户数据
-        const [users] = await pool.query(`
-      SELECT 
-        username as 用户名,
-        name as 姓名,
-        email as 邮箱,
-        CASE role
-          WHEN 'applicant' THEN '申请人'
-          WHEN 'reviewer' THEN '评审专家'
-          WHEN 'project_manager' THEN '科研助理'
-          WHEN 'admin' THEN '管理员'
-          ELSE role
-        END as 角色,
-        COALESCE(department, '') as 部门,
-        COALESCE(title, '') as 职称,
-        CASE status
-          WHEN 'active' THEN '活跃'
-          WHEN 'inactive' THEN '非活跃'
-          WHEN 'pending' THEN '待激活'
-          ELSE status
-        END as 状态,
-        DATE(created_at) as 注册日期,
-        DATE(last_login) as 最后登录日期
+        const [users] = await pool.query(
+          `
+      SELECT
+        username,
+        name,
+        email,
+        COALESCE(phone, '') AS phone,
+        role,
+        COALESCE(department, '') AS department,
+        COALESCE(title, '') AS title,
+        status,
+        created_at,
+        last_login
       FROM \`User\`
       WHERE ${whereClause}
       ORDER BY created_at DESC
-    `, queryParams);
+    `,
+          queryParams,
+        );
 
-        // 生成CSV内容
-        if (users.length === 0) {
-          sendResponse(res, 400, { success: false, error: '没有数据可导出' });
-          return;
-        }
+        const rows = users.map((u) => ({
+          username: u.username,
+          name: u.name,
+          email: u.email,
+          phone: u.phone,
+          role: USER_EXPORT_ROLE_LABELS[u.role] || u.role,
+          department: u.department,
+          title: u.title,
+          status:
+            u.status === 'active' ? '活跃' : u.status === 'inactive' ? '非活跃' : u.status,
+          created_at: u.created_at,
+          last_login: u.last_login,
+        }));
 
-        const headers = Object.keys(users[0])
-        const rows = users.map(user => Object.values(user))
-
-        const csvContent = [
-          headers.join(','),
-          ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-        ].join('\n')
-
-        // 设置响应头
-        res.setHeader('Content-Type', 'text/csv; charset=utf-8')
-        res.setHeader('Content-Disposition', `attachment; filename=users_${new Date().getTime()}.csv`)
-
-        res.statusCode = 200
-        res.end(csvContent)
-
+        await sendAdminExcelExport(res, '用户数据', '用户数据导出', [
+          { key: 'username', label: '用户名' },
+          { key: 'name', label: '姓名' },
+          { key: 'email', label: '邮箱' },
+          { key: 'phone', label: '手机' },
+          { key: 'role', label: '角色' },
+          { key: 'department', label: '部门/单位' },
+          { key: 'title', label: '职称/职务' },
+          { key: 'status', label: '状态' },
+          { key: 'created_at', label: '注册时间', format: 'datetime' },
+          { key: 'last_login', label: '最后登录', format: 'datetime' },
+        ], rows);
       } catch (error) {
-        console.error('导出用户数据失败:', error)
-        sendResponse(res, 500, {
-          success: false,
-          error: '导出失败'
-        })
+        console.error('导出用户数据失败:', error);
+        sendResponse(res, 500, { success: false, error: '导出失败' });
       }
-      return
+      return;
+    }
+
+    // 管理员导出：科研成果登记
+    if (pathname === '/api/admin/export/research-achievements' && req.method === 'GET') {
+      const admin = await assertAdminForExport(req, res);
+      if (!admin) return;
+      try {
+        const query = url.parse(req.url, true).query;
+        const whereClauses = [];
+        const queryParams = [];
+        if (query.status && query.status !== 'all') {
+          whereClauses.push('pa.status = ?');
+          queryParams.push(query.status);
+        }
+        if (query.search) {
+          whereClauses.push('(pa.name LIKE ? OR p.title LIKE ? OR p.project_code LIKE ?)');
+          const kw = `%${query.search}%`;
+          queryParams.push(kw, kw, kw);
+        }
+        const whereClause = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
+        const [rows] = await pool.query(
+          `
+          SELECT pa.name, pa.type, p.project_code, p.title AS project_title, pa.status,
+                 u.name AS creator_name, pa.output_date, uv.name AS verifier_name,
+                 pa.verified_date, pa.created_at
+          FROM \`ResearchAchievement\` pa
+          LEFT JOIN \`Project\` p ON pa.project_id = p.id
+          LEFT JOIN \`User\` u ON pa.created_by = u.id
+          LEFT JOIN \`User\` uv ON pa.verified_by = uv.id
+          ${whereClause}
+          ORDER BY pa.created_at DESC
+          LIMIT 5000
+        `,
+          queryParams,
+        );
+        const data = rows.map((r) => ({
+          name: r.name,
+          type: RESEARCH_ACHIEVEMENT_TYPE_LABELS[r.type] || r.type,
+          project_code: r.project_code || '',
+          project_title: r.project_title || '',
+          status: ACHIEVEMENT_STATUS_LABELS[r.status] || r.status,
+          creator_name: r.creator_name || '',
+          output_date: r.output_date,
+          verifier_name: r.verifier_name || '',
+          verified_date: r.verified_date,
+          created_at: r.created_at,
+        }));
+        await sendAdminExcelExport(res, '科研成果', '科研成果登记导出', [
+          { key: 'name', label: '成果名称' },
+          { key: 'type', label: '成果类型' },
+          { key: 'project_code', label: '项目编号' },
+          { key: 'project_title', label: '项目名称' },
+          { key: 'status', label: '审核状态' },
+          { key: 'creator_name', label: '登记人' },
+          { key: 'output_date', label: '成果日期', format: 'date' },
+          { key: 'verifier_name', label: '审核人' },
+          { key: 'verified_date', label: '核实日期', format: 'date' },
+          { key: 'created_at', label: '登记时间', format: 'datetime' },
+        ], data);
+      } catch (error) {
+        console.error('导出科研成果失败:', error);
+        sendResponse(res, 500, { success: false, error: '导出失败' });
+      }
+      return;
+    }
+
+    // 管理员导出：转化成果登记
+    if (pathname === '/api/admin/export/transformation-achievements' && req.method === 'GET') {
+      const admin = await assertAdminForExport(req, res);
+      if (!admin) return;
+      try {
+        const query = url.parse(req.url, true).query;
+        let where = "ta.submission_type = 'applicant'";
+        const params = [];
+        if (query.status && query.status !== 'all') {
+          where += ' AND ta.status = ?';
+          params.push(query.status);
+        }
+        if (query.search) {
+          where += ' AND (ta.company_name LIKE ? OR ta.recipient_company LIKE ? OR p.title LIKE ? OR p.project_code LIKE ?)';
+          const kw = `%${query.search}%`;
+          params.push(kw, kw, kw, kw);
+        }
+        const [rows] = await pool.query(
+          `
+          SELECT ta.transform_method, p.project_code, p.title AS project_title,
+                 ta.company_name, ta.recipient_company, ta.contract_amount, ta.status,
+                 u.name AS creator_name, ta.created_at, ta.verified_date
+          FROM \`TransformationAchievement\` ta
+          JOIN \`Project\` p ON ta.project_id = p.id
+          LEFT JOIN \`User\` u ON ta.created_by = u.id
+          WHERE ${where}
+          ORDER BY ta.created_at DESC
+          LIMIT 5000
+        `,
+          params,
+        );
+        const TRANSFORM_LABELS = {
+          tech_license: '技术许可',
+          tech_transfer: '技术转让',
+          equity_investment: '作价投资',
+          startup_company: '创办企业',
+        };
+        const data = rows.map((r) => ({
+          transform_method: TRANSFORM_LABELS[r.transform_method] || r.transform_method,
+          project_code: r.project_code || '',
+          project_title: r.project_title || '',
+          company:
+            r.transform_method === 'startup_company'
+              ? r.company_name || ''
+              : r.recipient_company || '',
+          contract_amount: r.contract_amount,
+          status: ACHIEVEMENT_STATUS_LABELS[r.status] || r.status,
+          creator_name: r.creator_name || '',
+          created_at: r.created_at,
+          verified_date: r.verified_date,
+        }));
+        await sendAdminExcelExport(res, '转化成果', '转化成果登记导出', [
+          { key: 'transform_method', label: '转化方式' },
+          { key: 'project_code', label: '项目编号' },
+          { key: 'project_title', label: '项目名称' },
+          { key: 'company', label: '公司/承接方' },
+          { key: 'contract_amount', label: '合同金额' },
+          { key: 'status', label: '审核状态' },
+          { key: 'creator_name', label: '登记人' },
+          { key: 'created_at', label: '登记时间', format: 'datetime' },
+          { key: 'verified_date', label: '核实日期', format: 'date' },
+        ], data);
+      } catch (error) {
+        console.error('导出转化成果失败:', error);
+        sendResponse(res, 500, { success: false, error: '导出失败' });
+      }
+      return;
+    }
+
+    // 管理员导出：企业服务成果登记
+    if (pathname === '/api/admin/export/enterprise-service-achievements' && req.method === 'GET') {
+      const admin = await assertAdminForExport(req, res);
+      if (!admin) return;
+      try {
+        const query = url.parse(req.url, true).query;
+        let sql = `
+          SELECT DISTINCT esa.achievement_type, esa.service_enterprise, esa.qualified_enterprise,
+                 esa.status, u.name AS creator_name, sp.name AS service_provider_name,
+                 esa.created_at, esa.verified_date,
+                 GROUP_CONCAT(DISTINCT p.project_code ORDER BY p.project_code SEPARATOR '、') AS project_codes,
+                 GROUP_CONCAT(DISTINCT p.title ORDER BY p.title SEPARATOR '、') AS project_titles
+          FROM \`EnterpriseServiceAchievement\` esa
+          LEFT JOIN \`User\` u ON esa.created_by = u.id
+          LEFT JOIN \`ServiceProvider\` sp ON esa.service_provider_id = sp.id
+          LEFT JOIN \`EnterpriseServiceProject\` esp ON esa.id = esp.achievement_id
+          LEFT JOIN \`Project\` p ON esp.project_id = p.id
+          WHERE esa.submission_type = 'applicant'`;
+        const params = [];
+        if (query.status && query.status !== 'all') {
+          sql += ' AND esa.status = ?';
+          params.push(query.status);
+        }
+        if (query.search) {
+          sql += ' AND (esa.service_enterprise LIKE ? OR esa.qualified_enterprise LIKE ? OR p.title LIKE ?)';
+          const kw = `%${query.search}%`;
+          params.push(kw, kw, kw);
+        }
+        sql += ' GROUP BY esa.id ORDER BY esa.created_at DESC LIMIT 5000';
+        const [rows] = await pool.query(sql, params);
+        const TYPE_LABELS = { tech_cooperation: '技术合作', qualification_certification: '资质认定' };
+        const data = rows.map((r) => ({
+          achievement_type: TYPE_LABELS[r.achievement_type] || r.achievement_type,
+          project_titles: r.project_titles || '',
+          project_codes: r.project_codes || '',
+          enterprise:
+            r.achievement_type === 'qualification_certification'
+              ? r.qualified_enterprise || ''
+              : r.service_enterprise || '',
+          service_provider_name: r.service_provider_name || '',
+          status: ACHIEVEMENT_STATUS_LABELS[r.status] || r.status,
+          creator_name: r.creator_name || '',
+          created_at: r.created_at,
+          verified_date: r.verified_date,
+        }));
+        await sendAdminExcelExport(res, '企业服务成果', '企业服务成果登记导出', [
+          { key: 'achievement_type', label: '成果类型' },
+          { key: 'project_titles', label: '关联项目' },
+          { key: 'project_codes', label: '项目编号' },
+          { key: 'enterprise', label: '服务企业/获资质企业' },
+          { key: 'service_provider_name', label: '服务机构' },
+          { key: 'status', label: '审核状态' },
+          { key: 'creator_name', label: '登记人' },
+          { key: 'created_at', label: '登记时间', format: 'datetime' },
+          { key: 'verified_date', label: '核实日期', format: 'date' },
+        ], data);
+      } catch (error) {
+        console.error('导出企业服务成果失败:', error);
+        sendResponse(res, 500, { success: false, error: '导出失败' });
+      }
+      return;
+    }
+
+    // 管理员导出：服务资源库
+    if (pathname === '/api/admin/export/service-providers' && req.method === 'GET') {
+      const admin = await assertAdminForExport(req, res);
+      if (!admin) return;
+      try {
+        const query = url.parse(req.url, true).query;
+        let where = 'WHERE 1=1';
+        const params = [];
+        const keyword = String(query.keyword || '').trim();
+        if (keyword) {
+          const kw = `%${keyword}%`;
+          where +=
+            ' AND (sp.name LIKE ? OR sp.unified_social_credit_code LIKE ? OR sp.contact_name LIKE ? OR sp.contact_phone LIKE ? OR sp.contact_email LIKE ? OR sp.category LIKE ? OR sp.description LIKE ?)';
+          params.push(kw, kw, kw, kw, kw, kw, kw);
+        }
+        const categoryRaw = query.category || '';
+        const categories = String(categoryRaw)
+          .split(',')
+          .map((c) => c.trim())
+          .filter(Boolean);
+        if (categories.length) {
+          where += ` AND (${categories.map(() => 'FIND_IN_SET(?, sp.category)').join(' OR ')})`;
+          params.push(...categories);
+        }
+        const [rows] = await pool.query(
+          `
+          SELECT sp.name, sp.unified_social_credit_code, sp.category, sp.contact_name,
+                 sp.contact_phone, sp.contact_email, sp.description, sp.updated_at, sp.created_at
+          FROM \`ServiceProvider\` sp
+          ${where}
+          ORDER BY sp.updated_at DESC, sp.name ASC
+          LIMIT 5000
+        `,
+          params,
+        );
+        const data = rows.map((r) => ({
+          name: r.name,
+          unified_social_credit_code: r.unified_social_credit_code || '',
+          category: r.category || '',
+          contact_name: r.contact_name || '',
+          contact_phone: r.contact_phone || '',
+          contact_email: r.contact_email || '',
+          description: r.description || '',
+          updated_at: r.updated_at,
+          created_at: r.created_at,
+        }));
+        await sendAdminExcelExport(res, '服务资源库', '服务资源库导出', [
+          { key: 'name', label: '机构名称' },
+          { key: 'unified_social_credit_code', label: '统一社会信用代码' },
+          { key: 'category', label: '机构分类' },
+          { key: 'contact_name', label: '联系人' },
+          { key: 'contact_phone', label: '联系电话' },
+          { key: 'contact_email', label: '联系邮箱' },
+          { key: 'description', label: '机构简介' },
+          { key: 'updated_at', label: '更新时间', format: 'datetime' },
+          { key: 'created_at', label: '创建时间', format: 'datetime' },
+        ], data);
+      } catch (error) {
+        console.error('导出服务资源库失败:', error);
+        sendResponse(res, 500, { success: false, error: '导出失败' });
+      }
+      return;
+    }
+
+    // 管理员导出：专家资源库（专家顾问用户）
+    if (pathname === '/api/admin/export/experts' && req.method === 'GET') {
+      const admin = await assertAdminForExport(req, res);
+      if (!admin) return;
+      try {
+        const query = url.parse(req.url, true).query;
+        let whereClauses = ["u.role = 'reviewer'"];
+        const queryParams = [];
+        if (query.keyword) {
+          whereClauses.push('(u.username LIKE ? OR u.name LIKE ? OR u.email LIKE ? OR u.department LIKE ? OR u.phone LIKE ?)');
+          const keyword = `%${query.keyword}%`;
+          queryParams.push(keyword, keyword, keyword, keyword, keyword);
+        }
+        if (query.status) {
+          const statuses = String(query.status).split(',').map((s) => s.trim()).filter(Boolean);
+          if (statuses.length) {
+            whereClauses.push(`u.status IN (${statuses.map(() => '?').join(',')})`);
+            queryParams.push(...statuses);
+          }
+        }
+        const whereClause = whereClauses.join(' AND ');
+        const [rows] = await pool.query(
+          `
+          SELECT u.username, u.name, u.email, COALESCE(u.phone, '') AS phone,
+                 COALESCE(u.department, '') AS department, COALESCE(u.title, '') AS title,
+                 u.status, ep.expert_types, ep.expertise_description, u.created_at, u.last_login
+          FROM \`User\` u
+          LEFT JOIN \`ExpertProfile\` ep ON ep.id = u.id
+          WHERE ${whereClause}
+          ORDER BY u.created_at DESC
+          LIMIT 5000
+        `,
+          queryParams,
+        );
+        const EXPERT_TYPE_LABELS = {
+          technical: '技术专家',
+          industry: '产业专家',
+          investment: '投资专家',
+          tech_service: '科技服务专家',
+        };
+        const data = rows.map((r) => ({
+          name: r.name,
+          department: r.department,
+          title: r.title,
+          phone: r.phone,
+          email: r.email,
+          username: r.username,
+          expert_types: String(r.expert_types || '')
+            .split(',')
+            .filter(Boolean)
+            .map((t) => EXPERT_TYPE_LABELS[t.trim()] || t.trim())
+            .join('、'),
+          expertise: r.expertise_description || '',
+          status: r.status === 'active' ? '活跃' : r.status === 'inactive' ? '非活跃' : r.status,
+          created_at: r.created_at,
+          last_login: r.last_login,
+        }));
+        await sendAdminExcelExport(res, '专家资源库', '专家资源库导出', [
+          { key: 'name', label: '姓名' },
+          { key: 'department', label: '工作单位' },
+          { key: 'title', label: '职务/职称' },
+          { key: 'phone', label: '手机' },
+          { key: 'email', label: '邮箱' },
+          { key: 'username', label: '用户名' },
+          { key: 'expert_types', label: '专家类型' },
+          { key: 'expertise', label: '专业领域/简介' },
+          { key: 'status', label: '状态' },
+          { key: 'created_at', label: '创建时间', format: 'datetime' },
+          { key: 'last_login', label: '最后登录', format: 'datetime' },
+        ], data);
+      } catch (error) {
+        console.error('导出专家资源库失败:', error);
+        sendResponse(res, 500, { success: false, error: '导出失败' });
+      }
+      return;
     }
 
     // 获取部门列表
@@ -8490,7 +9266,7 @@ const server = http.createServer(async (req, res) => {
           SELECT
             fr.id, fr.project_id, fr.application_date, fr.service_requirement,
             fr.submission_type, fr.feedback_action, fr.feedback_comment, fr.feedback_date,
-            fr.result_description, fr.result_date, fr.status, fr.created_at,
+            NULL AS result_description, NULL AS result_date, fr.status, fr.created_at,
             p.title AS project_title, p.project_code,
             fb.name AS feedback_by_name,
             (SELECT COALESCE(SUM(fri.amount), 0) FROM \`FundsRequestItem\` fri WHERE fri.funds_request_id = fr.id) AS total_amount,
@@ -8540,60 +9316,10 @@ const server = http.createServer(async (req, res) => {
       }
       const requestId = pathname.replace('/api/applicant/funds-requests/', '').replace('/result', '');
       try {
-        const body = await parseRequestBody(req);
-        const resultDescription = String(body.result_description || '').trim();
-        if (!resultDescription) {
-          sendResponse(res, 400, { success: false, error: '请填写成果描述' });
-          return;
-        }
-        const uid = user.userId || user.id;
-        const [rows] = await pool.query(
-          `SELECT fr.*, p.title AS project_title
-           FROM \`FundsRequest\` fr
-           INNER JOIN \`Project\` p ON fr.project_id = p.id
-           WHERE fr.id = ?
-             AND (
-               fr.applicant_id = ?
-               OR fr.project_id IN (SELECT pm.project_id FROM \`ProjectMember\` pm WHERE pm.user_id = ?)
-             )`,
-          [requestId, uid, uid],
-        );
-        if (rows.length === 0) {
-          sendResponse(res, 404, { success: false, error: '经费申请不存在或无权限' });
-          return;
-        }
-        const fr = rows[0];
-        if (fr.status !== 'feedback_given') {
-          sendResponse(res, 400, { success: false, error: '该经费申请尚未收到反馈或已提交成果' });
-          return;
-        }
-        if (!['approved', 'partial_approved'].includes(fr.feedback_action)) {
-          sendResponse(res, 400, { success: false, error: '经费申请未获批准，无法提交成果反馈' });
-          return;
-        }
-        await pool.query(
-          `UPDATE \`FundsRequest\`
-           SET result_description = ?, result_date = NOW(), status = 'result_submitted', updated_at = NOW()
-           WHERE id = ?`,
-          [resultDescription, requestId],
-        );
-        const [managers] = await pool.query(
-          `SELECT id FROM \`User\` WHERE role = 'funds_manager' AND status = 'active'`,
-        );
-        for (const fm of managers) {
-          await pool.query(
-            `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
-             VALUES (?, ?, 'funding', ?, ?, ?, 'FundsRequest', NOW())`,
-            [
-              randomUUID(),
-              fm.id,
-              '经费申请成果已提交',
-              `项目「${fr.project_title}」的经费申请已提交成果反馈。`,
-              requestId,
-            ],
-          );
-        }
-        sendResponse(res, 200, { success: true, message: '成果反馈提交成功' });
+        sendResponse(res, 410, {
+          success: false,
+          error: '0627 版本已移除经费成果反馈字段，请使用活动登记或科研成果登记',
+        });
       } catch (error) {
         console.error('提交经费成果反馈失败:', error);
         sendResponse(res, 500, { success: false, error: '提交成果反馈失败', message: error.message });
@@ -8874,7 +9600,7 @@ const server = http.createServer(async (req, res) => {
             sendResponse(res, 400, { success: false, error: '缺少必要参数' });
             return;
           }
-          const validTypes = ['application', 'feedback', 'result'];
+          const validTypes = ['application', 'feedback'];
           if (!validTypes.includes(String(attachmentType))) {
             sendResponse(res, 400, { success: false, error: '附件类型无效' });
             return;
@@ -8899,11 +9625,6 @@ const server = http.createServer(async (req, res) => {
             sendResponse(res, 400, { success: false, error: '仅待审核状态可上传申请附件' });
             return;
           }
-          if (attachmentType === 'result' && !['feedback_given', 'result_submitted'].includes(fr.status)) {
-            sendResponse(res, 400, { success: false, error: '仅已批准且未完成成果反馈时可上传成果附件' });
-            return;
-          }
-
           const fileId = randomUUID();
           const fileData = Array.isArray(file) ? file[0] : file;
           const filePath = fileData.filepath || fileData.path;
@@ -9123,7 +9844,7 @@ const server = http.createServer(async (req, res) => {
             sendResponse(res, 400, { success: false, error: '缺少必要参数' });
             return;
           }
-          const validTypes = ['application', 'feedback', 'result'];
+          const validTypes = ['application', 'feedback'];
           if (!validTypes.includes(String(attachmentType))) {
             sendResponse(res, 400, { success: false, error: '附件类型无效' });
             return;
@@ -9135,11 +9856,6 @@ const server = http.createServer(async (req, res) => {
             return;
           }
           const fr = frRows[0];
-          if (attachmentType === 'result' && !['feedback_given', 'result_submitted'].includes(fr.status)) {
-            sendResponse(res, 400, { success: false, error: '仅已批准且未完成成果反馈时可上传成果附件' });
-            return;
-          }
-
           const fileId = randomUUID();
           const fileData = Array.isArray(file) ? file[0] : file;
           const filePath = fileData.filepath || fileData.path;
@@ -9188,9 +9904,7 @@ const server = http.createServer(async (req, res) => {
         const [feedbackResult] = await pool.query(
           `SELECT COUNT(*) as count FROM \`FundsRequest\` WHERE status = 'feedback_given'`
         );
-        const [resultResult] = await pool.query(
-          `SELECT COUNT(*) as count FROM \`FundsRequest\` WHERE status = 'result_submitted'`
-        );
+        const resultResult = [{ count: 0 }];
         const [pendingAmountResult] = await pool.query(`
           SELECT COALESCE(SUM(fri.amount), 0) as total
           FROM \`FundsRequestItem\` fri
@@ -9388,51 +10102,10 @@ const server = http.createServer(async (req, res) => {
       const requestId = pathname.replace('/api/funds-manager/requests/', '').replace('/result', '');
 
       try {
-        const body = await parseRequestBody(req);
-        const resultDescription = String(body.result_description || '').trim();
-
-        const [existing] = await pool.query(
-          `SELECT id, status, feedback_action, applicant_id, project_id FROM \`FundsRequest\` WHERE id = ? LIMIT 1`,
-          [requestId],
-        );
-        if (existing.length === 0) {
-          sendResponse(res, 404, { success: false, error: '经费申请不存在' });
-          return;
-        }
-        const row = existing[0];
-        if (row.status !== 'feedback_given') {
-          sendResponse(res, 400, { success: false, error: '仅可对已反馈且未提交成果的申请填写成果反馈' });
-          return;
-        }
-        if (!['approved', 'partial_approved'].includes(row.feedback_action)) {
-          sendResponse(res, 400, { success: false, error: '仅批准或部分批准的申请可填写成果反馈' });
-          return;
-        }
-        if (!resultDescription) {
-          sendResponse(res, 400, { success: false, error: '请填写成果描述' });
-          return;
-        }
-
-        await pool.query(
-          `UPDATE \`FundsRequest\`
-           SET result_description = ?, result_date = NOW(), status = 'result_submitted', updated_at = NOW()
-           WHERE id = ?`,
-          [resultDescription, requestId],
-        );
-
-        await pool.query(
-          `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
-           VALUES (?, ?, 'funding', ?, ?, ?, 'FundsRequest', NOW())`,
-          [
-            randomUUID(),
-            row.applicant_id,
-            '经费成果反馈已登记',
-            '经费管理员已提交经费成果反馈，请在「经费申请」与「成果反馈」中查看。',
-            requestId,
-          ],
-        );
-
-        sendResponse(res, 200, { success: true, message: '成果反馈已保存' });
+        sendResponse(res, 410, {
+          success: false,
+          error: '0627 版本已移除经费成果反馈字段，请使用活动登记或科研成果登记',
+        });
       } catch (error) {
         console.error('提交经费成果反馈失败:', error);
         sendResponse(res, 500, { success: false, error: '提交成果反馈失败', message: error.message });
@@ -9501,29 +10174,19 @@ const server = http.createServer(async (req, res) => {
           );
         }
 
-        let resultDescription = String(body.result_description || '').trim();
-        if (!['approved', 'partial_approved'].includes(feedbackAction)) {
-          resultDescription = '';
-        }
-        const newStatus = resultDescription ? 'result_submitted' : 'feedback_given';
-
         await pool.query(
           `UPDATE \`FundsRequest\`
            SET feedback_date = NOW(),
                feedback_by = ?,
                feedback_action = ?,
                feedback_comment = ?,
-               result_description = ?,
-               result_date = ${resultDescription ? 'NOW()' : 'NULL'},
-               status = ?,
+               status = 'feedback_given',
                updated_at = NOW()
            WHERE id = ?`,
           [
             user.id,
             feedbackAction,
             body.feedback_comment || null,
-            resultDescription || null,
-            newStatus,
             requestId,
           ],
         );
@@ -9581,12 +10244,10 @@ const server = http.createServer(async (req, res) => {
         const statusLabels = {
           pending: '待反馈',
           feedback_given: '已反馈',
-          result_submitted: '已提交成果',
         };
         const colors = {
           pending: '#faad14',
           feedback_given: '#1890ff',
-          result_submitted: '#52c41a',
         };
 
         const total = stats.reduce((sum, s) => sum + (s.count || 0), 0);
@@ -10543,7 +11204,7 @@ const server = http.createServer(async (req, res) => {
       if (!user || user.role !== 'admin') {
         sendResponse(res, 403, {
           success: false,
-          error: '项目评审须由评审专家在专家工作台提交；仅管理员可使用本接口代录评审。',
+          error: '项目评审须由专家顾问在专家工作台提交；仅管理员可使用本接口代录评审。',
         });
         return;
       }
@@ -13551,12 +14212,43 @@ const server = http.createServer(async (req, res) => {
 
     // ==================== 科研助理用户管理API ====================
 
+    // 专家顾问批量导入：下载 Excel 模板
+    if (pathname === '/api/assistant/users/expert-import/template' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || !canManageUsers(user.role)) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const workbook = await buildExpertImportTemplateWorkbook();
+        const buffer = await workbook.xlsx.writeBuffer();
+        sendExcelDownload(res, buffer, '专家顾问批量导入模板.xlsx');
+      } catch (e) {
+        console.error('生成专家顾问导入模板失败:', e);
+        sendResponse(res, 500, { success: false, error: '生成模板失败' });
+      }
+      return;
+    }
+
+    // 专家顾问批量导入：上传 Excel
+    if (pathname === '/api/assistant/users/expert-import' && req.method === 'POST') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || !canManageUsers(user.role)) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      await handleExpertImportUpload(req, res, user.id);
+      return;
+    }
+
     // 获取用户列表
     if (pathname === '/api/assistant/users' && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
 
-      if (!user || user.role !== 'project_manager') {
+      if (!user || !canManageUsers(user.role)) {
         sendResponse(res, 403, { success: false, error: '没有权限' });
         return;
       }
@@ -13632,9 +14324,10 @@ const server = http.createServer(async (req, res) => {
         CASE u.role
           WHEN 'admin' THEN 1
           WHEN 'project_manager' THEN 2
-          WHEN 'reviewer' THEN 3
-          WHEN 'applicant' THEN 4
-          ELSE 5
+          WHEN 'funds_manager' THEN 3
+          WHEN 'reviewer' THEN 4
+          WHEN 'applicant' THEN 5
+          ELSE 6
         END,
         u.created_at DESC
       LIMIT ? OFFSET ?
@@ -13644,12 +14337,13 @@ const server = http.createServer(async (req, res) => {
         const [statsResult] = await pool.query(`
       SELECT 
         COUNT(*) as totalUsers,
-        SUM(CASE WHEN role = 'applicant' THEN 1 ELSE 0 END) as totalApplicants,
-        SUM(CASE WHEN role = 'reviewer' THEN 1 ELSE 0 END) as totalReviewers,
-        SUM(CASE WHEN role = 'project_manager' THEN 1 ELSE 0 END) as totalAssistants,
-        SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as totalAdmins,
-        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as activeUsers
-      FROM \`User\`
+        SUM(CASE WHEN u.role = 'applicant' THEN 1 ELSE 0 END) as totalApplicants,
+        SUM(CASE WHEN u.role = 'reviewer' THEN 1 ELSE 0 END) as totalReviewers,
+        SUM(CASE WHEN u.role = 'project_manager' THEN 1 ELSE 0 END) as totalAssistants,
+        SUM(CASE WHEN u.role = 'funds_manager' THEN 1 ELSE 0 END) as totalFundsManagers,
+        SUM(CASE WHEN u.role = 'admin' THEN 1 ELSE 0 END) as totalAdmins,
+        SUM(CASE WHEN u.status = 'active' THEN 1 ELSE 0 END) as activeUsers
+      FROM \`User\` u
       WHERE ${whereClause}
     `, queryParams);
 
@@ -13658,6 +14352,7 @@ const server = http.createServer(async (req, res) => {
           totalApplicants: statsResult[0]?.totalApplicants || 0,
           totalReviewers: statsResult[0]?.totalReviewers || 0,
           totalAssistants: statsResult[0]?.totalAssistants || 0,
+          totalFundsManagers: statsResult[0]?.totalFundsManagers || 0,
           totalAdmins: statsResult[0]?.totalAdmins || 0,
           activeUsers: statsResult[0]?.activeUsers || 0,
         };
@@ -13692,7 +14387,7 @@ const server = http.createServer(async (req, res) => {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
 
-      if (!user || user.role !== 'project_manager') {
+      if (!user || !canManageUsers(user.role)) {
         sendResponse(res, 403, { success: false, error: '没有权限' });
         return;
       }
@@ -13700,16 +14395,21 @@ const server = http.createServer(async (req, res) => {
       try {
         console.log('获取用户统计，助理ID:', user.id);
 
-        const [statsResult] = await pool.query(`
+        const [overviewRows] = await pool.query(`
       SELECT 
         COUNT(*) as totalUsers,
         SUM(CASE WHEN role = 'applicant' THEN 1 ELSE 0 END) as totalApplicants,
         SUM(CASE WHEN role = 'reviewer' THEN 1 ELSE 0 END) as totalReviewers,
         SUM(CASE WHEN role = 'project_manager' THEN 1 ELSE 0 END) as totalAssistants,
+        SUM(CASE WHEN role = 'funds_manager' THEN 1 ELSE 0 END) as totalFundsManagers,
         SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as totalAdmins,
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as activeUsers,
-        SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) as inactiveUsers,
-        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pendingUsers,
+        SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) as inactiveUsers
+      FROM \`User\`
+    `);
+
+        const [statsResult] = await pool.query(`
+      SELECT 
         DATE(created_at) as date,
         COUNT(*) as daily_registrations
       FROM \`User\`
@@ -13725,8 +14425,7 @@ const server = http.createServer(async (req, res) => {
         COUNT(*) as count,
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_count,
         SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) as inactive_count,
-        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_count,
-        DATE(created_at) as latest_registration
+        MAX(created_at) as latest_registration
       FROM \`User\`
       GROUP BY role
       ORDER BY count DESC
@@ -13747,14 +14446,14 @@ const server = http.createServer(async (req, res) => {
           success: true,
           data: {
             overview: {
-              totalUsers: statsResult[0]?.totalUsers || 0,
-              totalApplicants: statsResult[0]?.totalApplicants || 0,
-              totalReviewers: statsResult[0]?.totalReviewers || 0,
-              totalAssistants: statsResult[0]?.totalAssistants || 0,
-              totalAdmins: statsResult[0]?.totalAdmins || 0,
-              activeUsers: statsResult[0]?.activeUsers || 0,
-              inactiveUsers: statsResult[0]?.inactiveUsers || 0,
-              pendingUsers: statsResult[0]?.pendingUsers || 0,
+              totalUsers: overviewRows[0]?.totalUsers || 0,
+              totalApplicants: overviewRows[0]?.totalApplicants || 0,
+              totalReviewers: overviewRows[0]?.totalReviewers || 0,
+              totalAssistants: overviewRows[0]?.totalAssistants || 0,
+              totalFundsManagers: overviewRows[0]?.totalFundsManagers || 0,
+              totalAdmins: overviewRows[0]?.totalAdmins || 0,
+              activeUsers: overviewRows[0]?.activeUsers || 0,
+              inactiveUsers: overviewRows[0]?.inactiveUsers || 0,
             },
             roleStats,
             deptStats,
@@ -13877,9 +14576,14 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 更新用户信息
-    if (pathname.startsWith('/api/assistant/users/') && req.method === 'PUT') {
-      const match = pathname.match(/\/api\/assistant\/users\/(.+)/);
+    // 更新用户信息（排除子路径 status / password）
+    if (
+      pathname.startsWith('/api/assistant/users/')
+      && req.method === 'PUT'
+      && !pathname.endsWith('/status')
+      && !pathname.endsWith('/password')
+    ) {
+      const match = pathname.match(/^\/api\/assistant\/users\/([^/]+)$/);
       if (!match) return;
 
       const userId = match[1];
@@ -13914,6 +14618,7 @@ const server = http.createServer(async (req, res) => {
         userCols.forEach((field) => {
           if (body[field] !== undefined) updates[field] = body[field];
         });
+        if (updates.status === 'pending') updates.status = 'inactive';
 
         // 如果是更新角色，需要特殊权限检查
         if (body.role && body.role !== oldUser.role) {
@@ -14182,7 +14887,7 @@ const server = http.createServer(async (req, res) => {
         email,
         CASE role
           WHEN 'applicant' THEN '申请人'
-          WHEN 'reviewer' THEN '评审专家'
+          WHEN 'reviewer' THEN '专家顾问'
           WHEN 'project_manager' THEN '科研助理'
           WHEN 'admin' THEN '管理员'
           ELSE role
@@ -15027,7 +15732,7 @@ const server = http.createServer(async (req, res) => {
     function getRoleText(role) {
       const map = {
         'applicant': '申请人',
-        'reviewer': '评审专家',
+        'reviewer': '专家顾问',
         'project_manager': '科研助理',
         'admin': '管理员',
       };
@@ -15547,7 +16252,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // ==================== 评审专家分配相关API（适配新数据库） ====================
+    // ==================== 专家顾问分配相关API（适配新数据库） ====================
 
     // 辅助函数：生成UUID
     function generateUUID() {
@@ -15599,7 +16304,7 @@ const server = http.createServer(async (req, res) => {
 
     // ==================== API 端点 ====================
 
-    // 1. 获取需要分配评审专家的项目列表
+    // 1. 获取需要分配专家顾问的项目列表
     if (pathname === '/api/assistant/projects/need-reviewer' && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -15615,7 +16320,7 @@ const server = http.createServer(async (req, res) => {
         const pageSize = parseInt(query.pageSize) || 20;
         const offset = (page - 1) * pageSize;
 
-        console.log('获取需要分配评审专家的项目列表，助理ID:', user.id);
+        console.log('获取需要分配专家顾问的项目列表，助理ID:', user.id);
 
         // 构建查询条件：状态为已提交或评审中（适配新数据库状态）
         let whereClauses = ["p.status IN ('submitted', 'under_review')"];
@@ -15769,7 +16474,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 2. 获取可用的评审专家列表
+    // 2. 获取可用的专家顾问列表
     if (pathname === '/api/assistant/reviewers/available' && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -15785,9 +16490,9 @@ const server = http.createServer(async (req, res) => {
         const keyword = query.keyword || '';
         const domainIds = query.domain_ids ? query.domain_ids.split(',') : [];
 
-        console.log('获取可用评审专家列表，助理ID:', user.id, '项目ID:', projectId, '领域IDs:', domainIds);
+        console.log('获取可用专家顾问列表，助理ID:', user.id, '项目ID:', projectId, '领域IDs:', domainIds);
 
-        // 获取当前项目已分配的评审专家ID
+        // 获取当前项目已分配的专家顾问ID
         let assignedReviewerIds = [];
         if (projectId) {
           const [assigned] = await pool.query(
@@ -15816,7 +16521,7 @@ const server = http.createServer(async (req, res) => {
           projectDomainNames = projectDomains.map(d => d.name);
         }
 
-        // 构建查询条件（全部 active 评审专家，含未设置专家类型者）
+        // 构建查询条件（全部 active 专家顾问，含未设置专家类型者）
         let whereConditions = ['u.role = ?', 'u.status = ?'];
         let queryParams = ['reviewer', 'active'];
 
@@ -15835,7 +16540,7 @@ const server = http.createServer(async (req, res) => {
           queryParams.push(kw, kw, kw, kw, kw, kw);
         }
 
-        // 查询评审专家
+        // 查询专家顾问
         const [reviewers] = await pool.query(
           `
           SELECT 
@@ -15964,8 +16669,8 @@ const server = http.createServer(async (req, res) => {
         });
 
       } catch (error) {
-        console.error('获取评审专家列表失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取评审专家列表失败' });
+        console.error('获取专家顾问列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取专家顾问列表失败' });
       }
       return;
     }
@@ -16321,7 +17026,7 @@ const server = http.createServer(async (req, res) => {
 
         sendResponse(res, 200, {
           success: true,
-          message: '领取成功，您将负责该项目的后续分配评审专家与跟进',
+          message: '领取成功，您将负责该项目的后续分配专家顾问与跟进',
           data: { projectId, manager_id: user.id },
         });
       } catch (error) {
@@ -16409,8 +17114,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 4. 为项目分配评审专家（原 3）
-    // 为项目分配评审专家
+    // 4. 为项目分配专家顾问（原 3）
+    // 为项目分配专家顾问
     if (pathname === '/api/assistant/projects/assign-reviewer' && req.method === 'POST') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -16425,11 +17130,11 @@ const server = http.createServer(async (req, res) => {
         const { projectId, reviewerIds } = body;
 
         if (!projectId || !reviewerIds || !Array.isArray(reviewerIds) || reviewerIds.length === 0) {
-          sendResponse(res, 400, { success: false, error: '请提供项目ID和评审专家ID列表' });
+          sendResponse(res, 400, { success: false, error: '请提供项目ID和专家顾问ID列表' });
           return;
         }
 
-        console.log('分配评审专家，项目ID:', projectId, '专家IDs:', reviewerIds);
+        console.log('分配专家顾问，项目ID:', projectId, '专家IDs:', reviewerIds);
 
         // 检查项目是否存在
         const [projects] = await pool.query(
@@ -16450,7 +17155,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // 检查专家是否存在且为有效评审专家（不要求已设置专家类型）
+        // 检查专家是否存在且为有效专家顾问（不要求已设置专家类型）
         const [reviewers] = await pool.query(
           `SELECT u.id, u.name
            FROM \`User\` u
@@ -16468,7 +17173,7 @@ const server = http.createServer(async (req, res) => {
 
         const assignmentResults = [];
 
-        // 为每个评审专家创建记录（库表仅有 ExpertAssignment，无 ProjectReview）
+        // 为每个专家顾问创建记录（库表仅有 ExpertAssignment，无 ProjectReview）
         for (const reviewer of reviewers) {
           const [existing] = await pool.query(
             `SELECT id FROM \`ExpertAssignment\` WHERE project_id = ? AND expert_id = ?`,
@@ -16516,7 +17221,7 @@ const server = http.createServer(async (req, res) => {
         await createNotification(
           project.applicant_id,
           '项目进入评审阶段',
-          `您的项目"${project.title}"已分配评审专家，正在评审中。`,
+          `您的项目"${project.title}"已分配专家顾问，正在评审中。`,
           'project',
           projectId
         );
@@ -16530,7 +17235,7 @@ const server = http.createServer(async (req, res) => {
 
         sendResponse(res, 200, {
           success: true,
-          message: '评审专家分配成功',
+          message: '专家顾问分配成功',
           data: {
             projectId,
             assignmentResults,
@@ -16539,18 +17244,18 @@ const server = http.createServer(async (req, res) => {
         });
 
       } catch (error) {
-        console.error('分配评审专家失败:', error);
+        console.error('分配专家顾问失败:', error);
         sendResponse(res, 500, {
           success: false,
-          error: '分配评审专家失败',
+          error: '分配专家顾问失败',
           message: error.message
         });
       }
       return;
     }
 
-    // 4. 移除已分配的评审专家
-    // 移除已分配的评审专家
+    // 4. 移除已分配的专家顾问
+    // 移除已分配的专家顾问
     if (pathname === '/api/assistant/projects/remove-reviewer' && req.method === 'DELETE') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -16565,11 +17270,11 @@ const server = http.createServer(async (req, res) => {
         const { projectId, reviewerId } = body;
 
         if (!projectId || !reviewerId) {
-          sendResponse(res, 400, { success: false, error: '请提供项目ID和评审专家ID' });
+          sendResponse(res, 400, { success: false, error: '请提供项目ID和专家顾问ID' });
           return;
         }
 
-        console.log('移除评审专家，项目ID:', projectId, '专家ID:', reviewerId);
+        console.log('移除专家顾问，项目ID:', projectId, '专家ID:', reviewerId);
 
         const [projForRemove] = await pool.query(
           'SELECT id, manager_id FROM `Project` WHERE id = ?',
@@ -16613,12 +17318,12 @@ const server = http.createServer(async (req, res) => {
 
         sendResponse(res, 200, {
           success: true,
-          message: '评审专家移除成功'
+          message: '专家顾问移除成功'
         });
 
       } catch (error) {
-        console.error('移除评审专家失败:', error);
-        sendResponse(res, 500, { success: false, error: '移除评审专家失败' });
+        console.error('移除专家顾问失败:', error);
+        sendResponse(res, 500, { success: false, error: '移除专家顾问失败' });
       }
       return;
     }
@@ -16699,7 +17404,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // 6. 获取待分配评审专家的项目统计
+    // 6. 获取待分配专家顾问的项目统计
     if (pathname === '/api/assistant/stats/reviewer-assignment' && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -17845,7 +18550,6 @@ const server = http.createServer(async (req, res) => {
             application_date,
             service_requirement,
             feedback_date,
-            result_date,
             status,
             created_at
           FROM \`IncubationProgress\`
@@ -17860,7 +18564,7 @@ const server = http.createServer(async (req, res) => {
           ? {
             start_date: incubation[0].application_date,
             planned_end_date: project.end_date,
-            actual_end_date: incubation[0].result_date,
+            actual_end_date: incubation[0].feedback_date,
             incubation_status: incubation[0].status,
           }
           : null;
@@ -18903,7 +19607,7 @@ const server = http.createServer(async (req, res) => {
 
         const project = projects[0];
 
-        // 检查权限：申请人本人、项目经理、管理员、评审专家、项目团队成员、经费管理员（仅已立项/孵化中）可查看
+        // 检查权限：申请人本人、项目经理、管理员、专家顾问、项目团队成员、经费管理员（仅已立项/孵化中）可查看
         const userId = user.userId || user.id;
         const isApplicant = project.applicant_id === userId;
         const isAdmin = checkPermission(user.role, 'admin');
@@ -19274,7 +19978,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // 只有项目申请人、管理员、评审专家可以查看评审意见
+        // 只有项目申请人、管理员、专家顾问可以查看评审意见
         const isApplicant = String(projects[0].applicant_id) === String(user.id);
         const isAdmin = user.role === 'admin';
         const isReviewer = user.role === 'reviewer';
@@ -19286,7 +19990,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         // 查询评审意见
-        // 如果是评审专家，只能看到自己的评审意见
+        // 如果是专家顾问，只能看到自己的评审意见
         // 如果是申请人或管理员，可以看到所有评审意见
         let reviewsQuery = `
       SELECT
@@ -19305,7 +20009,7 @@ const server = http.createServer(async (req, res) => {
     `;
         let queryParams = [projectId];
 
-        // 如果是评审专家，只查看自己的评审意见
+        // 如果是专家顾问，只查看自己的评审意见
         if (isReviewer && !isAdmin && !isApplicant) {
           reviewsQuery += ` AND ea.expert_id = ?`;
           queryParams.push(user.id);
@@ -25911,8 +26615,9 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 4. 获取单个用户详情（管理员专用）
-    if (pathname.startsWith('/api/admin/users/') && req.method === 'GET') {
+    // 4. 获取单个用户详情（管理员专用，不含 /projects 等子路径）
+    const adminUserDetailMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
+    if (adminUserDetailMatch && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
 
@@ -25933,7 +26638,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const userId = pathname.replace('/api/admin/users/', '');
+      const userId = adminUserDetailMatch[1];
 
       console.log('🔍 获取用户详情，管理员:', user.id, '目标用户:', userId);
 
@@ -25974,6 +26679,7 @@ const server = http.createServer(async (req, res) => {
             [userId],
           );
           additionalInfo.review_count = reviews[0]?.review_count || 0;
+          await attachExpertTypesToUsers([userData]);
         }
 
         console.log('✅ 获取用户详情成功');
@@ -26516,7 +27222,7 @@ const server = http.createServer(async (req, res) => {
       console.log('⭐ 获取用户评审记录，管理员:', adminUser.id, '目标用户:', userId);
 
       try {
-        // 检查用户是否存在且是评审专家
+        // 检查用户是否存在且是专家顾问
         const [existingUsers] = await pool.query(
           'SELECT id, role FROM `User` WHERE id = ?',
           [userId]
@@ -26657,7 +27363,7 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
-    // ==================== 评审专家仪表板API ====================
+    // ==================== 专家顾问仪表板API ====================
 
     const parseAssignmentReviewComment = (commentText) => {
       if (!commentText || typeof commentText !== 'string') return {};
@@ -26685,7 +27391,7 @@ const server = http.createServer(async (req, res) => {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
       if (!user || user.role !== 'reviewer') {
-        sendResponse(res, 403, { success: false, error: '没有权限访问评审专家仪表板' });
+        sendResponse(res, 403, { success: false, error: '没有权限访问专家顾问仪表板' });
         return;
       }
       try {
@@ -26733,7 +27439,7 @@ const server = http.createServer(async (req, res) => {
           `, [user.id]);
           researchField = expertDomains[0]?.research_fields || null;
         }
-        const userInfo = userInfoResult[0] || { name: '评审专家' };
+        const userInfo = userInfoResult[0] || { name: '专家顾问' };
         sendResponse(res, 200, {
           success: true,
           data: {
@@ -26751,7 +27457,7 @@ const server = http.createServer(async (req, res) => {
           }
         });
       } catch (error) {
-        console.error('获取评审专家仪表板数据失败:', error);
+        console.error('获取专家顾问仪表板数据失败:', error);
         sendResponse(res, 500, { success: false, error: '获取仪表板数据失败', message: error.message });
       }
       return;
@@ -26811,7 +27517,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 评审专家：浏览系统中项目列表（项目浏览页）
+    // 专家顾问：浏览系统中项目列表（项目浏览页）
     if (pathname === '/api/reviewer/all-projects' && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -27144,8 +27850,8 @@ const server = http.createServer(async (req, res) => {
           }
         });
       } catch (error) {
-        console.error('获取评审专家统计数据失败:', error);
-        sendResponse(res, 500, { success: false, error: '获取评审专家统计数据失败' });
+        console.error('获取专家顾问统计数据失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取专家顾问统计数据失败' });
       }
       return;
     }
@@ -27400,7 +28106,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 评审专家：根据项目ID获取自己的评审详情（用于评审历史查看）
+    // 专家顾问：根据项目ID获取自己的评审详情（用于评审历史查看）
     if (pathname === '/api/reviewer/my-review' && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -29177,7 +29883,7 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('');
   console.log('📊 仪表板API:');
   console.log(`   GET  /api/dashboard/applicant  - 申请人仪表板`);
-  console.log(`   GET  /api/dashboard/reviewer   - 评审专家仪表板`);
+  console.log(`   GET  /api/dashboard/reviewer   - 专家顾问仪表板`);
   console.log(`   GET  /api/dashboard/admin      - 管理员仪表板`);
   console.log(`   GET  /api/dashboard/assistant  - 科研助理仪表板`);
   console.log(`   PUT  /api/notifications/{id}/read - 标记通知已读`);

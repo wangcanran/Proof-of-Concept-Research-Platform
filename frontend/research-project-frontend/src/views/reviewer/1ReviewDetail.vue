@@ -90,7 +90,7 @@
             </div>
 
             <div class="conclusion-item">
-              <span class="item-label">评审专家:</span>
+              <span class="item-label">专家顾问:</span>
               <span class="item-value">{{ review.reviewerName }}</span>
             </div>
 

@@ -1006,7 +1006,7 @@ const canSubmit = computed(() => canProceed.value && currentStep.value === steps
 const getUserRoleText = (role?: string) => {
   const map: Record<string, string> = {
     applicant: '申请人',
-    reviewer: '评审专家',
+    reviewer: '专家顾问',
     project_manager: '项目经理',
     admin: '管理员',
   }

@@ -859,8 +859,8 @@ const exportReview = (review) => {
             <td>${formatDate(review.submitted_at)}</td>
           </tr>
           <tr>
-            <td>评审专家</td>
-            <td>${localStorage.getItem('userName') || '评审专家'}</td>
+            <td>专家顾问</td>
+            <td>${localStorage.getItem('userName') || '专家顾问'}</td>
             <td>评审结论</td>
             <td>${getConclusionText(review.recommendation)}</td>
           </tr>
@@ -923,7 +923,7 @@ const exportReview = (review) => {
         </div>
 
         <div class="signature">
-          <p>评审专家签名：___________________</p>
+          <p>专家顾问签名：___________________</p>
           <p>日期：${new Date().toLocaleDateString('zh-CN')}</p>
         </div>
       </body>

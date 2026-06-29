@@ -54,8 +54,8 @@
                 <span class="info-value">{{ request.applicant_name || '-' }}</span>
               </div>
               <div class="card-info">
-                <span class="info-label">申请金额（万元）</span>
-                <span class="info-value">{{ formatAmountWan(request.total_amount) }}</span>
+                <span class="info-label">申请金额（元）</span>
+                <span class="info-value">¥ {{ formatAmountYuan(request.total_amount) }}</span>
               </div>
               <div class="card-info">
                 <span class="info-label">申请时间</span>
@@ -119,24 +119,24 @@
                   <tr>
                     <th>科目</th>
                     <th>项目</th>
-                    <th class="num">申请金额（万元）</th>
-                    <th class="num">批准金额（万元）</th>
+                    <th class="num">申请金额（元）</th>
+                    <th class="num">批准金额（元）</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="item in selectedRequest.items || []" :key="item.id">
                     <td>{{ item.category }}</td>
                     <td>{{ item.item_name }}</td>
-                    <td class="num">{{ formatAmountWan(item.amount) }}</td>
+                    <td class="num">¥ {{ formatAmountYuan(item.amount) }}</td>
                     <td class="num">
                       <input
                         v-model.number="item._feedback_amount"
                         type="number"
                         min="0"
-                        :max="amountWanMax(item.amount)"
-                        step="0.0001"
+                        :max="Number(item.amount) || 0"
+                        step="0.01"
                         class="amount-input"
-                        placeholder="万元"
+                        placeholder="元"
                       />
                     </td>
                   </tr>
@@ -219,8 +219,8 @@
                     <th>科目</th>
                     <th>项目</th>
                     <th>说明</th>
-                    <th class="num">申请金额（万元）</th>
-                    <th class="num">批准金额（万元）</th>
+                    <th class="num">申请金额（元）</th>
+                    <th class="num">批准金额（元）</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -228,9 +228,9 @@
                     <td>{{ item.category }}</td>
                     <td>{{ item.item_name }}</td>
                     <td>{{ item.description || '—' }}</td>
-                    <td class="num">{{ formatAmountWan(item.amount) }}</td>
+                    <td class="num">¥ {{ formatAmountYuan(item.amount) }}</td>
                     <td class="num">
-                      {{ item.feedback_amount != null ? formatAmountWan(item.feedback_amount) : '—' }}
+                      {{ item.feedback_amount != null ? '¥ ' + formatAmountYuan(item.feedback_amount) : '—' }}
                     </td>
                   </tr>
                 </tbody>
@@ -274,10 +274,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import request from '@/utils/request'
 import {
-  amountWanMax,
-  formatAmountWan,
-  yuanToWanDisplay,
-  wanToYuanStore,
+  formatAmountYuan,
 } from '@/constants/budgetCategories'
 
 const route = useRoute()
@@ -389,7 +386,7 @@ const loadRequestDetail = async (id: string) => {
       ;(data.items || []).forEach((item: any) => {
         const yuan =
           item.feedback_amount != null ? Number(item.feedback_amount) : Number(item.amount)
-        item._feedback_amount = yuanToWanDisplay(yuan)
+        item._feedback_amount = yuan
       })
       selectedRequest.value = data
     }
@@ -436,7 +433,7 @@ const submitFeedback = async () => {
   try {
     const items = (selectedRequest.value.items || []).map((item: any) => ({
       id: item.id,
-      feedback_amount: wanToYuanStore(Number(item._feedback_amount) || 0),
+      feedback_amount: parseFloat((Number(item._feedback_amount) || 0).toFixed(2)),
       feedback_comment: item.feedback_comment || null,
     }))
     const res = (await request.post(`/api/funds-manager/requests/${selectedRequest.value.id}/feedback`, {

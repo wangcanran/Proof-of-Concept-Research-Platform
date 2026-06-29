@@ -62,7 +62,7 @@
           <div class="user-avatar-mini">{{ userInitial }}</div>
           <div v-if="!sidebarCollapsed" class="user-details">
             <div class="user-name-mini">{{ userName }}</div>
-            <div class="user-role-mini">评审专家</div>
+            <div class="user-role-mini">专家顾问</div>
           </div>
         </div>
       </div>
@@ -78,7 +78,7 @@
           </div>
           <h1 class="logo">科研项目评审系统</h1>
           <div class="breadcrumb">
-            <span class="current-page">评审专家工作台</span>
+            <span class="current-page">专家顾问工作台</span>
           </div>
         </div>
         <div class="header-right">
@@ -916,7 +916,7 @@ const loadUserInfo = async () => {
     const userStr = localStorage.getItem('user')
     if (userStr) {
       const user = JSON.parse(userStr)
-      userName.value = user.username || user.nickname || user.name || '评审专家'
+      userName.value = user.username || user.nickname || user.name || '专家顾问'
       userRole.value = user.role || 'reviewer'
       userId.value = user.id || user.user_id || ''
 
@@ -927,14 +927,14 @@ const loadUserInfo = async () => {
       const response = await request.get('/api/user/profile')
       if (response.success && response.data) {
         const userData = response.data.data || response.data
-        userName.value = userData.username || userData.name || '评审专家'
+        userName.value = userData.username || userData.name || '专家顾问'
         userRole.value = userData.role || 'reviewer'
         userId.value = userData.id || ''
       }
     }
   } catch (error) {
     console.warn('加载用户信息失败:', error)
-    userName.value = localStorage.getItem('userName') || '评审专家'
+    userName.value = localStorage.getItem('userName') || '专家顾问'
     userRole.value = localStorage.getItem('userRole') || 'reviewer'
     userId.value = localStorage.getItem('userId') || ''
   }
@@ -945,7 +945,7 @@ const loadDashboardData = async () => {
   loading.value = true
 
   try {
-    console.log('正在获取评审专家仪表板数据...')
+    console.log('正在获取专家顾问仪表板数据...')
 
     const response = await request.get('/api/dashboard/reviewer')
 
@@ -983,7 +983,7 @@ const loadDashboardData = async () => {
 
       lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN')
 
-      console.log('✅ 评审专家仪表板数据加载成功')
+      console.log('✅ 专家顾问仪表板数据加载成功')
     } else {
       throw new Error('数据格式错误')
     }
@@ -1104,7 +1104,7 @@ const showMockData = () => {
 
 // 组件生命周期
 onMounted(() => {
-  console.log('=== 初始化评审专家工作台页面 ===')
+  console.log('=== 初始化专家顾问工作台页面 ===')
 
   loadUserInfo().then(() => {
     console.log('加载后的用户信息:', {
@@ -1115,7 +1115,7 @@ onMounted(() => {
 
     // 检查角色是否匹配
     if (userRole.value.toLowerCase() !== 'reviewer') {
-      console.warn(`⚠️ 警告：当前用户角色 "${userRole.value}" 不匹配评审专家角色`)
+      console.warn(`⚠️ 警告：当前用户角色 "${userRole.value}" 不匹配专家顾问角色`)
       ElMessage.warning(`检测到您是${userRole.value}，将跳转到对应工作台`)
 
       setTimeout(() => {

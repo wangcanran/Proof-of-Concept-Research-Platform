@@ -8,7 +8,7 @@
           <span>返回工作台</span>
         </button>
         <h1>活动审核</h1>
-        <div class="header-subtitle">审核项目申请人提交的路演、产业交流等活动登记</div>
+        <div class="header-subtitle">审核项目申请人提交的路演、产业交流等推广对接类活动登记</div>
       </div>
     </div>
 

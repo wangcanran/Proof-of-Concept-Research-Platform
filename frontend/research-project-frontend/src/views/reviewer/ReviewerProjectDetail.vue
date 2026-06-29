@@ -308,7 +308,7 @@
       <!-- 评审意见 -->
       <div v-if="activeTab === 'reviews'" class="tab-panel">
         <div class="section">
-          <h3>评审专家意见</h3>
+          <h3>专家顾问意见</h3>
           <div v-if="reviewFeedback.length === 0" class="empty-state">
             <p>暂无评审意见</p>
             <p class="hint" v-if="project && ['submitted', 'under_review'].includes(project.status)">
@@ -329,7 +329,7 @@
               <div class="reviewer-info-section">
                 <div class="info-row">
                   <div class="info-item">
-                    <span class="info-label">评审专家</span>
+                    <span class="info-label">专家顾问</span>
                     <span class="info-value name">{{ review.reviewer_name || '未知专家' }}</span>
                   </div>
                   <div class="info-item">

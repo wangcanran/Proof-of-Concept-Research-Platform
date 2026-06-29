@@ -98,7 +98,7 @@ export const DataManager = {
           projectId: 'PROJ-2024-001',
           projectTitle: '人工智能在医疗诊断中的应用研究',
           reviewerId: 'REVIEWER-001',
-          reviewerName: '张评审专家',
+          reviewerName: '张专家顾问',
           assignedAt: '2024-01-16T08:00:00Z',
           deadline: '2024-01-23T08:00:00Z',
           status: 'pending', // pending, in_progress, completed, overdue
@@ -109,7 +109,7 @@ export const DataManager = {
           projectId: 'PROJ-2024-002',
           projectTitle: '新型钙钛矿太阳能电池材料研究',
           reviewerId: 'REVIEWER-001',
-          reviewerName: '张评审专家',
+          reviewerName: '张专家顾问',
           assignedAt: '2024-01-17T08:00:00Z',
           deadline: '2024-01-24T08:00:00Z',
           status: 'pending',
@@ -126,7 +126,7 @@ export const DataManager = {
           projectId: 'PROJ-2023-001',
           projectTitle: '区块链技术在金融监管中的应用',
           reviewerId: 'REVIEWER-001',
-          reviewerName: '张评审专家',
+          reviewerName: '张专家顾问',
           scores: { innovation: 22, scientific: 20, feasibility: 18, value: 21, total: 81 },
           conclusion: '通过',
           fundingRecommendation: '全额资助',
@@ -139,7 +139,7 @@ export const DataManager = {
     }
   },
 
-  // 获取评审专家的待评审任务
+  // 获取专家顾问的待评审任务
   getPendingTasks(reviewerId) {
     const tasks = this.reviewTasks.filter(
       (task) => task.reviewerId === reviewerId && task.status === 'pending',
@@ -155,7 +155,7 @@ export const DataManager = {
     })
   },
 
-  // 获取评审专家的已评审历史
+  // 获取专家顾问的已评审历史
   getReviewHistory(reviewerId) {
     return this.reviewHistory.filter((history) => history.reviewerId === reviewerId)
   },

@@ -260,7 +260,7 @@
       <div v-if="batchAction === 'assign'">
         <el-form label-width="80px">
           <el-form-item label="分配至">
-            <el-select placeholder="选择评审专家" style="width: 100%">
+            <el-select placeholder="选择专家顾问" style="width: 100%">
               <el-option label="张教授" value="1" />
               <el-option label="李研究员" value="2" />
               <el-option label="王教授" value="3" />

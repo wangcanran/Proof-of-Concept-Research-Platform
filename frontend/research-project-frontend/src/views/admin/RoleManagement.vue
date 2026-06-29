@@ -433,7 +433,7 @@ const roles = ref([
     icon: '📋',
     description: '负责科研项目的申请、执行和成果提交',
   },
-  { value: 'reviewer', label: '评审专家', icon: '👨‍⚖️', description: '负责项目的专业评审和技术指导' },
+  { value: 'reviewer', label: '专家顾问', icon: '👨‍⚖️', description: '负责项目的专业评审和技术指导' },
   {
     value: 'project_manager',
     label: '科研助理',
@@ -514,7 +514,7 @@ const filteredPermissionsByCategory = computed(() => (category: string) => {
 const getRoleText = (role: string) => {
   const roleMap: Record<string, string> = {
     applicant: '项目申请人',
-    reviewer: '评审专家',
+    reviewer: '专家顾问',
     project_manager: '科研助理',
     admin: '系统管理员',
   }

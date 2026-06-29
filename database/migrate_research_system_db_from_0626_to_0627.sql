@@ -352,15 +352,19 @@ WHERE EXISTS (
 );
 
 -- 2.3 IncubationProgress 表：删除成果相关字段和状态值
+UPDATE `IncubationProgress` SET `status` = 'feedback_given' WHERE `status` = 'result_submitted';
+
 ALTER TABLE `IncubationProgress`
-DROP COLUMN `result_date`,
-DROP COLUMN `result_description`;
+DROP COLUMN IF EXISTS `result_date`,
+DROP COLUMN IF EXISTS `result_description`;
 
 -- 修改 status 字段的 ENUM 值
 ALTER TABLE `IncubationProgress` 
 MODIFY COLUMN `status` ENUM('pending', 'feedback_given') NOT NULL DEFAULT 'pending' COMMENT '状态：待反馈/已反馈';
 
 -- 2.4 IncubationProgressFile 表：删除 result 附件类型
+DELETE FROM `IncubationProgressFile` WHERE `attachment_type` = 'result';
+
 ALTER TABLE `IncubationProgressFile` 
 MODIFY COLUMN `attachment_type` ENUM('application', 'feedback') NOT NULL COMMENT '附件类型：申请附件/反馈附件';
 
@@ -369,14 +373,18 @@ ALTER TABLE `IncubationProgressExpert`
 DROP COLUMN `expert_type`;
 
 -- 2.6 FundsRequest 表：删除成果相关字段和状态值
+UPDATE `FundsRequest` SET `status` = 'feedback_given' WHERE `status` = 'result_submitted';
+
 ALTER TABLE `FundsRequest`
-DROP COLUMN `result_date`,
-DROP COLUMN `result_description`;
+DROP COLUMN IF EXISTS `result_date`,
+DROP COLUMN IF EXISTS `result_description`;
 
 ALTER TABLE `FundsRequest` 
 MODIFY COLUMN `status` ENUM('pending', 'feedback_given') NOT NULL DEFAULT 'pending' COMMENT '状态：待反馈/已反馈';
 
 -- 2.7 FundsRequestFile 表：删除 result 附件类型
+DELETE FROM `FundsRequestFile` WHERE `attachment_type` = 'result';
+
 ALTER TABLE `FundsRequestFile` 
 MODIFY COLUMN `attachment_type` ENUM('application', 'feedback') NOT NULL COMMENT '附件类型：申请附件/反馈附件';
 

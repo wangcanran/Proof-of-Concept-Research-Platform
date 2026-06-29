@@ -134,8 +134,8 @@
                   <span class="stat-label">已反馈</span>
                 </div>
                 <div class="stat-badge">
-                  <span class="stat-value">{{ formatAmountWan(overview.pendingAmount) }} 万元</span>
-                  <span class="stat-label">待审金额</span>
+                  <span class="stat-value">¥ {{ formatAmountYuan(overview.pendingAmount) }}</span>
+                  <span class="stat-label">待审金额（元）</span>
                 </div>
                 <div class="stat-badge">
                   <span class="stat-value">{{ overview.activeProjects || 0 }}</span>
@@ -185,7 +185,7 @@
                       <span class="applicant-icon">👤</span>
                       {{ item.applicant_name || '未知' }}
                     </span>
-                    <span class="amount-tag">{{ formatAmountWan(item.total_amount) }} 万元</span>
+                    <span class="amount-tag">¥ {{ formatAmountYuan(item.total_amount) }}</span>
                   </div>
                 </div>
                 <div v-if="pendingRequests.length === 0" class="empty-state">
@@ -298,7 +298,7 @@
 </template>
 
 <script setup lang="ts">
-import { formatAmountWan } from '@/constants/budgetCategories'
+import { formatAmountYuan } from '@/constants/budgetCategories'
 import { getApiBaseUrl } from '@/utils/request'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'

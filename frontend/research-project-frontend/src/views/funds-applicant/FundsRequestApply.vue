@@ -265,7 +265,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
 import BudgetItemsEditor from '@/components/BudgetItemsEditor.vue'
-import { wanToYuanStore, type BudgetRow } from '@/constants/budgetCategories'
+import { type BudgetRow } from '@/constants/budgetCategories'
 
 const router = useRouter()
 const route = useRoute()
@@ -342,7 +342,7 @@ function normalizedBudgetItems() {
       category: r.category,
       item_name: r.item_name.trim(),
       description: r.description || '',
-      amount: wanToYuanStore(Number(r.amount) || 0),
+      amount: parseFloat((Number(r.amount) || 0).toFixed(2)),
     }))
 }
 

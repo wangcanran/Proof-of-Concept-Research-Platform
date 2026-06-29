@@ -16,7 +16,7 @@
             申请管理
           </h1>
           <div class="page-subtitle">
-            项目经理在此<strong>领取</strong>待受理申请、<strong>分配评审专家</strong>；专家提交意见后，由您<strong>确认立项</strong>。
+            项目经理在此<strong>领取</strong>待受理申请、<strong>分配专家顾问</strong>；专家提交意见后，由您<strong>确认立项</strong>。
           </div>
           <p class="page-hint">
             角标<strong>待受理</strong>表示尚未指定项目经理、可点<strong>领取</strong>；若已显示负责人（如李华），数据库状态可能仍为「已提交」，角标会显示为<strong>已领取·待分配</strong>，此时不再出现领取按钮，由负责人去<strong>分配专家</strong>。
@@ -378,7 +378,7 @@
               @click="goAssignExperts(currentApplication)"
             >
               <span class="btn-icon">📝</span>
-              分配评审专家
+              分配专家顾问
             </el-button>
             <el-button
               v-if="currentApplication.status === 'under_review' && canOperateAsManager(currentApplication)"
@@ -1152,7 +1152,7 @@ const pmStatusHint = (status: string) => {
     submitted:
       '对应数据库 submitted：申请人已提交，尚未进入专家评议，需项目经理领取并分配专家。',
     under_review:
-      '对应数据库 under_review：已分配评审专家，正在评议中。',
+      '对应数据库 under_review：已分配专家顾问，正在评议中。',
     approved: '对应数据库 approved：已通过立项。',
     rejected: '对应数据库 rejected：申请未通过。',
   }

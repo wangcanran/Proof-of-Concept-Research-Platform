@@ -402,7 +402,7 @@
                   <div class="action-icon">📦</div>
                   <div class="action-content">
                     <h4>活动审核</h4>
-                    <p>审核路演、交流等活动登记</p>
+                    <p>审核路演、产业交流等推广对接类活动登记</p>
                   </div>
                 </button>
               </div>

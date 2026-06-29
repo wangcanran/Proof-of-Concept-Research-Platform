@@ -55,6 +55,9 @@ function resolveApiOrigin() {
   return base
 }
 
+/** 批量导入等耗时接口单独延长超时（毫秒） */
+export const EXPERT_IMPORT_TIMEOUT = 120000
+
 // 创建 axios 实例（每次请求拦截器会再次 resolve，防止旧缓存 JS）
 const service = axios.create({
   baseURL: resolveApiOrigin(),
@@ -69,6 +72,13 @@ service.interceptors.request.use(
   (config) => {
     if (!import.meta.env.DEV) {
       config.baseURL = resolveApiOrigin()
+    }
+    // 专家顾问 Excel 批量导入 / 数据导出：逐行写库或大批量查询，需更长超时
+    if (
+      config.url &&
+      (String(config.url).includes('expert-import') || String(config.url).includes('/export'))
+    ) {
+      config.timeout = EXPERT_IMPORT_TIMEOUT
     }
     const token = localStorage.getItem('token')
     if (token) {
@@ -106,7 +116,13 @@ service.interceptors.response.use(
       console.error('服务器返回内容:', error.response.data)
       //ElMessage.error(`服务器内部错误: ${error.response.data?.message || '未知原因'}`)
     } else {
-      ElMessage.error(error.message || '网络错误')
+      const isTimeout = error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '')
+      const isExpertImport = url && String(url).includes('expert-import')
+      if (isTimeout && isExpertImport) {
+        ElMessage.error('导入超时，数据可能仍在处理，请稍后刷新列表确认结果')
+      } else {
+        ElMessage.error(error.message || '网络错误')
+      }
     }
 
     return Promise.reject(error)

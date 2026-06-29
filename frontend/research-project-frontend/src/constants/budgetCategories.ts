@@ -37,6 +37,12 @@ export function amountWanMax(yuanAmount: number | string | null | undefined): nu
   return yuanToWanDisplay(Number(yuanAmount) || 0)
 }
 
+/** 将库内金额（元）格式化为元展示文本（经费申请等直接按元填写/展示） */
+export function formatAmountYuan(yuan: number | string | null | undefined): string {
+  const y = Number(yuan) || 0
+  return y.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
 export type BudgetRow = {
   category: string
   item_name: string

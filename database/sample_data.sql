@@ -37,7 +37,7 @@ INSERT INTO `User` (`id`, `username`, `password`, `name`, `email`, `role`, `depa
 ('usr-app2', 'chenjing', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '陈静', 'chenjing@lab.cn', 'applicant', '生物医学工程学院', '副教授', '13900000002', 'active', NULL),
 ('usr-app3', 'liuming', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '刘明', 'liuming@lab.cn', 'applicant', '材料科学与工程学院', '研究员', '13900000003', 'active', NULL),
 ('usr-app4', 'zhaoyan', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '赵燕', 'zhaoyan@lab.cn', 'applicant', '新能源研究院', '教授', '13900000004', 'inactive', NULL),
--- 评审专家
+-- 专家顾问
 ('usr-exp1', 'liuyang', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '刘洋', 'liuyang@expert.cn', 'reviewer', '计算机学院', '教授', '13700000001', 'active', NOW()),
 ('usr-exp2', 'zhoujie', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '周杰', 'zhoujie@expert.cn', 'reviewer', '生命科学学院', '研究员', '13700000002', 'active', NULL),
 ('usr-exp3', 'wumin', '$2b$10$bvmvtUaa/wW29fvCSDUYdOj/c5KPhUowfzsTV/QkJRQ56VqWvfI1S', '吴敏', 'wumin@expert.cn', 'reviewer', '材料学院', '教授', '13700000003', 'active', NULL),

@@ -24,6 +24,9 @@
           />
           <button type="button" class="search-btn" @click="loadList">搜索</button>
           <button type="button" class="reset-btn" @click="resetSearch">重置</button>
+          <button v-if="isAdmin" type="button" class="export-btn" :disabled="exporting" @click="handleExport">
+            {{ exporting ? '导出中…' : '导出' }}
+          </button>
         </div>
         <div class="filter-tabs">
           <button
@@ -99,7 +102,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { assistantEnterpriseServiceAPI, ENTERPRISE_ACHIEVEMENT_TYPES } from '@/api/enterpriseServiceAchievements'
+import request from '@/utils/request'
+import { useIsAdmin } from '@/composables/useIsAdmin'
+import { adminExportExcel } from '@/utils/exportDownload'
 
 interface ReviewItem {
   id: string
@@ -115,6 +122,8 @@ interface ReviewItem {
 }
 
 const router = useRouter()
+const { isAdmin } = useIsAdmin()
+const exporting = ref(false)
 const loading = ref(false)
 const allList = ref<ReviewItem[]>([])
 const searchQuery = ref('')
@@ -243,7 +252,27 @@ function resetSearch() {
 }
 
 function goDashboard() {
-  router.push('/assistant/dashboard')
+  router.push(isAdmin.value ? '/admin/dashboard' : '/assistant/dashboard')
+}
+
+async function handleExport() {
+  exporting.value = true
+  try {
+    await adminExportExcel(
+      request,
+      '/api/admin/export/enterprise-service-achievements',
+      {
+        search: appliedSearch.value || undefined,
+        status: currentTab.value === 'all' ? undefined : currentTab.value,
+      },
+      `企业服务成果登记导出_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    )
+    ElMessage.success('导出成功')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
 }
 
 function goDetail(id: string) {
@@ -331,7 +360,8 @@ onMounted(loadList)
 }
 
 .search-btn,
-.reset-btn {
+.reset-btn,
+.export-btn {
   padding: 8px 16px;
   border-radius: 6px;
   font-size: 13px;
@@ -348,6 +378,17 @@ onMounted(loadList)
   background: #f5f5f5;
   color: #666;
   border: 1px solid #e8e8e8;
+}
+
+.export-btn {
+  background: #fff;
+  color: #b31b1b;
+  border: 1px solid #b31b1b;
+}
+
+.export-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .filter-tabs {

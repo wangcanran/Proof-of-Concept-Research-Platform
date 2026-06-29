@@ -68,7 +68,7 @@
           <div class="user-avatar-mini">{{ userInitial }}</div>
           <div v-if="!sidebarCollapsed" class="user-details">
             <div class="user-name-mini">{{ userName }}</div>
-            <div class="user-role-mini">评审专家</div>
+            <div class="user-role-mini">专家顾问</div>
           </div>
         </div>
       </div>
@@ -495,7 +495,7 @@ const isDarkMode = ref(false)
 const sidebarCollapsed = ref(false)
 const showMobileMenu = ref(false)
 const showNotificationsDropdown = ref(false)
-const userName = ref('评审专家')
+const userName = ref('专家顾问')
 const unreadCount = ref(0)
 
 // 数据状态
@@ -759,14 +759,14 @@ const loadUserInfo = async () => {
       userInfo.value = {
         id: user.id || '',
         username: user.username || '',
-        name: user.name || user.username || '评审专家',
+        name: user.name || user.username || '专家顾问',
         role: user.role || 'reviewer',
         email: user.email || '',
         department: user.department || '',
         title: user.title || '',
         research_field: user.research_field || '',
       }
-      userName.value = userInfo.value.name || '评审专家'
+      userName.value = userInfo.value.name || '专家顾问'
     } else {
       const userStr = localStorage.getItem('user')
       if (userStr) {
@@ -774,19 +774,19 @@ const loadUserInfo = async () => {
         userInfo.value = {
           id: user.id || '',
           username: user.username || '',
-          name: user.name || user.username || '评审专家',
+          name: user.name || user.username || '专家顾问',
           role: user.role || 'reviewer',
           email: user.email || '',
           department: user.department || '',
           title: user.title || '',
           research_field: user.research_field || '',
         }
-        userName.value = userInfo.value.name || '评审专家'
+        userName.value = userInfo.value.name || '专家顾问'
       }
     }
   } catch (error) {
     console.warn('加载用户信息失败:', error)
-    userName.value = localStorage.getItem('userName') || '评审专家'
+    userName.value = localStorage.getItem('userName') || '专家顾问'
   }
 }
 
@@ -795,7 +795,7 @@ const loadDashboardData = async () => {
   loading.value = true
 
   try {
-    console.log('正在获取评审专家仪表板数据...')
+    console.log('正在获取专家顾问仪表板数据...')
 
     await Promise.all([
       loadReviewerStats(),
@@ -812,7 +812,7 @@ const loadDashboardData = async () => {
       localStorage.clear()
       router.push('/login')
     } else if (error.response?.status === 403) {
-      ElMessage.error('您没有评审专家权限')
+      ElMessage.error('您没有专家顾问权限')
       router.push('/dashboard')
     } else {
       ElMessage.error('加载数据失败，将显示模拟数据')
@@ -823,7 +823,7 @@ const loadDashboardData = async () => {
   }
 }
 
-// 加载评审专家统计数据
+// 加载专家顾问统计数据
 const loadReviewerStats = async () => {
   try {
     const response = await api.get('/reviewer/stats')
@@ -831,7 +831,7 @@ const loadReviewerStats = async () => {
       stats.value = response.data
     }
   } catch (error) {
-    console.error('加载评审专家统计数据失败:', error)
+    console.error('加载专家顾问统计数据失败:', error)
   }
 }
 
@@ -982,12 +982,12 @@ const showMockData = () => {
 
 // 组件生命周期
 onMounted(() => {
-  console.log('=== 初始化评审专家仪表板页面 ===')
+  console.log('=== 初始化专家顾问仪表板页面 ===')
 
   loadUserInfo().then(() => {
     const userRole = localStorage.getItem('userRole')
     if (userRole?.toLowerCase() !== 'reviewer') {
-      ElMessage.warning('检测到您不是评审专家，将跳转到对应工作台')
+      ElMessage.warning('检测到您不是专家顾问，将跳转到对应工作台')
       setTimeout(() => {
         const rolePaths: Record<string, string> = {
           applicant: '/applicant/dashboard',

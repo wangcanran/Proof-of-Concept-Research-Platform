@@ -9,7 +9,7 @@
           <el-icon><ArrowLeft /></el-icon>
           返回项目管理
         </el-button>
-        <h1 class="page-title">评审专家分配详情</h1>
+        <h1 class="page-title">专家顾问分配详情</h1>
       </div>
       <div class="header-actions">
         <el-button @click="refreshData">
@@ -93,11 +93,11 @@
         <div class="reviewers-stats">
           <div class="stats-title">
             <el-icon><User /></el-icon>
-            已分配评审专家 ({{ assignedReviewers.length }})
+            已分配专家顾问 ({{ assignedReviewers.length }})
           </div>
 
           <div v-if="assignedReviewers.length === 0" class="no-reviewers">
-            <el-empty description="尚未分配评审专家">
+            <el-empty description="尚未分配专家顾问">
               <el-button type="primary" @click="assignMoreReviewer"> 立即分配 </el-button>
             </el-empty>
           </div>
@@ -197,7 +197,7 @@
     <!-- 分配专家对话框 -->
     <el-dialog
       v-model="showAssignDialog"
-      :title="`分配评审专家 - ${project?.title}`"
+      :title="`分配专家顾问 - ${project?.title}`"
       width="900px"
       destroy-on-close
     >
@@ -564,7 +564,7 @@ const loadProjectDetail = async () => {
   }
 }
 
-// 加载已分配评审专家
+// 加载已分配专家顾问
 const loadAssignedReviewers = async () => {
   try {
     // 修改为正确的 API 路径
@@ -604,10 +604,10 @@ const toggleReviewerSelection = async (reviewerId: string) => {
   }
 }
 
-// 移除评审专家
+// 移除专家顾问
 const removeReviewer = async (reviewer: any) => {
   try {
-    await ElMessageBox.confirm(`确定要移除评审专家 "${reviewer.name}" 吗？`, '移除专家', {
+    await ElMessageBox.confirm(`确定要移除专家顾问 "${reviewer.name}" 吗？`, '移除专家', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       type: 'warning',
@@ -778,7 +778,7 @@ const loadMatchingReviewers = async () => {
 // 处理分配成功
 const handleAssignmentSuccess = () => {
   loadAssignedReviewers()
-  ElMessage.success('评审专家分配成功')
+  ElMessage.success('专家顾问分配成功')
 }
 
 // 查看项目详情
