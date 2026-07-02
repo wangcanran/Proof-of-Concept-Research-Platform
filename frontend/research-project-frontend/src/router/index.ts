@@ -165,24 +165,63 @@ const routes: Array<RouteRecordRaw> = [
   },
   {
     path: '/applicant/enterprise-demands',
+    redirect: '/applicant/industry-resources/demands',
+  },
+  {
+    path: '/applicant/industry-resources/partners',
+    name: 'ApplicantIndustryPartners',
+    component: () => import('../views/industry/ApplicantIndustryPartners.vue'),
+    meta: {
+      title: '产业资源库',
+      requiresAuth: true,
+      role: ['applicant'],
+    },
+  },
+  {
+    path: '/applicant/industry-resources/partners/:id',
+    name: 'ApplicantIndustryPartnerDetail',
+    component: () => import('../views/industry/IndustryPartnerDetail.vue'),
+    props: { mode: 'applicant' },
+    meta: {
+      title: '产业资源库详情',
+      requiresAuth: true,
+      role: ['applicant'],
+    },
+  },
+  {
+    path: '/applicant/industry-resources/my-connections',
+    name: 'ApplicantMyConnections',
+    component: () => import('../views/industry/ApplicantMyConnections.vue'),
+    meta: {
+      title: '我的对接申请',
+      requiresAuth: true,
+      role: ['applicant'],
+    },
+  },
+  {
+    path: '/applicant/industry-resources/demands',
     name: 'ApplicantEnterpriseDemands',
     component: () => import('../views/applicant/EnterpriseDemands.vue'),
     meta: {
-      title: '产业资源',
+      title: '产业需求',
+      requiresAuth: true,
+      role: ['applicant'],
+    },
+  },
+  {
+    path: '/applicant/industry-resources/demands/:id',
+    name: 'ApplicantEnterpriseDemandDetail',
+    component: () => import('../views/applicant/EnterpriseDemandDetail.vue'),
+    props: true,
+    meta: {
+      title: '产业需求详情',
       requiresAuth: true,
       role: ['applicant'],
     },
   },
   {
     path: '/applicant/enterprise-demands/:id',
-    name: 'ApplicantEnterpriseDemandDetail',
-    component: () => import('../views/applicant/EnterpriseDemandDetail.vue'),
-    props: true,
-    meta: {
-      title: '产业资源详情',
-      requiresAuth: true,
-      role: ['applicant'],
-    },
+    redirect: (to) => `/applicant/industry-resources/demands/${to.params.id}`,
   },
 
   // ============ 成果管理模块 ============
@@ -718,48 +757,116 @@ const routes: Array<RouteRecordRaw> = [
       role: ['project_manager', 'admin'],
     },
   },
-  // 产业资源管理
+  // 产业资源（资源库 + 需求）
   {
     path: '/assistant/enterprise-demands',
+    redirect: '/assistant/industry-resources/demands',
+  },
+  {
+    path: '/assistant/industry-resources/partners',
+    name: 'IndustryPartnerManagement',
+    component: () => import('@/views/industry/IndustryPartnerManagement.vue'),
+    meta: {
+      title: '产业资源库',
+      requiresAuth: true,
+      role: ['project_manager', 'admin'],
+    },
+  },
+  {
+    path: '/assistant/industry-resources/partners/create',
+    name: 'CreateIndustryPartner',
+    component: () => import('@/views/industry/IndustryPartnerEdit.vue'),
+    meta: {
+      title: '新增产业资源库机构',
+      requiresAuth: true,
+      role: ['project_manager', 'admin'],
+    },
+  },
+  {
+    path: '/assistant/industry-resources/partners/:id/edit',
+    name: 'EditIndustryPartner',
+    component: () => import('@/views/industry/IndustryPartnerEdit.vue'),
+    props: true,
+    meta: {
+      title: '编辑产业资源库机构',
+      requiresAuth: true,
+      role: ['project_manager', 'admin'],
+    },
+  },
+  {
+    path: '/assistant/industry-resources/partners/:id',
+    name: 'IndustryPartnerDetail',
+    component: () => import('@/views/industry/IndustryPartnerDetail.vue'),
+    props: { mode: 'assistant' },
+    meta: {
+      title: '产业资源库详情',
+      requiresAuth: true,
+      role: ['project_manager', 'admin'],
+    },
+  },
+  {
+    path: '/assistant/industry-resources/connection-requests',
+    name: 'AssistantConnectionRequests',
+    component: () => import('@/views/industry/AssistantConnectionRequests.vue'),
+    meta: {
+      title: '对接申请管理',
+      requiresAuth: true,
+      role: ['project_manager'],
+    },
+  },
+  {
+    path: '/assistant/industry-resources/demands',
     name: 'EnterpriseDemandManagement',
     component: () => import('@/views/assistant/EnterpriseDemandManagement.vue'),
     meta: {
-      title: '产业资源管理',
+      title: '产业需求管理',
+      requiresAuth: true,
+      role: ['project_manager', 'admin'],
+    },
+  },
+  {
+    path: '/assistant/industry-resources/demands/create',
+    name: 'CreateEnterpriseDemand',
+    component: () => import('@/views/assistant/EnterpriseDemandEdit.vue'),
+    meta: {
+      title: '创建产业需求',
+      requiresAuth: true,
+      role: ['project_manager', 'admin'],
+    },
+  },
+  {
+    path: '/assistant/industry-resources/demands/:id/edit',
+    name: 'EditEnterpriseDemand',
+    component: () => import('@/views/assistant/EnterpriseDemandEdit.vue'),
+    props: true,
+    meta: {
+      title: '编辑产业需求',
+      requiresAuth: true,
+      role: ['project_manager', 'admin'],
+    },
+  },
+  {
+    path: '/assistant/industry-resources/demands/:id',
+    name: 'EnterpriseDemandDetail',
+    component: () => import('@/views/assistant/EnterpriseDemandDetail.vue'),
+    props: true,
+    meta: {
+      title: '查看产业需求',
       requiresAuth: true,
       role: ['project_manager', 'admin'],
     },
   },
   {
     path: '/assistant/enterprise-demands/create',
-    name: 'CreateEnterpriseDemand',
-    component: () => import('@/views/assistant/EnterpriseDemandEdit.vue'),
-    meta: {
-      title: '创建产业资源',
-      requiresAuth: true,
-      role: ['project_manager', 'admin'],
-    },
+    redirect: '/assistant/industry-resources/demands/create',
   },
   {
     path: '/assistant/enterprise-demands/:id/edit',
-    name: 'EditEnterpriseDemand',
-    component: () => import('@/views/assistant/EnterpriseDemandEdit.vue'),
-    props: true,
-    meta: {
-      title: '编辑产业资源',
-      requiresAuth: true,
-      role: ['project_manager', 'admin'],
-    },
+    redirect: (to) => `/assistant/industry-resources/demands/${to.params.id}/edit`,
   },
   {
     path: '/assistant/enterprise-demands/:id',
-    name: 'EnterpriseDemandDetail',
-    component: () => import('@/views/assistant/EnterpriseDemandDetail.vue'),
-    props: true,
-    meta: {
-      title: '查看产业资源',
-      requiresAuth: true,
-      role: ['project_manager', 'admin'],
-    },
+    redirect: (to) => `/assistant/industry-resources/demands/${to.params.id}`,
   },
   // 孵化服务处理
   {

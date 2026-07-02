@@ -233,11 +233,11 @@ function isProjectDisabled(projectId: string) {
 }
 
 function goBack() {
-  router.push('/assistant/enterprise-demands')
+  router.push('/assistant/industry-resources/demands')
 }
 
 function goEdit() {
-  router.push(`/assistant/enterprise-demands/${route.params.id}/edit`)
+  router.push(`/assistant/industry-resources/demands/${route.params.id}/edit`)
 }
 
 async function loadDemand() {

@@ -392,14 +392,36 @@ function createHandlers(deps) {
           }
         }
         const subMeta = buildAchievementSubmissionMeta(user, body.status);
+        let industryPartnerId = !isStartup && body.industry_partner_id
+          ? String(body.industry_partner_id).trim()
+          : null;
+        let recipientCompany = isStartup ? null : body.recipient_company || null;
+        if (!isStartup && industryPartnerId) {
+          const [partnerRows] = await pool.query('SELECT name FROM `IndustryPartner` WHERE id = ?', [industryPartnerId]);
+          if (!partnerRows.length) {
+            return sendResponse(res, 400, { success: false, error: '所选承接方机构不存在' }), true;
+          }
+          const [engaged] = await pool.query(
+            `SELECT id FROM \`IndustryPartnerConnectionRequest\`
+             WHERE project_id = ? AND partner_id = ? AND status = 'confirmed' LIMIT 1`,
+            [body.project_id, industryPartnerId],
+          );
+          if (!engaged.length) {
+            return sendResponse(res, 400, { success: false, error: '所选承接方尚未与该项目建立承接关系，请先完成对接申请或服务分配' }), true;
+          }
+          recipientCompany = partnerRows[0].name;
+        } else if (!isStartup && !recipientCompany) {
+          return sendResponse(res, 400, { success: false, error: '请选择承接方' }), true;
+        }
         await pool.query(
           `INSERT INTO \`TransformationAchievement\` (
             id, project_id, project_leader, transform_method, platform_service_content,
-            transform_date, recipient_company, recipient_province, recipient_city, recipient_district, contract_amount,
+            transform_date, recipient_company, recipient_province, recipient_city, recipient_district,
+            industry_partner_id, contract_amount,
             company_name, company_credit_code, establishment_date, registered_address, company_introduction,
             invested_amount, paid_in_amount, status, submission_type, verified_by, verified_date, verification_comment,
             created_by, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
           [
             id,
             body.project_id,
@@ -407,10 +429,11 @@ function createHandlers(deps) {
             method,
             body.platform_service_content || null,
             isStartup ? null : body.transform_date || null,
-            isStartup ? null : body.recipient_company || null,
+            recipientCompany,
             isStartup ? null : body.recipient_province || null,
             isStartup ? null : body.recipient_city || null,
             isStartup ? null : body.recipient_district || null,
+            isStartup ? null : industryPartnerId,
             isStartup ? null : body.contract_amount ?? null,
             isStartup ? body.company_name || null : null,
             isStartup ? body.company_credit_code || null : null,
@@ -664,6 +687,12 @@ function createHandlers(deps) {
         const uid = user.userId || user.id;
         if (user.role === 'applicant' && type === 'qualification_certification') {
           return sendResponse(res, 400, { success: false, error: '申请人仅可登记技术合作类企业服务成果' }), true;
+        }
+        if (type === 'tech_cooperation') {
+          const contractAmount = body.contract_amount;
+          if (contractAmount === null || contractAmount === undefined || contractAmount === '') {
+            return sendResponse(res, 400, { success: false, error: '请填写合同金额' }), true;
+          }
         }
         if (user.role === 'project_manager' && type === 'tech_cooperation' && Array.isArray(body.projects)) {
           for (const pr of body.projects) {

@@ -474,6 +474,14 @@ const validateSampleProducts = (_rule: unknown, _value: unknown, callback: (err?
   else callback()
 }
 
+const validateContractAmount = (_rule: unknown, value: unknown, callback: (err?: Error) => void) => {
+  if (value === null || value === undefined || value === '') {
+    callback(new Error('请输入合同金额'))
+  } else {
+    callback()
+  }
+}
+
 const formRules = computed<FormRules>(() => {
   const base: FormRules = {
     achievement_type: [{ required: true, message: '请选择成果类型', trigger: 'change' }],
@@ -485,6 +493,7 @@ const formRules = computed<FormRules>(() => {
       contract_name: [{ required: true, message: '请输入合同名称', trigger: 'blur' }],
       start_date: [{ required: true, message: '请选择开始日期', trigger: 'change' }],
       completion_date: [{ required: true, message: '请选择完成日期', trigger: 'change' }],
+      contract_amount: [{ validator: validateContractAmount, trigger: 'blur' }],
       contract_content: [{ required: true, message: '请填写合同内容', trigger: 'blur' }],
       sample_products: [{ validator: validateSampleProducts, trigger: 'change' }],
     })

@@ -695,6 +695,294 @@ function validateServiceProviderPayload(body, { partial = false } = {}) {
   return { ok: true, payload };
 }
 
+const INDUSTRY_PARTNER_ORG_CATEGORIES = ['enterprise', 'government', 'other'];
+const INDUSTRY_PARTNER_ORG_CATEGORY_LABELS = {
+  enterprise: '企业',
+  government: '政府机构',
+  other: '其它',
+};
+
+async function loadIndustryPartnerDomainsMap(partnerIds) {
+  if (!Array.isArray(partnerIds) || !partnerIds.length) return {};
+  const [rows] = await pool.query(
+    `SELECT ipd.partner_id, rd.id AS domain_id, rd.name AS domain_name
+     FROM \`IndustryPartnerDomain\` ipd
+     INNER JOIN \`ResearchDomain\` rd ON ipd.domain_id = rd.id
+     WHERE ipd.partner_id IN (${partnerIds.map(() => '?').join(',')})
+     ORDER BY rd.sort_order ASC, rd.name ASC`,
+    partnerIds,
+  );
+  const map = {};
+  for (const r of rows) {
+    if (!map[r.partner_id]) map[r.partner_id] = [];
+    map[r.partner_id].push({ id: r.domain_id, name: r.domain_name });
+  }
+  return map;
+}
+
+async function replaceIndustryPartnerDomains(partnerId, domainIds) {
+  await pool.query('DELETE FROM `IndustryPartnerDomain` WHERE partner_id = ?', [partnerId]);
+  const ids = [...new Set((domainIds || []).map((id) => String(id).trim()).filter(Boolean))];
+  if (!ids.length) return;
+  const [valid] = await pool.query(
+    `SELECT id FROM \`ResearchDomain\` WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  );
+  const validSet = new Set(valid.map((r) => r.id));
+  for (const domainId of ids) {
+    if (!validSet.has(domainId)) continue;
+    await pool.query(
+      'INSERT INTO `IndustryPartnerDomain` (id, partner_id, domain_id) VALUES (?, ?, ?)',
+      [randomUUID(), partnerId, domainId],
+    );
+  }
+}
+
+function formatIndustryPartnerRow(row, domains = []) {
+  if (!row) return row;
+  const orgCategory = row.org_category || 'enterprise';
+  return {
+    ...row,
+    org_category: orgCategory,
+    org_category_label: INDUSTRY_PARTNER_ORG_CATEGORY_LABELS[orgCategory] || orgCategory,
+    domain_ids: domains.map((d) => d.id),
+    domains,
+    domain_names: domains.map((d) => d.name),
+    created_at: row.created_at ? row.created_at.toISOString?.() || row.created_at : null,
+    updated_at: row.updated_at ? row.updated_at.toISOString?.() || row.updated_at : null,
+  };
+}
+
+function validateIndustryPartnerPayload(body, { partial = false } = {}) {
+  const name = body.name != null ? String(body.name).trim() : undefined;
+  const orgCategory = body.org_category != null ? String(body.org_category).trim() : undefined;
+  const mainProducts = body.main_products_services != null
+    ? String(body.main_products_services).trim()
+    : undefined;
+  const contactName = body.contact_name != null ? String(body.contact_name).trim() : undefined;
+  const contactPhone = body.contact_phone != null ? String(body.contact_phone).trim() : undefined;
+  const description = body.description != null ? String(body.description).trim() : undefined;
+  const domainIds = body.domain_ids != null || body.domains != null
+    ? (Array.isArray(body.domain_ids) ? body.domain_ids : Array.isArray(body.domains) ? body.domains : [])
+    : undefined;
+
+  if (!partial || name !== undefined) {
+    if (!name) return { ok: false, error: '机构名称不能为空' };
+  }
+  if (!partial || orgCategory !== undefined) {
+    if (!orgCategory || !INDUSTRY_PARTNER_ORG_CATEGORIES.includes(orgCategory)) {
+      return { ok: false, error: '请选择有效的机构分类' };
+    }
+  }
+  if (!partial || contactName !== undefined) {
+    if (!contactName) return { ok: false, error: '联系人不能为空' };
+  }
+  if (!partial || contactPhone !== undefined) {
+    if (!contactPhone) return { ok: false, error: '联系电话不能为空' };
+  }
+  if (!partial || domainIds !== undefined) {
+    if (!domainIds.length) return { ok: false, error: '请至少选择一个所属领域' };
+  }
+
+  const payload = {};
+  if (name !== undefined) payload.name = name;
+  if (orgCategory !== undefined) payload.org_category = orgCategory;
+  if (mainProducts !== undefined) payload.main_products_services = mainProducts || null;
+  if (contactName !== undefined) payload.contact_name = contactName;
+  if (contactPhone !== undefined) payload.contact_phone = contactPhone;
+  if (description !== undefined) payload.description = description || null;
+  if (domainIds !== undefined) payload.domain_ids = domainIds;
+
+  return { ok: true, payload };
+}
+
+const INDUSTRY_PARTNER_CONNECTION_STATUS_LABELS = {
+  pending: '待处理',
+  confirmed: '已确认对接',
+  deferred: '暂缓对接',
+  rejected: '不合适',
+};
+
+function formatIndustryPartnerConnectionRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    status_label: INDUSTRY_PARTNER_CONNECTION_STATUS_LABELS[row.status] || row.status,
+    created_at: row.created_at ? row.created_at.toISOString?.() || row.created_at : null,
+    updated_at: row.updated_at ? row.updated_at.toISOString?.() || row.updated_at : null,
+    handled_at: row.handled_at ? row.handled_at.toISOString?.() || row.handled_at : null,
+  };
+}
+
+async function userMayAccessProjectForConnection(pool, projectId, user) {
+  const uid = user.userId || user.id;
+  const [rows] = await pool.query(
+    `SELECT p.id, p.status, p.manager_id, p.applicant_id, p.title, p.project_code
+     FROM \`Project\` p WHERE p.id = ?`,
+    [projectId],
+  );
+  if (!rows.length) return { ok: false, status: 404, error: '项目不存在' };
+  const p = rows[0];
+  if (!['approved', 'incubating'].includes(p.status)) {
+    return { ok: false, status: 400, error: '仅已入库或孵化中的项目可发起对接申请' };
+  }
+  const isOwner = String(p.applicant_id) === String(uid);
+  const [member] = await pool.query(
+    'SELECT 1 FROM `ProjectMember` WHERE project_id = ? AND user_id = ? LIMIT 1',
+    [projectId, uid],
+  );
+  if (user.role === 'applicant' && !isOwner && !member.length) {
+    return { ok: false, status: 403, error: '无权使用该项目的对接申请' };
+  }
+  if (user.role === 'project_manager' && String(p.manager_id) !== String(uid)) {
+    return { ok: false, status: 403, error: '只能处理本人负责项目的对接申请' };
+  }
+  return { ok: true, project: p };
+}
+
+async function userMayViewProjectEngagedPartners(pool, projectId, user) {
+  const uid = user.userId || user.id;
+  if (checkPermission(user.role, ['admin'])) return true;
+  const [rows] = await pool.query(
+    'SELECT manager_id, applicant_id FROM `Project` WHERE id = ?',
+    [projectId],
+  );
+  if (!rows.length) return false;
+  if (String(rows[0].manager_id) === String(uid)) return true;
+  if (String(rows[0].applicant_id) === String(uid)) return true;
+  const [member] = await pool.query(
+    'SELECT 1 FROM `ProjectMember` WHERE project_id = ? AND user_id = ? LIMIT 1',
+    [projectId, uid],
+  );
+  return member.length > 0;
+}
+
+/** 同一项目+机构是否允许再次发起对接申请或分配 */
+async function findPartnerProjectConnectionBlock(partnerId, projectId) {
+  const [rows] = await pool.query(
+    `SELECT status FROM \`IndustryPartnerConnectionRequest\`
+     WHERE partner_id = ? AND project_id = ?
+       AND status IN ('pending', 'confirmed', 'rejected')
+     ORDER BY created_at DESC LIMIT 1`,
+    [partnerId, projectId],
+  );
+  if (!rows.length) return null;
+  const status = rows[0].status;
+  const messages = {
+    pending: '该项目对该机构已有待处理的对接申请',
+    confirmed: '该项目已与该机构建立承接关系',
+    rejected: '该项目对该机构的对接申请已标记为不合适，无法再次申请',
+  };
+  return { status, error: messages[status] || '无法再次申请' };
+}
+
+/** 项目已承接的产业资源库机构（confirmed 唯一承接记录） */
+async function getProjectEngagedIndustryPartners(projectId) {
+  const [rows] = await pool.query(
+    `SELECT r.id, r.partner_id AS industry_partner_id, r.project_id, r.source,
+            r.handled_by AS assigned_by, r.handled_at, r.created_at,
+            r.incubation_progress_id AS progress_id,
+            ip.name AS partner_name, ip.org_category, ip.main_products_services,
+            ip.contact_name, ip.contact_phone, ip.description
+     FROM \`IndustryPartnerConnectionRequest\` r
+     JOIN \`IndustryPartner\` ip ON r.partner_id = ip.id
+     WHERE r.project_id = ? AND r.status = 'confirmed'
+     ORDER BY r.created_at ASC`,
+    [projectId],
+  );
+  return rows.map((r) => ({
+    ...r,
+    org_category_label: INDUSTRY_PARTNER_ORG_CATEGORY_LABELS[r.org_category] || r.org_category,
+    source_label: r.source === 'pm_service_assign' ? '服务申请分配' : '对接申请确认',
+  }));
+}
+
+/** 获取孵化服务申请关联项目的已承接产业资源库机构 */
+async function getIncubationAssignedIndustryPartners(progressId) {
+  const [progressRows] = await pool.query(
+    'SELECT project_id FROM `IncubationProgress` WHERE id = ? LIMIT 1',
+    [progressId],
+  );
+  if (!progressRows.length) return [];
+  return getProjectEngagedIndustryPartners(progressRows[0].project_id);
+}
+
+/** 建立项目与产业资源库机构的承接关系（对接确认 / 服务分配共用） */
+async function ensureProjectPartnerEngagement({
+  projectId,
+  partnerId,
+  applicantId,
+  handledBy,
+  source = 'pm_service_assign',
+  incubationProgressId = null,
+  intentionNote = null,
+}) {
+  const block = await findPartnerProjectConnectionBlock(partnerId, projectId);
+  if (block?.status === 'confirmed') {
+    const engaged = await getProjectEngagedIndustryPartners(projectId);
+    const existing = engaged.find((p) => String(p.industry_partner_id) === String(partnerId));
+    return { skipped: true, ...(existing || { industry_partner_id: partnerId }) };
+  }
+  if (block?.status === 'pending') {
+    throw Object.assign(new Error('该项目对该机构已有待处理的对接申请，请先在对接申请管理中处理'), { code: 'PENDING_CONNECTION' });
+  }
+  if (block?.status === 'rejected') {
+    throw Object.assign(new Error('该项目对该机构的对接申请已标记为不合适，无法分配'), { code: 'REJECTED_CONNECTION' });
+  }
+  const [partners] = await pool.query(
+    'SELECT id, name FROM `IndustryPartner` WHERE id = ?',
+    [partnerId],
+  );
+  if (!partners.length) {
+    throw Object.assign(new Error('机构不存在'), { code: 'PARTNER_NOT_FOUND' });
+  }
+  const id = randomUUID();
+  const note = intentionNote || (source === 'pm_service_assign' ? '项目经理通过服务申请分配' : '');
+  await pool.query(
+    `INSERT INTO \`IndustryPartnerConnectionRequest\`
+      (id, partner_id, project_id, applicant_id, intention_note, status, source,
+       handled_by, handled_at, incubation_progress_id, created_at)
+     VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?, NOW(), ?, NOW())`,
+    [id, partnerId, projectId, applicantId, note, source, handledBy, incubationProgressId],
+  );
+  return {
+    id,
+    industry_partner_id: partnerId,
+    partner_name: partners[0].name,
+    skipped: false,
+  };
+}
+
+/** 为孵化服务申请分配产业资源库机构（写入统一承接记录） */
+async function assignIncubationProgressIndustryPartners(progressId, partnerIds, assignedBy) {
+  const results = [];
+  if (!Array.isArray(partnerIds) || !partnerIds.length) return results;
+  const [progressRows] = await pool.query(
+    `SELECT ip.project_id, p.applicant_id
+     FROM \`IncubationProgress\` ip
+     INNER JOIN \`Project\` p ON ip.project_id = p.id
+     WHERE ip.id = ?`,
+    [progressId],
+  );
+  if (!progressRows.length) return results;
+  const { project_id: projectId, applicant_id: applicantId } = progressRows[0];
+  const uniqueIds = [...new Set(partnerIds.map((id) => String(id).trim()).filter(Boolean))];
+  for (const partnerId of uniqueIds) {
+    const row = await ensureProjectPartnerEngagement({
+      projectId,
+      partnerId,
+      applicantId,
+      handledBy: assignedBy,
+      source: 'pm_service_assign',
+      incubationProgressId: progressId,
+    });
+    if (!row.skipped) {
+      results.push(row);
+    }
+  }
+  return results;
+}
+
 /** 项目已花费：经费申请批准金额合计 */
 function sqlProjectFundsSpent(alias = 'p') {
   return `(SELECT COALESCE(SUM(fri.feedback_amount), 0)
@@ -888,27 +1176,49 @@ const EXPERT_IMPORT_HEADERS = [
 
 const EXPERT_TYPE_ZH_TO_CODE = {
   技术专家: 'technical',
+  技术: 'technical',
   产业专家: 'industry',
+  产业: 'industry',
   投资专家: 'investment',
+  投资: 'investment',
   科技服务专家: 'tech_service',
+  科技服务: 'tech_service',
+  技术服务专家: 'tech_service',
+  技术服务: 'tech_service',
   technical: 'technical',
   industry: 'industry',
   investment: 'investment',
   tech_service: 'tech_service',
 };
 
+function mapExpertTypeImportLabel(label) {
+  const trimmed = String(label).trim();
+  if (!trimmed) return null;
+  const direct =
+    EXPERT_TYPE_ZH_TO_CODE[trimmed] || EXPERT_TYPE_ZH_TO_CODE[trimmed.toLowerCase()];
+  if (direct) return direct;
+  if (trimmed.endsWith('专家') && trimmed.length > 2) {
+    const base = trimmed.slice(0, -2);
+    return EXPERT_TYPE_ZH_TO_CODE[base] || null;
+  }
+  return null;
+}
+
 function parseExpertTypesFromImportCell(text) {
-  if (text == null || String(text).trim() === '') return [];
-  return [
-    ...new Set(
-      String(text)
-        .split(/[,，、;；/|]+/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map((label) => EXPERT_TYPE_ZH_TO_CODE[label] || EXPERT_TYPE_ZH_TO_CODE[label.toLowerCase()])
-        .filter((t) => t && VALID_EXPERT_TYPES.includes(t)),
-    ),
-  ];
+  if (text == null || String(text).trim() === '') return { types: [], unrecognized: [] };
+  const types = [];
+  const unrecognized = [];
+  for (const part of String(text).split(/[,，、;；/|]+/)) {
+    const label = part.trim();
+    if (!label) continue;
+    const code = mapExpertTypeImportLabel(label);
+    if (code && VALID_EXPERT_TYPES.includes(code)) {
+      types.push(code);
+    } else {
+      unrecognized.push(label);
+    }
+  }
+  return { types: [...new Set(types)], unrecognized: [...new Set(unrecognized)] };
 }
 
 function buildExpertImportTitle(jobTitle, rankTitle) {
@@ -941,7 +1251,7 @@ async function buildExpertImportTemplateWorkbook() {
     '教授',
     '13800138000',
     '长期从事人工智能方向研究',
-    '技术专家、产业专家',
+    '技术、产业',
   ]);
   const headerRow = sheet.getRow(1);
   headerRow.font = { bold: true };
@@ -972,7 +1282,7 @@ async function buildExpertImportTemplateWorkbook() {
   guide.addRow(['个人简介', '选填，写入专家扩展信息']);
   guide.addRow([
     '专家类型',
-    '选填，可多选：技术专家、产业专家、投资专家、科技服务专家（用顿号、逗号分隔）',
+    '选填，可多选：技术专家/技术、产业专家/产业、投资专家/投资、科技服务专家/科技服务（用顿号、逗号分隔）',
   ]);
   guide.addRow(['', '导入后系统将自动生成登录用户名、邮箱及初始密码（可在导入结果中查看）']);
   guide.addRow(['', '导入账号默认为未激活状态，需管理员激活后方可登录']);
@@ -1166,7 +1476,9 @@ async function importSingleExpertAdvisorRow(row, operatorId, { hashedPassword, d
   const title = buildExpertImportTitle(row.jobTitle, row.rankTitle);
   const department = row.department ? String(row.department).trim() : null;
   const expertise = buildExpertImportExpertise(row.field, row.bio);
-  const expertTypes = parseExpertTypesFromImportCell(row.expertTypes);
+  const parsedTypes = parseExpertTypesFromImportCell(row.expertTypes);
+  const expertTypes = parsedTypes.types;
+  const expertTypeUnrecognized = parsedTypes.unrecognized;
   const now = new Date();
 
   await pool.query(
@@ -1196,6 +1508,7 @@ async function importSingleExpertAdvisorRow(row, operatorId, { hashedPassword, d
     phone,
     defaultPassword,
     expertTypes,
+    expertTypeUnrecognized,
   };
 }
 
@@ -2192,6 +2505,7 @@ async function enrichIncubationProgressRow(progress) {
   if (!progress?.id) return progress;
   progress.assigned_experts = await getIncubationAssignedExperts(progress.id);
   progress.assigned_service_providers = await getIncubationAssignedServiceProviders(progress.id);
+  progress.assigned_industry_partners = await getIncubationAssignedIndustryPartners(progress.id);
   return progress;
 }
 
@@ -2874,6 +3188,588 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ==================== 产业资源库 API ====================
+
+    if (pathname === '/api/industry-partners' && req.method === 'GET') {
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user) {
+          sendResponse(res, 401, { success: false, error: '认证失败' });
+          return;
+        }
+        const role = user.role;
+        const canManage = ['project_manager', 'admin'].includes(role);
+        const canBrowse = canManage || role === 'applicant';
+        if (!canBrowse) {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const keyword = String(query.keyword || '').trim();
+        const orgCategory = String(query.org_category || '').trim();
+        const domainId = String(query.domain_id || '').trim();
+        const page = parseInt(query.page, 10) || 1;
+        const pageSize = Math.min(parseInt(query.pageSize, 10) || 10, 100);
+        const offset = (page - 1) * pageSize;
+        const lite = query.lite === '1' || query.lite === 'true';
+
+        let where = 'WHERE 1=1';
+        const params = [];
+        if (keyword) {
+          const kw = `%${keyword}%`;
+          where += ' AND (ip.name LIKE ? OR ip.main_products_services LIKE ? OR ip.contact_name LIKE ? OR ip.contact_phone LIKE ? OR ip.description LIKE ?)';
+          params.push(kw, kw, kw, kw, kw);
+        }
+        if (orgCategory && INDUSTRY_PARTNER_ORG_CATEGORIES.includes(orgCategory)) {
+          where += ' AND ip.org_category = ?';
+          params.push(orgCategory);
+        }
+        if (domainId) {
+          where += ' AND EXISTS (SELECT 1 FROM `IndustryPartnerDomain` ipd WHERE ipd.partner_id = ip.id AND ipd.domain_id = ?)';
+          params.push(domainId);
+        }
+
+        const [rows] = await pool.query(
+          `SELECT ip.* FROM \`IndustryPartner\` ip ${where} ORDER BY ip.updated_at DESC, ip.name ASC LIMIT ? OFFSET ?`,
+          [...params, pageSize, offset],
+        );
+        const [cnt] = await pool.query(
+          `SELECT COUNT(*) AS total FROM \`IndustryPartner\` ip ${where}`,
+          params,
+        );
+        const ids = rows.map((r) => r.id);
+        const domainsMap = lite ? {} : await loadIndustryPartnerDomainsMap(ids);
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            list: rows.map((r) => formatIndustryPartnerRow(r, domainsMap[r.id] || [])),
+            total: cnt[0].total,
+            page,
+            pageSize,
+            org_categories: INDUSTRY_PARTNER_ORG_CATEGORIES.map((k) => ({
+              value: k,
+              label: INDUSTRY_PARTNER_ORG_CATEGORY_LABELS[k],
+            })),
+          },
+        });
+      } catch (error) {
+        console.error('获取产业资源库列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取产业资源库列表失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/industry-partners' && req.method === 'POST') {
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const validated = validateIndustryPartnerPayload(body);
+        if (!validated.ok) {
+          sendResponse(res, 400, { success: false, error: validated.error });
+          return;
+        }
+        const id = randomUUID();
+        const p = validated.payload;
+        const uid = user.id || user.userId;
+        await pool.query(
+          `INSERT INTO \`IndustryPartner\`
+            (id, name, org_category, main_products_services, contact_name, contact_phone, description, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id,
+            p.name,
+            p.org_category,
+            p.main_products_services ?? null,
+            p.contact_name,
+            p.contact_phone,
+            p.description ?? null,
+            uid,
+          ],
+        );
+        await replaceIndustryPartnerDomains(id, p.domain_ids);
+        const domainsMap = await loadIndustryPartnerDomainsMap([id]);
+        const [created] = await pool.query('SELECT * FROM `IndustryPartner` WHERE id = ?', [id]);
+        sendResponse(res, 201, {
+          success: true,
+          data: formatIndustryPartnerRow(created[0], domainsMap[id] || []),
+          message: '创建成功',
+        });
+      } catch (error) {
+        console.error('创建产业资源库机构失败:', error);
+        sendResponse(res, 500, { success: false, error: '创建产业资源库机构失败' });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/industry-partners\/[\w-]+$/) && req.method === 'GET') {
+      const partnerId = pathname.replace('/api/industry-partners/', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user) {
+          sendResponse(res, 401, { success: false, error: '认证失败' });
+          return;
+        }
+        const role = user.role;
+        if (!['project_manager', 'admin', 'applicant'].includes(role)) {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const [rows] = await pool.query('SELECT * FROM `IndustryPartner` WHERE id = ?', [partnerId]);
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '机构不存在' });
+          return;
+        }
+        const domainsMap = await loadIndustryPartnerDomainsMap([partnerId]);
+        sendResponse(res, 200, {
+          success: true,
+          data: formatIndustryPartnerRow(rows[0], domainsMap[partnerId] || []),
+        });
+      } catch (error) {
+        console.error('获取产业资源库机构详情失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取产业资源库机构详情失败' });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/industry-partners\/[\w-]+$/) && req.method === 'PUT') {
+      const partnerId = pathname.replace('/api/industry-partners/', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const [existing] = await pool.query('SELECT id FROM `IndustryPartner` WHERE id = ?', [partnerId]);
+        if (!existing.length) {
+          sendResponse(res, 404, { success: false, error: '机构不存在' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const validated = validateIndustryPartnerPayload(body, { partial: true });
+        if (!validated.ok) {
+          sendResponse(res, 400, { success: false, error: validated.error });
+          return;
+        }
+        const p = validated.payload;
+        const fields = [];
+        const params = [];
+        for (const key of [
+          'name',
+          'org_category',
+          'main_products_services',
+          'contact_name',
+          'contact_phone',
+          'description',
+        ]) {
+          if (p[key] !== undefined) {
+            fields.push(`${key} = ?`);
+            params.push(p[key]);
+          }
+        }
+        if (fields.length) {
+          params.push(partnerId);
+          await pool.query(`UPDATE \`IndustryPartner\` SET ${fields.join(', ')} WHERE id = ?`, params);
+        }
+        if (p.domain_ids !== undefined) {
+          await replaceIndustryPartnerDomains(partnerId, p.domain_ids);
+        }
+        const domainsMap = await loadIndustryPartnerDomainsMap([partnerId]);
+        const [updated] = await pool.query('SELECT * FROM `IndustryPartner` WHERE id = ?', [partnerId]);
+        sendResponse(res, 200, {
+          success: true,
+          data: formatIndustryPartnerRow(updated[0], domainsMap[partnerId] || []),
+          message: '更新成功',
+        });
+      } catch (error) {
+        console.error('更新产业资源库机构失败:', error);
+        sendResponse(res, 500, { success: false, error: '更新产业资源库机构失败' });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/industry-partners\/[\w-]+$/) && req.method === 'DELETE') {
+      const partnerId = pathname.replace('/api/industry-partners/', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || !['project_manager', 'admin'].includes(user.role)) {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const [existing] = await pool.query('SELECT id FROM `IndustryPartner` WHERE id = ?', [partnerId]);
+        if (!existing.length) {
+          sendResponse(res, 404, { success: false, error: '机构不存在' });
+          return;
+        }
+        const [assigned] = await pool.query(
+          `SELECT id FROM \`IndustryPartnerConnectionRequest\`
+           WHERE partner_id = ? AND status = 'confirmed' LIMIT 1`,
+          [partnerId],
+        );
+        if (assigned.length) {
+          sendResponse(res, 400, { success: false, error: '该机构已有项目承接记录，无法删除' });
+          return;
+        }
+        await pool.query('DELETE FROM `IndustryPartnerDomain` WHERE partner_id = ?', [partnerId]);
+        await pool.query('DELETE FROM `IndustryPartner` WHERE id = ?', [partnerId]);
+        sendResponse(res, 200, { success: true, message: '删除成功' });
+      } catch (error) {
+        console.error('删除产业资源库机构失败:', error);
+        sendResponse(res, 500, { success: false, error: '删除产业资源库机构失败' });
+      }
+      return;
+    }
+
+    // ==================== 产业资源库对接申请 ====================
+
+    if (pathname === '/api/applicant/industry-partner-connection-requests' && req.method === 'GET') {
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || user.role !== 'applicant') {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const uid = user.userId || user.id;
+        const status = String(query.status || '').trim();
+        const partnerId = String(query.partner_id || '').trim();
+        let where = 'WHERE r.applicant_id = ?';
+        const params = [uid];
+        if (status && ['pending', 'confirmed', 'deferred', 'rejected'].includes(status)) {
+          where += ' AND r.status = ?';
+          params.push(status);
+        }
+        if (partnerId) {
+          where += ' AND r.partner_id = ?';
+          params.push(partnerId);
+        }
+        const [rows] = await pool.query(
+          `SELECT r.*,
+                  ip.name AS partner_name, ip.org_category, ip.contact_name AS partner_contact_name,
+                  ip.contact_phone AS partner_contact_phone,
+                  p.title AS project_title, p.project_code,
+                  uh.name AS handled_by_name
+           FROM \`IndustryPartnerConnectionRequest\` r
+           INNER JOIN \`IndustryPartner\` ip ON r.partner_id = ip.id
+           INNER JOIN \`Project\` p ON r.project_id = p.id
+           LEFT JOIN \`User\` uh ON r.handled_by = uh.id
+           ${where}
+           ORDER BY r.created_at DESC
+           LIMIT 200`,
+          params,
+        );
+        sendResponse(res, 200, {
+          success: true,
+          data: rows.map((r) => ({
+            ...formatIndustryPartnerConnectionRow(r),
+            org_category_label: INDUSTRY_PARTNER_ORG_CATEGORY_LABELS[r.org_category] || r.org_category,
+          })),
+        });
+      } catch (error) {
+        console.error('获取我的对接申请失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取对接申请失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/applicant\/industry-partners\/[\w-]+\/project-apply-status$/) &&
+      req.method === 'GET'
+    ) {
+      const partnerId = pathname.replace('/api/applicant/industry-partners/', '').replace('/project-apply-status', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || user.role !== 'applicant') {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const uid = user.userId || user.id;
+        const [projects] = await pool.query(
+          `SELECT p.id, p.project_code, p.title, p.status
+           FROM \`Project\` p
+           WHERE p.status IN ('approved', 'incubating')
+             AND (
+               p.applicant_id = ?
+               OR EXISTS (SELECT 1 FROM \`ProjectMember\` pm WHERE pm.project_id = p.id AND pm.user_id = ?)
+             )
+           ORDER BY p.updated_at DESC`,
+          [uid, uid],
+        );
+        const items = [];
+        for (const p of projects) {
+          const block = await findPartnerProjectConnectionBlock(partnerId, p.id);
+          items.push({
+            project_id: p.id,
+            project_code: p.project_code,
+            title: p.title,
+            can_apply: !block,
+            block_status: block?.status || null,
+            block_reason: block?.error || null,
+          });
+        }
+        sendResponse(res, 200, {
+          success: true,
+          data: {
+            projects: items,
+            can_apply_any: items.some((x) => x.can_apply),
+          },
+        });
+      } catch (error) {
+        console.error('获取对接申请可选项目失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目状态失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/projects\/[\w-]+\/engaged-industry-partners$/) &&
+      req.method === 'GET'
+    ) {
+      const projectId = pathname.replace('/api/projects/', '').replace('/engaged-industry-partners', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user) {
+          sendResponse(res, 401, { success: false, error: '认证失败' });
+          return;
+        }
+        const mayView = await userMayViewProjectEngagedPartners(pool, projectId, user);
+        if (!mayView) {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const partners = await getProjectEngagedIndustryPartners(projectId);
+        sendResponse(res, 200, { success: true, data: partners });
+      } catch (error) {
+        console.error('获取项目已承接机构失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取项目已承接机构失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/applicant\/industry-partners\/[\w-]+\/connection-requests$/) &&
+      req.method === 'POST'
+    ) {
+      const partnerId = pathname.replace('/api/applicant/industry-partners/', '').replace('/connection-requests', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || user.role !== 'applicant') {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const projectId = body.project_id ? String(body.project_id).trim() : '';
+        const intentionNote = body.intention_note != null ? String(body.intention_note).trim() : '';
+        if (!projectId) {
+          sendResponse(res, 400, { success: false, error: '请选择关联项目' });
+          return;
+        }
+        if (!intentionNote) {
+          sendResponse(res, 400, { success: false, error: '请填写对接意向说明' });
+          return;
+        }
+        const [partnerRows] = await pool.query('SELECT id, name FROM `IndustryPartner` WHERE id = ?', [partnerId]);
+        if (!partnerRows.length) {
+          sendResponse(res, 404, { success: false, error: '机构不存在' });
+          return;
+        }
+        const access = await userMayAccessProjectForConnection(pool, projectId, user);
+        if (!access.ok) {
+          sendResponse(res, access.status, { success: false, error: access.error });
+          return;
+        }
+        const uid = user.userId || user.id;
+        const block = await findPartnerProjectConnectionBlock(partnerId, projectId);
+        if (block) {
+          sendResponse(res, 400, { success: false, error: block.error });
+          return;
+        }
+        const id = randomUUID();
+        await pool.query(
+          `INSERT INTO \`IndustryPartnerConnectionRequest\`
+            (id, partner_id, project_id, applicant_id, intention_note, status, created_at)
+           VALUES (?, ?, ?, ?, ?, 'pending', NOW())`,
+          [id, partnerId, projectId, uid, intentionNote],
+        );
+        const { project } = access;
+        if (project.manager_id) {
+          await pool.query(
+            `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+             VALUES (?, ?, 'review', ?, ?, ?, 'IndustryPartnerConnectionRequest', NOW())`,
+            [
+              randomUUID(),
+              project.manager_id,
+              '产业资源对接申请待处理',
+              `项目「${project.title}」申请对接机构「${partnerRows[0].name}」，请评估处理。`,
+              id,
+            ],
+          );
+        }
+        const [created] = await pool.query(
+          `SELECT r.*, ip.name AS partner_name, p.title AS project_title, p.project_code
+           FROM \`IndustryPartnerConnectionRequest\` r
+           INNER JOIN \`IndustryPartner\` ip ON r.partner_id = ip.id
+           INNER JOIN \`Project\` p ON r.project_id = p.id
+           WHERE r.id = ?`,
+          [id],
+        );
+        sendResponse(res, 201, {
+          success: true,
+          data: formatIndustryPartnerConnectionRow(created[0]),
+          message: '对接申请已提交',
+        });
+      } catch (error) {
+        console.error('提交对接申请失败:', error);
+        sendResponse(res, 500, { success: false, error: '提交对接申请失败' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/assistant/industry-partner-connection-requests' && req.method === 'GET') {
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || user.role !== 'project_manager') {
+          sendResponse(res, 403, { success: false, error: '无权访问' });
+          return;
+        }
+        const uid = user.userId || user.id;
+        const status = String(query.status || '').trim();
+        let where = 'WHERE p.manager_id = ?';
+        const params = [uid];
+        if (status && ['pending', 'confirmed', 'deferred', 'rejected'].includes(status)) {
+          where += ' AND r.status = ?';
+          params.push(status);
+        } else if (status === 'handled') {
+          where += " AND r.status IN ('confirmed', 'deferred', 'rejected')";
+        }
+        const [rows] = await pool.query(
+          `SELECT r.*,
+                  ip.name AS partner_name, ip.org_category, ip.main_products_services,
+                  ip.contact_name AS partner_contact_name, ip.contact_phone AS partner_contact_phone,
+                  p.title AS project_title, p.project_code,
+                  ua.name AS applicant_name,
+                  uh.name AS handled_by_name
+           FROM \`IndustryPartnerConnectionRequest\` r
+           INNER JOIN \`IndustryPartner\` ip ON r.partner_id = ip.id
+           INNER JOIN \`Project\` p ON r.project_id = p.id
+           INNER JOIN \`User\` ua ON r.applicant_id = ua.id
+           LEFT JOIN \`User\` uh ON r.handled_by = uh.id
+           ${where}
+           ORDER BY FIELD(r.status, 'pending', 'confirmed', 'deferred', 'rejected'), r.created_at DESC
+           LIMIT 200`,
+          params,
+        );
+        sendResponse(res, 200, {
+          success: true,
+          data: rows.map((r) => ({
+            ...formatIndustryPartnerConnectionRow(r),
+            org_category_label: INDUSTRY_PARTNER_ORG_CATEGORY_LABELS[r.org_category] || r.org_category,
+          })),
+        });
+      } catch (error) {
+        console.error('获取对接申请列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取对接申请列表失败' });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/assistant\/industry-partner-connection-requests\/[\w-]+\/review$/) &&
+      req.method === 'PUT'
+    ) {
+      const requestId = pathname.replace('/api/assistant/industry-partner-connection-requests/', '').replace('/review', '');
+      try {
+        const user = await verifyToken(req.headers.authorization);
+        if (!user || user.role !== 'project_manager') {
+          sendResponse(res, 403, { success: false, error: '无权操作' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const action = String(body.action || '').trim();
+        if (!['confirmed', 'deferred', 'rejected'].includes(action)) {
+          sendResponse(res, 400, { success: false, error: '无效的处理结果' });
+          return;
+        }
+        const [rows] = await pool.query(
+          `SELECT r.*, p.manager_id, p.title AS project_title, ip.name AS partner_name
+           FROM \`IndustryPartnerConnectionRequest\` r
+           INNER JOIN \`Project\` p ON r.project_id = p.id
+           INNER JOIN \`IndustryPartner\` ip ON r.partner_id = ip.id
+           WHERE r.id = ?`,
+          [requestId],
+        );
+        if (!rows.length) {
+          sendResponse(res, 404, { success: false, error: '对接申请不存在' });
+          return;
+        }
+        const reqRow = rows[0];
+        const uid = user.userId || user.id;
+        if (String(reqRow.manager_id) !== String(uid)) {
+          sendResponse(res, 403, { success: false, error: '只能处理本人负责项目的对接申请' });
+          return;
+        }
+        if (reqRow.status !== 'pending') {
+          sendResponse(res, 400, { success: false, error: '该申请已处理' });
+          return;
+        }
+        const partnerIntention = body.partner_intention != null ? String(body.partner_intention).trim() : '';
+        const handleNote = body.handle_note != null ? String(body.handle_note).trim() : '';
+        if (action === 'confirmed' && !partnerIntention) {
+          sendResponse(res, 400, { success: false, error: '确认对接时请填写对方对接意向' });
+          return;
+        }
+        if ((action === 'deferred' || action === 'rejected') && !handleNote) {
+          sendResponse(res, 400, { success: false, error: '请填写处理说明' });
+          return;
+        }
+        await pool.query(
+          `UPDATE \`IndustryPartnerConnectionRequest\`
+           SET status = ?, handled_by = ?, partner_intention = ?, handle_note = ?, handled_at = NOW()
+           WHERE id = ?`,
+          [
+            action,
+            uid,
+            action === 'confirmed' ? partnerIntention : null,
+            action === 'confirmed' ? handleNote || null : handleNote,
+            requestId,
+          ],
+        );
+        const actionLabel = INDUSTRY_PARTNER_CONNECTION_STATUS_LABELS[action] || action;
+        await pool.query(
+          `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+           VALUES (?, ?, 'review', ?, ?, ?, 'IndustryPartnerConnectionRequest', NOW())`,
+          [
+            randomUUID(),
+            reqRow.applicant_id,
+            '产业资源对接申请已处理',
+            `您申请对接「${reqRow.partner_name}」（项目「${reqRow.project_title}」）的处理结果：${actionLabel}。`,
+            requestId,
+          ],
+        );
+        const [updated] = await pool.query(
+          `SELECT r.*, ip.name AS partner_name, p.title AS project_title, p.project_code,
+                  ua.name AS applicant_name, uh.name AS handled_by_name
+           FROM \`IndustryPartnerConnectionRequest\` r
+           INNER JOIN \`IndustryPartner\` ip ON r.partner_id = ip.id
+           INNER JOIN \`Project\` p ON r.project_id = p.id
+           INNER JOIN \`User\` ua ON r.applicant_id = ua.id
+           LEFT JOIN \`User\` uh ON r.handled_by = uh.id
+           WHERE r.id = ?`,
+          [requestId],
+        );
+        sendResponse(res, 200, {
+          success: true,
+          data: formatIndustryPartnerConnectionRow(updated[0]),
+          message: '处理成功',
+        });
+      } catch (error) {
+        console.error('处理对接申请失败:', error);
+        sendResponse(res, 500, { success: false, error: '处理对接申请失败' });
+      }
+      return;
+    }
+
     // ==================== 服务资源库管理 API（项目经理） ====================
 
     if (pathname === '/api/service-providers' && req.method === 'GET') {
@@ -3155,23 +4051,38 @@ const server = http.createServer(async (req, res) => {
           sendResponse(res, 400, { success: false, error: '标题和内容不能为空' });
           return;
         }
+        if (!body.source_partner_id) {
+          sendResponse(res, 400, { success: false, error: '请选择需求来源机构' });
+          return;
+        }
         const finalStatus = ['draft', 'published', 'closed', 'offline'].includes(demandStatus)
           ? demandStatus
           : 'draft';
         const publishedAt = finalStatus === 'published' ? new Date() : null;
         const publisherId = user.id || user.userId;
         const id = randomUUID();
+        let sourcePartnerId = body.source_partner_id ? String(body.source_partner_id).trim() : null;
+        let enterpriseName = body.enterprise_name ? String(body.enterprise_name).trim() : null;
+        if (sourcePartnerId) {
+          const [partnerRows] = await pool.query('SELECT name FROM `IndustryPartner` WHERE id = ?', [sourcePartnerId]);
+          if (!partnerRows.length) {
+            sendResponse(res, 400, { success: false, error: '所选需求来源机构不存在' });
+            return;
+          }
+          enterpriseName = partnerRows[0].name;
+        }
         await pool.query(
           `INSERT INTO \`IndustryResource\`
-            (id, title, summary, content, enterprise_name, industry, source_url, source_note,
+            (id, title, summary, content, enterprise_name, source_partner_id, industry, source_url, source_note,
              contact_name, contact_phone, contact_email, status, publisher_id, published_at, deadline)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             id,
             String(title).trim(),
             String(summary || '').trim(),
             normalizeEnterpriseDemandContentForDb(content),
-            body.enterprise_name ? String(body.enterprise_name).trim() : null,
+            enterpriseName,
+            sourcePartnerId,
             body.industry ? String(body.industry).trim() : null,
             body.source_url ? String(body.source_url).trim() : null,
             body.source_note ? String(body.source_note).trim() : null,
@@ -3185,8 +4096,9 @@ const server = http.createServer(async (req, res) => {
           ],
         );
         const [created] = await pool.query(
-          `SELECT d.*, u.name AS publisher_name FROM \`IndustryResource\` d
-           LEFT JOIN \`User\` u ON d.publisher_id = u.id WHERE d.id = ?`,
+          `SELECT d.*, u.name AS publisher_name, ip.name AS source_partner_name FROM \`IndustryResource\` d
+           LEFT JOIN \`User\` u ON d.publisher_id = u.id
+           LEFT JOIN \`IndustryPartner\` ip ON d.source_partner_id = ip.id WHERE d.id = ?`,
           [id],
         );
         sendResponse(res, 201, {
@@ -3280,8 +4192,9 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const [rows] = await pool.query(
-          `SELECT d.*, u.name AS publisher_name FROM \`IndustryResource\` d
-           LEFT JOIN \`User\` u ON d.publisher_id = u.id WHERE d.id = ?`,
+          `SELECT d.*, u.name AS publisher_name, ip.name AS source_partner_name FROM \`IndustryResource\` d
+           LEFT JOIN \`User\` u ON d.publisher_id = u.id
+           LEFT JOIN \`IndustryPartner\` ip ON d.source_partner_id = ip.id WHERE d.id = ?`,
           [demandId],
         );
         if (!rows.length) {
@@ -3361,6 +4274,20 @@ const server = http.createServer(async (req, res) => {
             values.push(body[key] != null ? String(body[key]).trim() || null : null);
           }
         });
+        if (body.source_partner_id !== undefined) {
+          const sourcePartnerId = body.source_partner_id ? String(body.source_partner_id).trim() : null;
+          fields.push('source_partner_id = ?');
+          values.push(sourcePartnerId);
+          if (sourcePartnerId) {
+            const [partnerRows] = await pool.query('SELECT name FROM `IndustryPartner` WHERE id = ?', [sourcePartnerId]);
+            if (!partnerRows.length) {
+              sendResponse(res, 400, { success: false, error: '所选需求来源机构不存在' });
+              return;
+            }
+            fields.push('enterprise_name = ?');
+            values.push(partnerRows[0].name);
+          }
+        }
         if (body.content !== undefined) {
           fields.push('content = ?');
           values.push(normalizeEnterpriseDemandContentForDb(body.content));
@@ -3384,8 +4311,9 @@ const server = http.createServer(async (req, res) => {
         values.push(demandId);
         await pool.query(`UPDATE \`IndustryResource\` SET ${fields.join(', ')} WHERE id = ?`, values);
         const [updated] = await pool.query(
-          `SELECT d.*, u.name AS publisher_name FROM \`IndustryResource\` d
-           LEFT JOIN \`User\` u ON d.publisher_id = u.id WHERE d.id = ?`,
+          `SELECT d.*, u.name AS publisher_name, ip.name AS source_partner_name FROM \`IndustryResource\` d
+           LEFT JOIN \`User\` u ON d.publisher_id = u.id
+           LEFT JOIN \`IndustryPartner\` ip ON d.source_partner_id = ip.id WHERE d.id = ?`,
           [demandId],
         );
         sendResponse(res, 200, {
@@ -7700,6 +8628,65 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // 管理员导出：产业资源库
+    if (pathname === '/api/admin/export/industry-partners' && req.method === 'GET') {
+      const admin = await assertAdminForExport(req, res);
+      if (!admin) return;
+      try {
+        const query = url.parse(req.url, true).query;
+        let where = 'WHERE 1=1';
+        const params = [];
+        const keyword = String(query.keyword || '').trim();
+        if (keyword) {
+          const kw = `%${keyword}%`;
+          where += ' AND (ip.name LIKE ? OR ip.main_products_services LIKE ? OR ip.contact_name LIKE ? OR ip.contact_phone LIKE ? OR ip.description LIKE ?)';
+          params.push(kw, kw, kw, kw, kw);
+        }
+        const orgCategory = String(query.org_category || '').trim();
+        if (orgCategory && INDUSTRY_PARTNER_ORG_CATEGORIES.includes(orgCategory)) {
+          where += ' AND ip.org_category = ?';
+          params.push(orgCategory);
+        }
+        const [rows] = await pool.query(
+          `SELECT ip.id, ip.name, ip.org_category, ip.main_products_services, ip.contact_name,
+                  ip.contact_phone, ip.description, ip.updated_at, ip.created_at
+           FROM \`IndustryPartner\` ip
+           ${where}
+           ORDER BY ip.updated_at DESC, ip.name ASC
+           LIMIT 5000`,
+          params,
+        );
+        const ids = rows.map((r) => r.id);
+        const domainsMap = await loadIndustryPartnerDomainsMap(ids);
+        const data = rows.map((r) => ({
+          name: r.name,
+          org_category: INDUSTRY_PARTNER_ORG_CATEGORY_LABELS[r.org_category] || r.org_category,
+          domains: (domainsMap[r.id] || []).map((d) => d.name).join('、'),
+          main_products_services: r.main_products_services || '',
+          contact_name: r.contact_name || '',
+          contact_phone: r.contact_phone || '',
+          description: r.description || '',
+          updated_at: r.updated_at,
+          created_at: r.created_at,
+        }));
+        await sendAdminExcelExport(res, '产业资源库', '产业资源库导出', [
+          { key: 'name', label: '机构名称' },
+          { key: 'org_category', label: '机构分类' },
+          { key: 'domains', label: '所属领域' },
+          { key: 'main_products_services', label: '主要产品/服务' },
+          { key: 'contact_name', label: '联系人' },
+          { key: 'contact_phone', label: '联系电话' },
+          { key: 'description', label: '机构简介' },
+          { key: 'updated_at', label: '更新时间', format: 'datetime' },
+          { key: 'created_at', label: '创建时间', format: 'datetime' },
+        ], data);
+      } catch (error) {
+        console.error('导出产业资源库失败:', error);
+        sendResponse(res, 500, { success: false, error: '导出失败' });
+      }
+      return;
+    }
+
     // 管理员导出：专家资源库（专家顾问用户）
     if (pathname === '/api/admin/export/experts' && req.method === 'GET') {
       const admin = await assertAdminForExport(req, res);
@@ -9802,6 +10789,124 @@ const server = http.createServer(async (req, res) => {
       } catch (error) {
         console.error('经费管理员登记经费失败:', error);
         sendResponse(res, 500, { success: false, error: '登记失败', message: error.message });
+      }
+      return;
+    }
+
+    if (pathname.match(/^\/api\/funds-manager\/funds-requests\/[^/]+$/) && req.method === 'PUT') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'funds_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      const requestId = pathname.replace('/api/funds-manager/funds-requests/', '');
+      try {
+        const body = await parseRequestBody(req);
+        const serviceRequirement = String(body.service_requirement || '').trim();
+        const items = Array.isArray(body.items) ? body.items : [];
+        const feedbackComment = body.feedback_comment != null ? String(body.feedback_comment).trim() : '';
+
+        if (!serviceRequirement) {
+          sendResponse(res, 400, { success: false, error: '请填写经费使用说明' });
+          return;
+        }
+        if (items.length === 0) {
+          sendResponse(res, 400, { success: false, error: '请至少添加一条经费预算明细' });
+          return;
+        }
+
+        const VALID_CATEGORIES = new Set([
+          '设备费', '材料费', '测试费', '差旅费', '会议费', '劳务费',
+          '专家咨询费', '出版费', '管理费', '其他',
+        ]);
+
+        const [existingRows] = await pool.query(
+          `SELECT fr.*, p.title AS project_title, p.applicant_id
+           FROM \`FundsRequest\` fr
+           INNER JOIN \`Project\` p ON fr.project_id = p.id
+           WHERE fr.id = ?`,
+          [requestId],
+        );
+        if (!existingRows.length) {
+          sendResponse(res, 404, { success: false, error: '经费记录不存在' });
+          return;
+        }
+        const existing = existingRows[0];
+        if (existing.submission_type !== 'manager_direct') {
+          sendResponse(res, 400, { success: false, error: '仅管理员直接登记的经费记录可修改' });
+          return;
+        }
+        if (!['feedback_given', 'result_submitted'].includes(existing.status)) {
+          sendResponse(res, 400, { success: false, error: '当前状态不可修改' });
+          return;
+        }
+
+        const managerId = user.userId || user.id;
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          await connection.query(
+            `UPDATE \`FundsRequest\`
+             SET service_requirement = ?, feedback_comment = ?, feedback_by = ?, updated_at = NOW()
+             WHERE id = ?`,
+            [
+              serviceRequirement,
+              feedbackComment || existing.feedback_comment || '经费管理员直接登记，已批准',
+              managerId,
+              requestId,
+            ],
+          );
+          await connection.query('DELETE FROM `FundsRequestItem` WHERE funds_request_id = ?', [requestId]);
+
+          let sortOrder = 0;
+          for (const raw of items) {
+            const category = String(raw.category || '').trim();
+            const itemName = String(raw.item_name || '').trim();
+            const description = raw.description ? String(raw.description).trim() : null;
+            const amount = parseFloat(raw.amount);
+            if (!category || !VALID_CATEGORIES.has(category)) {
+              throw new Error(`预算科目无效：${category || '(空)'}`);
+            }
+            if (!itemName) {
+              throw new Error('每条明细须填写项目名称');
+            }
+            if (!Number.isFinite(amount) || amount <= 0) {
+              throw new Error(`「${itemName}」的金额须大于 0`);
+            }
+            await connection.query(
+              `INSERT INTO \`FundsRequestItem\`
+               (id, funds_request_id, category, item_name, description, amount, feedback_amount, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              [randomUUID(), requestId, category, itemName, description, amount, amount, sortOrder++],
+            );
+          }
+
+          if (existing.applicant_id) {
+            await connection.query(
+              `INSERT INTO \`Notification\` (id, user_id, type, title, content, related_id, related_type, created_at)
+               VALUES (?, ?, 'funding', ?, ?, ?, 'FundsRequest', NOW())`,
+              [
+                randomUUID(),
+                existing.applicant_id,
+                '经费登记已更新',
+                `经费管理员已更新项目「${existing.project_title}」的经费登记内容，请在「经费申请」中查看。`,
+                requestId,
+              ],
+            );
+          }
+
+          await connection.commit();
+          sendResponse(res, 200, { success: true, message: '经费登记已更新' });
+        } catch (txErr) {
+          await connection.rollback();
+          sendResponse(res, 400, { success: false, error: txErr.message || '更新失败' });
+        } finally {
+          connection.release();
+        }
+      } catch (error) {
+        console.error('经费管理员修改经费登记失败:', error);
+        sendResponse(res, 500, { success: false, error: '更新失败', message: error.message });
       }
       return;
     }
@@ -28616,6 +29721,7 @@ const server = http.createServer(async (req, res) => {
 
         let assignedExperts = [];
         let assignedProviders = [];
+        let assignedIndustryPartners = [];
         if (feedback_action === 'approved') {
           if (Array.isArray(expert_assignments) && expert_assignments.length) {
             assignedExperts = await assignIncubationProgressExperts(
@@ -28637,6 +29743,18 @@ const server = http.createServer(async (req, res) => {
               user.id,
             );
           }
+          const industryPartnerIds = Array.isArray(body.industry_partner_ids)
+            ? body.industry_partner_ids
+            : Array.isArray(body.industry_partner_assignments)
+              ? body.industry_partner_assignments.map((p) => p.industry_partner_id || p.id || p)
+              : [];
+          if (industryPartnerIds.length) {
+            assignedIndustryPartners = await assignIncubationProgressIndustryPartners(
+              progressId,
+              industryPartnerIds,
+              user.id,
+            );
+          }
         }
 
         // 发送通知给申请人
@@ -28652,10 +29770,13 @@ const server = http.createServer(async (req, res) => {
           message: feedback_action === 'approved' ? '已同意提供服务' : '已拒绝服务申请',
           assigned_experts: assignedExperts,
           assigned_service_providers: assignedProviders,
+          assigned_industry_partners: assignedIndustryPartners,
         });
       } catch (error) {
         console.error('处理服务申请反馈失败:', error);
-        sendResponse(res, 500, { success: false, error: '处理服务申请反馈失败' });
+        const msg = error?.message || '处理服务申请反馈失败';
+        const status = error?.code === 'PENDING_CONNECTION' || error?.code === 'REJECTED_CONNECTION' ? 400 : 500;
+        sendResponse(res, status, { success: false, error: msg });
       }
       return;
     }
@@ -29138,6 +30259,188 @@ const server = http.createServer(async (req, res) => {
       } catch (error) {
         console.error('移除孵化服务专家分配失败:', error);
         sendResponse(res, 500, { success: false, error: '移除专家分配失败' });
+      }
+      return;
+    }
+
+    // 产业资源库机构列表（项目经理分配服务申请时可搜索）
+    if (pathname === '/api/incubation/industry-partners' && req.method === 'GET') {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const query = url.parse(req.url, true).query;
+        const keyword = String(query.keyword || '').trim();
+        const domainId = String(query.domain_id || '').trim();
+        const projectId = String(query.project_id || '').trim();
+        let sql = 'SELECT ip.id, ip.name, ip.org_category, ip.main_products_services, ip.contact_name, ip.contact_phone, ip.description FROM `IndustryPartner` ip';
+        const params = [];
+        const whereParts = [];
+        if (keyword) {
+          const kw = `%${keyword}%`;
+          whereParts.push(
+            '(ip.name LIKE ? OR ip.main_products_services LIKE ? OR ip.contact_name LIKE ? OR ip.description LIKE ?)',
+          );
+          params.push(kw, kw, kw, kw);
+        }
+        if (domainId) {
+          whereParts.push(
+            'EXISTS (SELECT 1 FROM `IndustryPartnerDomain` ipd WHERE ipd.partner_id = ip.id AND ipd.domain_id = ?)',
+          );
+          params.push(domainId);
+        }
+        if (projectId) {
+          whereParts.push(
+            `NOT EXISTS (
+              SELECT 1 FROM \`IndustryPartnerConnectionRequest\` r
+              WHERE r.project_id = ? AND r.partner_id = ip.id AND r.status = 'confirmed'
+            )`,
+          );
+          params.push(projectId);
+        }
+        if (whereParts.length) {
+          sql += ` WHERE ${whereParts.join(' AND ')}`;
+        }
+        sql += ' ORDER BY ip.name ASC LIMIT 100';
+        const [rows] = await pool.query(sql, params);
+        sendResponse(res, 200, {
+          success: true,
+          data: rows.map((r) => ({
+            ...r,
+            org_category_label: INDUSTRY_PARTNER_ORG_CATEGORY_LABELS[r.org_category] || r.org_category,
+          })),
+        });
+      } catch (error) {
+        console.error('获取产业资源库机构列表失败:', error);
+        sendResponse(res, 500, { success: false, error: '获取产业资源库机构列表失败' });
+      }
+      return;
+    }
+
+    // 获取/更新孵化服务申请已分配产业资源库机构
+    if (
+      pathname.match(/^\/api\/incubation\/requests\/[^/]+\/industry-partners$/) &&
+      (req.method === 'GET' || req.method === 'PUT')
+    ) {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      const progressId = pathname.split('/')[4];
+
+      if (req.method === 'GET') {
+        try {
+          const [progressRows] = await pool.query(
+            'SELECT * FROM `IncubationProgress` WHERE id = ?',
+            [progressId],
+          );
+          if (!progressRows.length) {
+            sendResponse(res, 404, { success: false, error: '服务申请不存在' });
+            return;
+          }
+          if (!(await userMayViewIncubationProgress(pool, progressRows[0], user))) {
+            sendResponse(res, 403, { success: false, error: '没有权限' });
+            return;
+          }
+          const partners = await getIncubationAssignedIndustryPartners(progressId);
+          sendResponse(res, 200, { success: true, data: partners });
+        } catch (error) {
+          console.error('获取已分配产业资源库机构失败:', error);
+          sendResponse(res, 500, { success: false, error: '获取已分配产业资源库机构失败' });
+        }
+        return;
+      }
+
+      if (user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const mgr = await verifyIncubationProgressManager(progressId, user.id);
+        if (!mgr.ok) {
+          sendResponse(res, mgr.status, { success: false, error: mgr.error });
+          return;
+        }
+        const { progress } = mgr;
+        if (progress.feedback_action !== 'approved') {
+          sendResponse(res, 400, { success: false, error: '仅已同意的服务申请可分配产业资源库机构' });
+          return;
+        }
+        const body = await parseRequestBody(req);
+        const partnerIds = body.industry_partner_ids
+          || (Array.isArray(body.assignments)
+            ? body.assignments.map((p) => p.industry_partner_id || p.id)
+            : []);
+        const assigned = await assignIncubationProgressIndustryPartners(progressId, partnerIds, user.id);
+        const allPartners = await getIncubationAssignedIndustryPartners(progressId);
+        sendResponse(res, 200, {
+          success: true,
+          message: '产业资源库机构分配成功',
+          assigned,
+          data: allPartners,
+        });
+      } catch (error) {
+        console.error('分配产业资源库机构失败:', error);
+        const msg = error?.message || '分配产业资源库机构失败';
+        const status = error?.code === 'PENDING_CONNECTION' || error?.code === 'REJECTED_CONNECTION' ? 400 : 500;
+        sendResponse(res, status, { success: false, error: msg });
+      }
+      return;
+    }
+
+    if (
+      pathname.match(/^\/api\/incubation\/requests\/[^/]+\/industry-partners\/[^/]+$/) &&
+      req.method === 'DELETE'
+    ) {
+      const token = req.headers.authorization;
+      const user = await verifyToken(token);
+      if (!user || user.role !== 'project_manager') {
+        sendResponse(res, 403, { success: false, error: '没有权限' });
+        return;
+      }
+      try {
+        const parts = pathname.split('/');
+        const progressId = parts[4];
+        const assignmentId = parts[6];
+        const mgr = await verifyIncubationProgressManager(progressId, user.id);
+        if (!mgr.ok) {
+          sendResponse(res, mgr.status, { success: false, error: mgr.error });
+          return;
+        }
+        const { progress } = mgr;
+        const [connRows] = await pool.query(
+          `SELECT r.id, r.partner_id, r.source, r.project_id
+           FROM \`IndustryPartnerConnectionRequest\` r
+           WHERE r.id = ? AND r.status = 'confirmed' AND r.project_id = ?`,
+          [assignmentId, progress.project_id],
+        );
+        if (!connRows.length) {
+          sendResponse(res, 404, { success: false, error: '承接记录不存在' });
+          return;
+        }
+        const conn = connRows[0];
+        if (conn.source !== 'pm_service_assign') {
+          sendResponse(res, 400, { success: false, error: '通过对接申请确认的承接关系不可在此移除' });
+          return;
+        }
+        const [taRows] = await pool.query(
+          'SELECT 1 FROM `TransformationAchievement` WHERE project_id = ? AND industry_partner_id = ? LIMIT 1',
+          [conn.project_id, conn.partner_id],
+        );
+        if (taRows.length) {
+          sendResponse(res, 400, { success: false, error: '该承接关系已有转化成果登记，无法移除' });
+          return;
+        }
+        await pool.query('DELETE FROM `IndustryPartnerConnectionRequest` WHERE id = ?', [conn.id]);
+        sendResponse(res, 200, { success: true, message: '已移除产业资源库机构承接' });
+      } catch (error) {
+        console.error('移除产业资源库机构分配失败:', error);
+        sendResponse(res, 500, { success: false, error: '移除产业资源库机构分配失败' });
       }
       return;
     }

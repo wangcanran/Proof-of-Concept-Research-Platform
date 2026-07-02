@@ -8,7 +8,7 @@
 
     <div class="page-header">
       <div class="header-left">
-        <h1 class="page-title">{{ isEdit ? '编辑产业资源' : '创建产业资源' }}</h1>
+        <h1 class="page-title">{{ isEdit ? '编辑产业需求' : '创建产业需求' }}</h1>
       </div>
       <div class="header-right">
         <template v-if="form.status === 'draft'">
@@ -38,8 +38,25 @@
 
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="企业/单位名称">
-                <el-input v-model="form.enterprise_name" placeholder="选填" maxlength="200" />
+              <el-form-item label="需求来源" required>
+                <el-select
+                  v-model="form.source_partner_id"
+                  filterable
+                  remote
+                  reserve-keyword
+                  placeholder="从产业资源库选择机构"
+                  :remote-method="searchPartners"
+                  :loading="partnerLoading"
+                  style="width: 100%"
+                  @change="onPartnerChange"
+                >
+                  <el-option
+                    v-for="p in partnerOptions"
+                    :key="p.id"
+                    :label="p.name"
+                    :value="p.id"
+                  />
+                </el-select>
               </el-form-item>
             </el-col>
             <el-col :span="12">
@@ -92,6 +109,7 @@ import { Boot } from '@wangeditor/editor'
 import '@wangeditor/editor/dist/css/style.css'
 import request from '@/utils/request'
 import { getApiOrigin } from '@/utils/request'
+import { industryPartnerAPI } from '@/api/industryPartners'
 
 const route = useRoute()
 const router = useRouter()
@@ -101,11 +119,40 @@ const form = ref({
   title: '',
   content: '',
   status: 'draft',
+  source_partner_id: '' as string,
   enterprise_name: '',
   industry: '',
   source_url: '',
   deadline: '' as string | null,
 })
+
+const partnerLoading = ref(false)
+const partnerOptions = ref<{ id: string; name: string }[]>([])
+
+async function searchPartners(keyword: string) {
+  partnerLoading.value = true
+  try {
+    const res = await industryPartnerAPI.list({
+      keyword: keyword || undefined,
+      page: 1,
+      pageSize: 50,
+      lite: true,
+    })
+    if (res.success && res.data) {
+      partnerOptions.value = (res.data.list || []).map((p: { id: string; name: string }) => ({
+        id: p.id,
+        name: p.name,
+      }))
+    }
+  } finally {
+    partnerLoading.value = false
+  }
+}
+
+function onPartnerChange(partnerId: string) {
+  const found = partnerOptions.value.find((p) => p.id === partnerId)
+  if (found) form.value.enterprise_name = found.name
+}
 
 const editorRef = shallowRef<IDomEditor>()
 const apiOrigin = getApiOrigin()
@@ -281,10 +328,14 @@ async function loadDemand() {
         title: d.title || '',
         content: d.content || '',
         status: d.status || 'draft',
-        enterprise_name: d.enterprise_name || '',
+        source_partner_id: d.source_partner_id || '',
+        enterprise_name: d.enterprise_name || d.source_partner_name || '',
         industry: d.industry || '',
         source_url: d.source_url || '',
         deadline: d.deadline || null,
+      }
+      if (d.source_partner_id && d.source_partner_name) {
+        partnerOptions.value = [{ id: d.source_partner_id, name: d.source_partner_name }]
       }
     }
   } catch {
@@ -298,6 +349,7 @@ function buildPayload(targetStatus: string) {
     summary: '',
     content: form.value.content,
     status: targetStatus,
+    source_partner_id: form.value.source_partner_id || null,
     enterprise_name: form.value.enterprise_name || null,
     industry: form.value.industry || null,
     source_url: form.value.source_url || null,
@@ -316,6 +368,10 @@ async function handleSave(action: string) {
   }
   if (!form.value.content.trim()) {
     ElMessage.warning('请输入正文')
+    return
+  }
+  if (!form.value.source_partner_id) {
+    ElMessage.warning('请选择需求来源机构')
     return
   }
 
@@ -341,7 +397,7 @@ async function handleSave(action: string) {
       const res = await request.put(`/api/enterprise-demands/${route.params.id}`, payload)
       if (res.success) {
         ElMessage.success(successMsg)
-        router.push('/assistant/enterprise-demands')
+        router.push('/assistant/industry-resources/demands')
       } else {
         ElMessage.error(res.error || '保存失败')
       }
@@ -349,7 +405,7 @@ async function handleSave(action: string) {
       const res = await request.post('/api/enterprise-demands', payload)
       if (res.success) {
         ElMessage.success(successMsg)
-        router.push('/assistant/enterprise-demands')
+        router.push('/assistant/industry-resources/demands')
       } else {
         ElMessage.error(res.error || '创建失败')
       }
@@ -360,10 +416,11 @@ async function handleSave(action: string) {
 }
 
 function goBack() {
-  router.push('/assistant/enterprise-demands')
+  router.push('/assistant/industry-resources/demands')
 }
 
 onMounted(() => {
+  searchPartners('')
   if (isEdit.value) loadDemand()
 })
 

@@ -431,8 +431,8 @@
     <!-- 步骤4：图片与视频展示 -->
     <div v-show="currentStep === 4" class="step-content">
       <div class="section-card">
-        <h3 class="section-title">四、图片与视频展示</h3>
-        <p class="section-subtitle">请上传项目相关图片或视频，至少上传 1 个文件；图片不超过 10MB，视频不超过 50MB（支持 MP4、WebM 等）</p>
+        <h3 class="section-title">四、图片与视频展示（选填）</h3>
+        <p class="section-subtitle">可上传项目相关图片或视频；图片不超过 10MB，视频不超过 50MB（支持 MP4、WebM 等）</p>
 
         <!-- 媒体上传区域 -->
         <div class="images-section">
@@ -523,7 +523,7 @@
           </div>
           
           <div v-else class="no-images-hint">
-            <p>暂无文件，请至少上传 1 张图片或 1 个视频</p>
+            <p>暂无文件，可按需上传图片或视频</p>
           </div>
         </div>
       </div>
@@ -986,10 +986,8 @@ const getMissingForStep = (step: number): string[] => {
       }
       break
     }
-    case 4: {
-      if (images.value.length === 0) missing.push('至少上传1张图片或1个视频')
+    case 4:
       break
-    }
     default:
       break
   }

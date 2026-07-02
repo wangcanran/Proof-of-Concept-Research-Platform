@@ -355,8 +355,8 @@ WHERE EXISTS (
 UPDATE `IncubationProgress` SET `status` = 'feedback_given' WHERE `status` = 'result_submitted';
 
 ALTER TABLE `IncubationProgress`
-DROP COLUMN IF EXISTS `result_date`,
-DROP COLUMN IF EXISTS `result_description`;
+DROP COLUMN `result_date`,
+DROP COLUMN `result_description`;
 
 -- 修改 status 字段的 ENUM 值
 ALTER TABLE `IncubationProgress` 
@@ -376,8 +376,8 @@ DROP COLUMN `expert_type`;
 UPDATE `FundsRequest` SET `status` = 'feedback_given' WHERE `status` = 'result_submitted';
 
 ALTER TABLE `FundsRequest`
-DROP COLUMN IF EXISTS `result_date`,
-DROP COLUMN IF EXISTS `result_description`;
+DROP COLUMN `result_date`,
+DROP COLUMN `result_description`;
 
 ALTER TABLE `FundsRequest` 
 MODIFY COLUMN `status` ENUM('pending', 'feedback_given') NOT NULL DEFAULT 'pending' COMMENT '状态：待反馈/已反馈';

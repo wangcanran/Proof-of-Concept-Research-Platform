@@ -129,7 +129,7 @@
               <span class="nav-icon">📰</span>
               <span v-if="!sidebarCollapsed" class="nav-text">新闻公告管理</span>
             </router-link>
-            <router-link to="/assistant/enterprise-demands" class="nav-link" active-class="active">
+            <router-link to="/assistant/industry-resources/partners" class="nav-link" active-class="active">
               <span class="nav-icon">🏢</span>
               <span v-if="!sidebarCollapsed" class="nav-text">产业资源管理</span>
             </router-link>

@@ -236,6 +236,13 @@
             </div>
           </div>
 
+          <div v-if="assignedIndustryPartners.length" class="section">
+            <h3 class="section-title">产业资源库机构</h3>
+            <div class="content-box content-box--assignments">
+              <IncubationAssignedIndustryPartnersDisplay :providers="assignedIndustryPartners" />
+            </div>
+          </div>
+
           <div class="section">
             <h3 class="section-title">反馈人</h3>
             <div class="content-box">{{ request.feedback_by_name || '—' }}</div>
@@ -308,6 +315,19 @@
                 @remove="removeProviderAssignment"
               />
             </div>
+            <div v-if="showIndustryPartnerAssign" class="form-group">
+              <label class="form-label">分配产业资源库机构（可选）</label>
+              <IncubationIndustryPartnerAssignPanel
+                v-model="industryPartnerAssignments"
+                :project-id="request.project_id"
+              />
+              <IncubationAssignedIndustryPartnersDisplay
+                v-if="industryPartnerAssignments.length"
+                :providers="industryPartnerAssignments"
+                editable
+                @remove="removeIndustryPartnerAssignment"
+              />
+            </div>
           </template>
           <div class="form-group">
             <label class="form-label">附件材料（可选）</label>
@@ -365,6 +385,10 @@ import {
 import IncubationExpertAssignPanel from '@/components/IncubationExpertAssignPanel.vue'
 import IncubationAssignedExpertsDisplay from '@/components/IncubationAssignedExpertsDisplay.vue'
 import IncubationServiceProviderAssignPanel from '@/components/IncubationServiceProviderAssignPanel.vue'
+import IncubationAssignedIndustryPartnersDisplay from '@/components/IncubationAssignedIndustryPartnersDisplay.vue'
+import IncubationIndustryPartnerAssignPanel, {
+  type AssignedIndustryPartnerInfo,
+} from '@/components/IncubationIndustryPartnerAssignPanel.vue'
 import IncubationAssignedServiceProvidersDisplay from '@/components/IncubationAssignedServiceProvidersDisplay.vue'
 import type { ExpertAssignment } from '@/components/IncubationExpertAssignPanel.vue'
 import type { AssignedServiceProviderInfo } from '@/components/IncubationAssignedServiceProvidersDisplay.vue'
@@ -402,6 +426,12 @@ const showExpertEditor = ref(false)
 const showProviderEditor = ref(false)
 const expertAssignments = ref<ExpertAssignment[]>([])
 const providerAssignments = ref<AssignedServiceProviderInfo[]>([])
+const industryPartnerAssignments = ref<AssignedIndustryPartnerInfo[]>([])
+
+const showIndustryPartnerAssign = computed(() => {
+  const cats = parseServiceCategories(request.value?.service_categories)
+  return cats.some((c) => ['tech', 'ip', 'resource'].includes(c))
+})
 
 // 用户角色
 const userRole = computed(() => {
@@ -436,6 +466,7 @@ const categoryDisplayLine = computed(() =>
 
 const assignedExperts = computed(() => request.value?.assigned_experts || [])
 const assignedProviders = computed(() => request.value?.assigned_service_providers || [])
+const assignedIndustryPartners = computed(() => request.value?.assigned_industry_partners || [])
 
 const canManageExperts = computed(
   () =>
@@ -490,6 +521,7 @@ const closeModal = () => {
   uploadedFiles.value = []
   expertAssignments.value = []
   providerAssignments.value = []
+  industryPartnerAssignments.value = []
 }
 
 const removeExpertAssignment = (expert: ExpertAssignment) => {
@@ -501,6 +533,12 @@ const removeExpertAssignment = (expert: ExpertAssignment) => {
 const removeProviderAssignment = (provider: AssignedServiceProviderInfo) => {
   providerAssignments.value = providerAssignments.value.filter(
     (p) => p.service_provider_id !== provider.service_provider_id,
+  )
+}
+
+const removeIndustryPartnerAssignment = (partner: AssignedIndustryPartnerInfo) => {
+  industryPartnerAssignments.value = industryPartnerAssignments.value.filter(
+    (p) => p.industry_partner_id !== partner.industry_partner_id,
   )
 }
 
@@ -539,6 +577,9 @@ const submitFeedback = async () => {
       }
       if (providerAssignments.value.length) {
         payload.service_provider_ids = providerAssignments.value.map((p) => p.service_provider_id)
+      }
+      if (industryPartnerAssignments.value.length) {
+        payload.industry_partner_ids = industryPartnerAssignments.value.map((p) => p.industry_partner_id)
       }
     }
     const res = await api.put(`/incubation/requests/${request.value.id}/feedback`, payload)

@@ -255,6 +255,13 @@
         <div class="modal-footer">
           <button class="btn btn-secondary" @click="closeViewModal">关闭</button>
           <button
+            v-if="selectedRequest && canEdit(selectedRequest)"
+            class="btn btn-primary"
+            @click="openEditModal"
+          >
+            修改登记
+          </button>
+          <button
             v-if="selectedRequest && canAudit(selectedRequest)"
             class="btn btn-primary"
             @click="switchToAudit"
@@ -264,6 +271,12 @@
         </div>
       </div>
     </div>
+
+    <FundsManagerFundsRequestEditModal
+      v-model:visible="showEditModal"
+      :request-id="editRequestId"
+      @saved="onEditSaved"
+    />
   </div>
 </template>
 
@@ -273,6 +286,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import request from '@/utils/request'
+import FundsManagerFundsRequestEditModal from '@/components/FundsManagerFundsRequestEditModal.vue'
 import {
   formatAmountYuan,
 } from '@/constants/budgetCategories'
@@ -287,6 +301,8 @@ const requests = ref<any[]>([])
 const currentTab = ref('pending')
 const showAuditModal = ref(false)
 const showViewModal = ref(false)
+const showEditModal = ref(false)
+const editRequestId = ref('')
 const selectedRequest = ref<any>(null)
 const feedbackForm = ref({
   feedback_action: 'approved',
@@ -360,6 +376,10 @@ const feedbackResultClass = (a: string) => {
 const canAudit = (request: any) =>
   request.status === 'pending' && request.submission_type !== 'manager_direct'
 
+const canEdit = (request: any) =>
+  request.submission_type === 'manager_direct' &&
+  ['feedback_given', 'result_submitted'].includes(request.status)
+
 const loadRequests = async () => {
   loading.value = true
   try {
@@ -427,6 +447,20 @@ const switchToAudit = () => {
   openAuditModal({ id })
 }
 
+const openEditModal = () => {
+  if (!selectedRequest.value) return
+  editRequestId.value = selectedRequest.value.id
+  showEditModal.value = true
+}
+
+const onEditSaved = async () => {
+  await loadRequests()
+  if (editRequestId.value) {
+    await loadRequestDetail(editRequestId.value)
+    showViewModal.value = true
+  }
+}
+
 const submitFeedback = async () => {
   if (!selectedRequest.value) return
   submitting.value = true
@@ -479,6 +513,7 @@ onMounted(() => {
       const found = requests.value.find((r) => r.id === openId)
       if (found && canAudit(found)) openAuditModal(found)
       else if (found) openViewModal(found)
+      else openViewModal({ id: openId })
     }
   })
 })

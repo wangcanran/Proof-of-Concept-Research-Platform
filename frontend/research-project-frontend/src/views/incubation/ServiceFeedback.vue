@@ -136,6 +136,21 @@
                 @remove="removeProviderAssignment"
               />
             </div>
+            <template v-if="showIndustryPartnerAssign">
+              <IncubationIndustryPartnerAssignPanel
+                v-model="industryPartnerAssignments"
+                :project-id="request.project_id"
+                class="form-group partner-assign-block"
+              />
+              <div v-if="industryPartnerAssignments.length" class="form-group">
+                <label class="form-label">已选产业资源库机构</label>
+                <IncubationAssignedIndustryPartnersDisplay
+                  :providers="industryPartnerAssignments"
+                  editable
+                  @remove="removeIndustryPartnerAssignment"
+                />
+              </div>
+            </template>
           </template>
 
           <div class="form-group">
@@ -190,6 +205,11 @@ import IncubationExpertAssignPanel, {
 import IncubationAssignedExpertsDisplay from '@/components/IncubationAssignedExpertsDisplay.vue'
 import IncubationServiceProviderAssignPanel from '@/components/IncubationServiceProviderAssignPanel.vue'
 import IncubationAssignedServiceProvidersDisplay from '@/components/IncubationAssignedServiceProvidersDisplay.vue'
+import IncubationIndustryPartnerAssignPanel, {
+  type AssignedIndustryPartnerInfo,
+} from '@/components/IncubationIndustryPartnerAssignPanel.vue'
+import IncubationAssignedIndustryPartnersDisplay from '@/components/IncubationAssignedIndustryPartnersDisplay.vue'
+import { parseServiceCategories } from '@/constants/incubationCategories'
 import type { AssignedServiceProviderInfo } from '@/components/IncubationAssignedServiceProvidersDisplay.vue'
 
 const router = useRouter()
@@ -219,6 +239,12 @@ const feedbackComment = ref('')
 const uploadedFiles = ref<File[]>([])
 const expertAssignments = ref<ExpertAssignment[]>([])
 const providerAssignments = ref<AssignedServiceProviderInfo[]>([])
+const industryPartnerAssignments = ref<AssignedIndustryPartnerInfo[]>([])
+
+const showIndustryPartnerAssign = computed(() => {
+  const cats = parseServiceCategories(request.value?.service_categories)
+  return cats.some((c) => ['tech', 'ip', 'resource'].includes(c))
+})
 
 // 文件分类
 const applicationFiles = computed(() => {
@@ -284,6 +310,12 @@ const removeProviderAssignment = (provider: AssignedServiceProviderInfo) => {
   )
 }
 
+const removeIndustryPartnerAssignment = (partner: AssignedIndustryPartnerInfo) => {
+  industryPartnerAssignments.value = industryPartnerAssignments.value.filter(
+    (p) => p.industry_partner_id !== partner.industry_partner_id,
+  )
+}
+
 // 提交反馈
 const submitFeedback = async () => {
   if (!request.value) return
@@ -302,6 +334,9 @@ const submitFeedback = async () => {
     }
     if (feedbackAction.value === 'approved' && providerAssignments.value.length) {
       payload.service_provider_ids = providerAssignments.value.map((p) => p.service_provider_id)
+    }
+    if (feedbackAction.value === 'approved' && industryPartnerAssignments.value.length) {
+      payload.industry_partner_ids = industryPartnerAssignments.value.map((p) => p.industry_partner_id)
     }
     const res = await api.put(`/incubation/requests/${request.value.id}/feedback`, payload)
 

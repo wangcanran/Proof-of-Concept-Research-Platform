@@ -135,8 +135,28 @@
                   </el-form-item>
                 </el-col>
               </el-row>
-              <el-form-item label="承接方公司名称" prop="recipient_company">
-                <el-input v-model="formData.recipient_company" placeholder="请输入承接方公司名称" maxlength="200" />
+              <el-form-item label="承接方（产业资源库）" prop="industry_partner_id">
+                <el-select
+                  v-model="formData.industry_partner_id"
+                  filterable
+                  placeholder="请从本项目已承接的机构中选择"
+                  :loading="partnerLoading"
+                  style="width: 100%"
+                  @change="onPartnerSelected"
+                >
+                  <el-option
+                    v-for="p in partnerOptions"
+                    :key="p.id"
+                    :label="p.name"
+                    :value="p.id"
+                  />
+                </el-select>
+                <div v-if="!partnerLoading && partnerOptions.length === 0" class="field-hint">
+                  暂无已承接机构，请先通过「产业资源库对接申请」或项目经理服务分配建立承接关系。
+                </div>
+              </el-form-item>
+              <el-form-item v-if="formData.recipient_company" label="承接方名称">
+                <el-input v-model="formData.recipient_company" readonly />
               </el-form-item>
               <el-row :gutter="20">
                 <el-col :span="8">
@@ -282,6 +302,7 @@ import {
   transformationAchievementAPI,
   TRANSFORM_METHODS,
 } from '@/api/transformationAchievements'
+import { industryPartnerConnectionAPI } from '@/api/industryPartners'
 import TransformationAchievementList from './TransformationAchievementList.vue'
 
 const CONTRACT_METHODS = ['tech_license', 'tech_transfer', 'equity_investment']
@@ -300,6 +321,8 @@ const listRef = ref<InstanceType<typeof TransformationAchievementList> | null>(n
 const projectList = ref<any[]>([])
 const selectedProject = ref<any>(null)
 const uploadedFiles = ref<File[]>([])
+const partnerLoading = ref(false)
+const partnerOptions = ref<{ id: string; name: string }[]>([])
 
 const formData = reactive({
   project_id: '',
@@ -307,6 +330,7 @@ const formData = reactive({
   transform_method: '',
   platform_service_content: '',
   transform_date: '',
+  industry_partner_id: '',
   recipient_company: '',
   recipient_province: '',
   recipient_city: '',
@@ -330,7 +354,7 @@ const formRules = computed(() => {
   }
   if (isContractMethod.value) {
     rules.transform_date = [{ required: true, message: '请选择转化时间', trigger: 'change' }]
-    rules.recipient_company = [{ required: true, message: '请输入承接方公司名称', trigger: 'blur' }]
+    rules.industry_partner_id = [{ required: true, message: '请选择承接方', trigger: 'change' }]
     rules.recipient_province = [{ required: true, message: '请输入承接方省份', trigger: 'blur' }]
     rules.recipient_city = [{ required: true, message: '请输入承接方城市', trigger: 'blur' }]
     rules.recipient_district = [{ required: true, message: '请输入承接方区县', trigger: 'blur' }]
@@ -367,11 +391,36 @@ function selectProject(project: any) {
   selectedProject.value = project
   formData.project_id = project.id
   formData.project_leader = project.project_leader || ''
+  loadEngagedPartners(project.id)
+}
+
+async function loadEngagedPartners(projectId: string) {
+  formData.industry_partner_id = ''
+  formData.recipient_company = ''
+  partnerOptions.value = []
+  if (!projectId) return
+  partnerLoading.value = true
+  try {
+    const res = await industryPartnerConnectionAPI.getProjectEngaged(projectId)
+    if (res.success && res.data) {
+      partnerOptions.value = (res.data || []).map((p: { industry_partner_id: string; partner_name?: string }) => ({
+        id: p.industry_partner_id,
+        name: p.partner_name || p.industry_partner_id,
+      }))
+    }
+  } catch {
+    ElMessage.error('加载已承接机构失败')
+  } finally {
+    partnerLoading.value = false
+  }
 }
 
 function handleMethodChange() {
   formData.transform_date = ''
-  formData.recipient_company = ''
+  if (!isContractMethod.value) {
+    formData.industry_partner_id = ''
+    formData.recipient_company = ''
+  }
   formData.recipient_province = ''
   formData.recipient_city = ''
   formData.recipient_district = ''
@@ -384,6 +433,11 @@ function handleMethodChange() {
   formData.invested_amount = undefined
   formData.paid_in_amount = undefined
   formRef.value?.clearValidate()
+}
+
+function onPartnerSelected(partnerId: string) {
+  const found = partnerOptions.value.find((p) => p.id === partnerId)
+  formData.recipient_company = found?.name || ''
 }
 
 function getProjectStatusClass(status: string) {
@@ -405,6 +459,7 @@ function cancelFormSelection() {
   selectedProject.value = null
   formData.project_id = ''
   formData.project_leader = ''
+  partnerOptions.value = []
   formData.transform_method = ''
   formData.platform_service_content = ''
   handleMethodChange()
@@ -457,6 +512,7 @@ async function handleSubmit() {
 
     if (isContractMethod.value) {
       payload.transform_date = formData.transform_date
+      payload.industry_partner_id = formData.industry_partner_id
       payload.recipient_company = formData.recipient_company
       payload.recipient_province = formData.recipient_province
       payload.recipient_city = formData.recipient_city
@@ -494,7 +550,9 @@ function goBack() {
   router.push(isProjectManager.value ? '/assistant/dashboard' : '/applicant/dashboard')
 }
 
-onMounted(loadProjects)
+onMounted(() => {
+  loadProjects()
+})
 </script>
 
 <style>
@@ -721,6 +779,13 @@ onMounted(loadProjects)
   border-bottom: 2px solid var(--ruc-primary-light);
   font-size: 16px;
   font-weight: 600;
+}
+
+.field-hint {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #909399;
+  line-height: 1.5;
 }
 
 .form-footer {

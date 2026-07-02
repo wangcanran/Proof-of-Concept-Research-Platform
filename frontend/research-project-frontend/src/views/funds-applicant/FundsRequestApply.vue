@@ -199,6 +199,13 @@
             <div class="card-footer">
               <button class="btn-view-detail" @click.stop="goToDetail(request.id)">查看详情</button>
               <button
+                v-if="canEditRequest(request)"
+                class="btn-edit"
+                @click.stop="openEditModal(request.id)"
+              >
+                修改
+              </button>
+              <button
                 v-if="canSubmitResult(request)"
                 class="btn-result-feedback"
                 @click.stop="openResultForm(request.id)"
@@ -254,6 +261,13 @@
         </div>
       </div>
     </div>
+
+    <FundsManagerFundsRequestEditModal
+      v-if="isFundsManagerMode"
+      v-model:visible="showEditModal"
+      :request-id="editRequestId"
+      @saved="loadMyRequests"
+    />
   </div>
 </template>
 
@@ -265,6 +279,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import axios from 'axios'
 import BudgetItemsEditor from '@/components/BudgetItemsEditor.vue'
+import FundsManagerFundsRequestEditModal from '@/components/FundsManagerFundsRequestEditModal.vue'
 import { type BudgetRow } from '@/constants/budgetCategories'
 
 const router = useRouter()
@@ -305,6 +320,8 @@ const resultDescription = ref('')
 const resultUploadedFiles = ref<File[]>([])
 const resultFileInput = ref<HTMLInputElement>()
 const submittingResult = ref(false)
+const showEditModal = ref(false)
+const editRequestId = ref('')
 
 const statusTabs = computed(() => {
   const tabs = [
@@ -482,6 +499,16 @@ const goToDetail = (id: string) => {
   } else {
     router.push(`/funds-request/${id}`)
   }
+}
+
+const canEditRequest = (request: any) =>
+  isFundsManagerMode.value &&
+  request.submission_type === 'manager_direct' &&
+  ['feedback_given', 'result_submitted'].includes(request.status)
+
+const openEditModal = (id: string) => {
+  editRequestId.value = id
+  showEditModal.value = true
 }
 
 const goToResultFeedback = (id: string) => {
@@ -1100,6 +1127,7 @@ onMounted(() => {
 }
 
 .btn-view-detail,
+.btn-edit,
 .btn-result-feedback {
   padding: 6px 14px;
   border-radius: 6px;
@@ -1107,6 +1135,11 @@ onMounted(() => {
   cursor: pointer;
   border: 1px solid #e8e8e8;
   background: white;
+}
+
+.btn-edit {
+  color: #b31b1b;
+  border-color: #b31b1b;
 }
 
 .btn-result-feedback {

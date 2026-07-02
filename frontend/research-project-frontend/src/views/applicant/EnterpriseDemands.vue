@@ -1,12 +1,14 @@
 <template>
   <div class="demand-list-page">
+    <IndustryResourceTabs role="applicant" active-tab="demands" />
+
     <div class="page-header">
       <div class="header-left">
         <el-button class="back-btn" @click="goDashboard">
           <el-icon><ArrowLeft /></el-icon> 返回工作台
         </el-button>
-        <h1 class="page-title">产业资源</h1>
-        <div class="page-description">浏览平台发布的产业资源；项目经理推荐的资源会标注「推荐」并优先展示。</div>
+        <h1 class="page-title">产业需求</h1>
+        <div class="page-description">浏览平台发布的产业需求；项目经理推荐的资源会标注「推荐」并优先展示。</div>
       </div>
     </div>
 
@@ -90,6 +92,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search, ArrowLeft } from '@element-plus/icons-vue'
+import IndustryResourceTabs from '@/components/IndustryResourceTabs.vue'
 import request from '@/utils/request'
 
 const router = useRouter()
@@ -161,7 +164,7 @@ function resetFilters() {
 }
 
 function goView(id: string) {
-  router.push(`/applicant/enterprise-demands/${id}`)
+  router.push(`/applicant/industry-resources/demands/${id}`)
 }
 
 function goDashboard() {

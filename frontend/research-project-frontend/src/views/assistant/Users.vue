@@ -568,6 +568,19 @@
           <el-table-column prop="username" label="用户名" width="120" />
           <el-table-column prop="defaultPassword" label="初始密码" width="120" />
           <el-table-column prop="phone" label="手机" width="120" />
+          <el-table-column label="专家类型" min-width="140">
+            <template #default="{ row }">
+              {{ formatImportedExpertTypes(row.expertTypes) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="类型未识别" min-width="120">
+            <template #default="{ row }">
+              <span v-if="row.expertTypeUnrecognized?.length" class="import-type-warn">
+                {{ row.expertTypeUnrecognized.join('、') }}
+              </span>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
         </el-table>
         <el-table
           v-if="expertImportDialog.result.data?.failures?.length"
@@ -1152,6 +1165,18 @@ const exportUsers = async () => {
 }
 
 const EXPERT_IMPORT_API = '/api/assistant/users/expert-import'
+
+const EXPERT_TYPE_LABELS: Record<string, string> = {
+  technical: '技术专家',
+  industry: '产业专家',
+  investment: '投资专家',
+  tech_service: '科技服务专家',
+}
+
+function formatImportedExpertTypes(types?: string[]) {
+  if (!types?.length) return '—'
+  return types.map((t) => EXPERT_TYPE_LABELS[t] || t).join('、')
+}
 
 const expertImportDialog = reactive({
   visible: false,

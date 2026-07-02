@@ -141,7 +141,7 @@ function openDetail(item: PushItem) {
 
 function goResourceList() {
   detailVisible.value = false
-  router.push('/applicant/enterprise-demands')
+  router.push('/applicant/industry-resources/demands')
 }
 
 async function handleCancel(item: PushItem) {

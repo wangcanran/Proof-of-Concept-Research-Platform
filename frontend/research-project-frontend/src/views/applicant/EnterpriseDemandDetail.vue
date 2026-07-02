@@ -196,7 +196,7 @@ function isProjectDisabled(projectId: string) {
 }
 
 function goBack() {
-  router.push('/applicant/enterprise-demands')
+  router.push('/applicant/industry-resources/demands')
 }
 
 async function loadDemand() {

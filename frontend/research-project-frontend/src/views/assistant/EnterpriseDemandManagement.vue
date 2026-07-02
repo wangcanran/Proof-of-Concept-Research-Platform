@@ -1,16 +1,18 @@
 <template>
   <div class="demand-management">
+    <IndustryResourceTabs role="assistant" active-tab="demands" />
+
     <div class="page-header">
       <div class="header-left">
         <el-button class="back-btn" @click="goDashboard">
           <el-icon><ArrowLeft /></el-icon> 返回工作台
         </el-button>
-        <h1 class="page-title">产业资源管理</h1>
-        <div class="page-description">发布、转载产业资源，推荐给负责的项目并在资源列表中优先展示</div>
+        <h1 class="page-title">产业需求管理</h1>
+        <div class="page-description">发布、转载产业需求，推荐给负责的项目并在列表中优先展示</div>
       </div>
       <div class="header-right">
         <el-button type="primary" class="ruc-btn-primary" :icon="Plus" @click="goCreate">
-          新建产业资源
+          新建产业需求
         </el-button>
       </div>
     </div>
@@ -119,6 +121,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, ArrowLeft } from '@element-plus/icons-vue'
+import IndustryResourceTabs from '@/components/IndustryResourceTabs.vue'
 import request from '@/utils/request'
 
 const router = useRouter()
@@ -189,16 +192,16 @@ function resetFilters() {
 }
 
 function goCreate() {
-  router.push('/assistant/enterprise-demands/create')
+  router.push('/assistant/industry-resources/demands/create')
 }
 function goEdit(id: string) {
-  router.push(`/assistant/enterprise-demands/${id}/edit`)
+  router.push(`/assistant/industry-resources/demands/${id}/edit`)
 }
 function goView(id: string) {
-  router.push(`/assistant/enterprise-demands/${id}`)
+  router.push(`/assistant/industry-resources/demands/${id}`)
 }
 function goPush(id: string) {
-  router.push(`/assistant/enterprise-demands/${id}`)
+  router.push(`/assistant/industry-resources/demands/${id}`)
 }
 function goDashboard() {
   router.push('/assistant/dashboard')

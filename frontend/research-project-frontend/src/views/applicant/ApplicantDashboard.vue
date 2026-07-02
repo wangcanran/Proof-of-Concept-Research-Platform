@@ -75,7 +75,7 @@
 
         <div class="nav-section">
           <h4 v-if="!sidebarCollapsed" class="nav-section-title">产业资源</h4>
-          <router-link to="/applicant/enterprise-demands" class="nav-link" active-class="active">
+          <router-link to="/applicant/industry-resources/partners" class="nav-link" active-class="active">
             <span class="nav-icon">🏢</span>
             <span v-if="!sidebarCollapsed" class="nav-text">产业资源</span>
           </router-link>
@@ -836,7 +836,7 @@ const navigateTo = (action: string) => {
     'submit-transformation-achievement': '/transformation-achievements/create',
     'submit-enterprise-service-achievement': '/enterprise-service-achievements/create',
     'incubation-achievement': '/incubation/achievement-submit',
-    'enterprise-demands': '/applicant/enterprise-demands',
+    'enterprise-demands': '/applicant/industry-resources/demands',
     'service-request': '/incubation/service-request',
     notifications: '/notifications',
   }

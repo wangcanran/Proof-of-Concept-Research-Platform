@@ -9,6 +9,10 @@ DELETE FROM `IncubationProgressFile` WHERE `attachment_type` = 'result';
 DELETE FROM `FundsRequestFile` WHERE `attachment_type` = 'result';
 
 ALTER TABLE `IncubationProgress`
+DROP COLUMN `result_date`,
+DROP COLUMN `result_description`;
+
+ALTER TABLE `IncubationProgress`
 MODIFY COLUMN `status` ENUM('pending', 'feedback_given') NOT NULL DEFAULT 'pending' COMMENT '状态：待反馈/已反馈';
 
 ALTER TABLE `IncubationProgressFile`
