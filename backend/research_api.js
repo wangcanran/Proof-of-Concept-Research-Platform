@@ -1041,6 +1041,11 @@ async function loadUserProfileForApi(userId) {
     profile.keywords = expertise_keywords;
     profile.expert_types = expert_types;
     profile.expertTypes = expert_types;
+    const parsed = parseExpertiseDescription(expertise_description);
+    profile.professional_field = parsed.professional_field;
+    profile.personal_bio = parsed.personal_bio;
+    profile.professionalField = parsed.professional_field;
+    profile.personalBio = parsed.personal_bio;
   }
   return profile;
 }
@@ -1161,6 +1166,32 @@ async function attachExpertTypesToUsers(users) {
   return users;
 }
 
+/** 批量附加专家研究领域（ExpertDomain 名称；否则取 expertise_description 中的专业领域段） */
+async function attachExpertResearchFieldsToUsers(users) {
+  if (!Array.isArray(users) || !users.length) return users;
+  const reviewerIds = users.filter((u) => u.role === 'reviewer').map((u) => u.id);
+  if (!reviewerIds.length) return users;
+  const domainsMap = await batchLoadExpertDomainsMap(reviewerIds);
+  users.forEach((u) => {
+    if (u.role === 'reviewer') {
+      const domains = domainsMap[u.id] || [];
+      const parsed = parseExpertiseDescription(u.research_field);
+      u.professional_field = parsed.professional_field;
+      u.personal_bio = parsed.personal_bio;
+      u.professionalField = parsed.professional_field;
+      u.personalBio = parsed.personal_bio;
+      if (domains.length) {
+        u.research_field = domains.join('、');
+      } else if (parsed.professional_field) {
+        u.research_field = parsed.professional_field;
+      } else {
+        u.research_field = null;
+      }
+    }
+  });
+  return users;
+}
+
 // ==================== 专家顾问 Excel 批量导入 ====================
 
 const EXPERT_IMPORT_HEADERS = [
@@ -1235,6 +1266,33 @@ function buildExpertImportExpertise(field, bio) {
   if (f) parts.push(`【专业领域】${f}`);
   if (b) parts.push(`【个人简介】${b}`);
   return parts.length ? parts.join('\n') : null;
+}
+
+/** 解析合并存储的 expertise_description（导入格式：【专业领域】…【个人简介】…） */
+function parseExpertiseDescription(text) {
+  const raw = text != null ? String(text).trim() : '';
+  if (!raw) return { professional_field: '', personal_bio: '', raw: '' };
+  const fieldMatch = raw.match(/【专业领域】([\s\S]*?)(?=【个人简介】|$)/);
+  const bioMatch = raw.match(/【个人简介】([\s\S]*)/);
+  if (fieldMatch || bioMatch) {
+    return {
+      professional_field: (fieldMatch?.[1] || '').trim(),
+      personal_bio: (bioMatch?.[1] || '').trim(),
+      raw,
+    };
+  }
+  return { professional_field: raw, personal_bio: '', raw };
+}
+
+/** 保存专家扩展信息：research_field + bio 合并写入 expertise_description */
+function resolveExpertiseDescriptionForSave(body) {
+  if (body.expertise_description !== undefined) return body.expertise_description;
+  const hasField = body.research_field !== undefined;
+  const hasBio = body.bio !== undefined;
+  if (hasField || hasBio) {
+    return buildExpertImportExpertise(body.research_field ?? '', body.bio ?? '');
+  }
+  return undefined;
 }
 
 async function buildExpertImportTemplateWorkbook() {
@@ -7433,6 +7491,7 @@ const server = http.createServer(async (req, res) => {
     `, [...queryParams, pageSize, offset]);
 
         await attachExpertTypesToUsers(users);
+        await attachExpertResearchFieldsToUsers(users);
 
         // 获取统计数据
         const [statsResult] = await pool.query(`
@@ -7542,7 +7601,7 @@ const server = http.createServer(async (req, res) => {
           ]
         );
         if (body.role === 'reviewer') {
-          const desc = body.expertise_description != null ? body.expertise_description : body.research_field;
+          const desc = resolveExpertiseDescriptionForSave(body);
           await upsertExpertiseDescription(pool, newUserId, desc || null);
           if (body.expert_types !== undefined || body.expertTypes !== undefined) {
             await replaceExpertTypes(newUserId, body.expert_types ?? body.expertTypes ?? []);
@@ -7669,7 +7728,7 @@ const server = http.createServer(async (req, res) => {
         if (setParts.length) {
           await pool.query(`UPDATE \`User\` SET ${setParts.join(', ')}, updated_at = NOW() WHERE id = ?`, [...setVals, userId]);
         }
-        const expertDesc = body.expertise_description !== undefined ? body.expertise_description : body.research_field;
+        const expertDesc = resolveExpertiseDescriptionForSave(body);
         const effRole = body.role !== undefined ? body.role : oldUser.role;
         if (expertDesc !== undefined || body.role === 'reviewer') {
           if (effRole === 'reviewer') {
@@ -8727,23 +8786,27 @@ const server = http.createServer(async (req, res) => {
           investment: '投资专家',
           tech_service: '科技服务专家',
         };
-        const data = rows.map((r) => ({
-          name: r.name,
-          department: r.department,
-          title: r.title,
-          phone: r.phone,
-          email: r.email,
-          username: r.username,
-          expert_types: String(r.expert_types || '')
-            .split(',')
-            .filter(Boolean)
-            .map((t) => EXPERT_TYPE_LABELS[t.trim()] || t.trim())
-            .join('、'),
-          expertise: r.expertise_description || '',
-          status: r.status === 'active' ? '活跃' : r.status === 'inactive' ? '非活跃' : r.status,
-          created_at: r.created_at,
-          last_login: r.last_login,
-        }));
+        const data = rows.map((r) => {
+          const parsed = parseExpertiseDescription(r.expertise_description);
+          return {
+            name: r.name,
+            department: r.department,
+            title: r.title,
+            phone: r.phone,
+            email: r.email,
+            username: r.username,
+            expert_types: String(r.expert_types || '')
+              .split(',')
+              .filter(Boolean)
+              .map((t) => EXPERT_TYPE_LABELS[t.trim()] || t.trim())
+              .join('、'),
+            professional_field: parsed.professional_field,
+            personal_bio: parsed.personal_bio,
+            status: r.status === 'active' ? '活跃' : r.status === 'inactive' ? '非活跃' : r.status,
+            created_at: r.created_at,
+            last_login: r.last_login,
+          };
+        });
         await sendAdminExcelExport(res, '专家资源库', '专家资源库导出', [
           { key: 'name', label: '姓名' },
           { key: 'department', label: '工作单位' },
@@ -8752,7 +8815,8 @@ const server = http.createServer(async (req, res) => {
           { key: 'email', label: '邮箱' },
           { key: 'username', label: '用户名' },
           { key: 'expert_types', label: '专家类型' },
-          { key: 'expertise', label: '专业领域/简介' },
+          { key: 'professional_field', label: '专业领域' },
+          { key: 'personal_bio', label: '个人简介' },
           { key: 'status', label: '状态' },
           { key: 'created_at', label: '创建时间', format: 'datetime' },
           { key: 'last_login', label: '最后登录', format: 'datetime' },
@@ -15463,6 +15527,7 @@ const server = http.createServer(async (req, res) => {
         };
 
         await attachExpertTypesToUsers(users);
+        await attachExpertResearchFieldsToUsers(users);
 
         sendResponse(res, 200, {
           success: true,
@@ -15646,7 +15711,7 @@ const server = http.createServer(async (req, res) => {
           ]
         );
         if (body.role === 'reviewer') {
-          const desc = body.expertise_description != null ? body.expertise_description : body.research_field;
+          const desc = resolveExpertiseDescriptionForSave(body);
           await upsertExpertiseDescription(pool, newUserId, desc || null);
           if (body.expert_types !== undefined || body.expertTypes !== undefined) {
             await replaceExpertTypes(newUserId, body.expert_types ?? body.expertTypes ?? []);
@@ -15746,7 +15811,7 @@ const server = http.createServer(async (req, res) => {
         if (setParts.length) {
           await pool.query(`UPDATE \`User\` SET ${setParts.join(', ')}, updated_at = NOW() WHERE id = ?`, [...setVals, userId]);
         }
-        const expertDesc = body.expertise_description !== undefined ? body.expertise_description : body.research_field;
+        const expertDesc = resolveExpertiseDescriptionForSave(body);
         const effRole = body.role !== undefined ? body.role : oldUser.role;
         if (expertDesc !== undefined || body.role === 'reviewer') {
           if (effRole === 'reviewer') {
@@ -27690,7 +27755,7 @@ const server = http.createServer(async (req, res) => {
 
         await pool.query(sql, params);
         if (body.role === 'reviewer') {
-          const desc = body.expertise_description != null ? body.expertise_description : body.research_field;
+          const desc = resolveExpertiseDescriptionForSave(body);
           await upsertExpertiseDescription(pool, userId, desc || null);
         }
 
@@ -27785,6 +27850,7 @@ const server = http.createServer(async (req, res) => {
           );
           additionalInfo.review_count = reviews[0]?.review_count || 0;
           await attachExpertTypesToUsers([userData]);
+          await attachExpertResearchFieldsToUsers([userData]);
         }
 
         console.log('✅ 获取用户详情成功');
@@ -27902,7 +27968,7 @@ const server = http.createServer(async (req, res) => {
           await pool.query(updateSql, updateValues);
         }
 
-        const expertDesc = body.expertise_description !== undefined ? body.expertise_description : body.research_field;
+        const expertDesc = resolveExpertiseDescriptionForSave(body);
         if (expertDesc !== undefined || body.role === 'reviewer') {
           const [ur] = await pool.query('SELECT role FROM `User` WHERE id = ?', [userId]);
           const effRole = body.role !== undefined ? body.role : ur[0]?.role;

@@ -271,11 +271,24 @@
             </template>
           </el-table-column>
 
-          <el-table-column prop="role" label="角色" width="120">
+          <el-table-column prop="role" label="角色" width="200" min-width="160">
             <template #default="{ row }">
-              <el-tag :type="getRoleTagType(row.role)" size="small">
-                {{ getRoleText(row.role) }}
-              </el-tag>
+              <div class="role-cell">
+                <el-tag :type="getRoleTagType(row.role)" size="small">
+                  {{ getRoleText(row.role) }}
+                </el-tag>
+                <template v-if="row.role === 'reviewer'">
+                  <el-tag
+                    v-for="t in row.expert_types || []"
+                    :key="t"
+                    size="small"
+                    :class="['expert-type-tag', t]"
+                  >
+                    {{ EXPERT_TYPE_LABELS[t] || t }}
+                  </el-tag>
+                  <span v-if="!row.expert_types?.length" class="empty-field">未设置类型</span>
+                </template>
+              </div>
             </template>
           </el-table-column>
 
@@ -289,6 +302,46 @@
           <el-table-column prop="title" label="职称" width="150">
             <template #default="{ row }">
               <span v-if="row.title">{{ row.title }}</span>
+              <span v-else class="empty-field">未设置</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column
+            v-if="isExpertsPage"
+            prop="research_field"
+            label="专业领域"
+            min-width="180"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">
+              <span v-if="getExpertProfessionalField(row)">{{ getExpertProfessionalField(row) }}</span>
+              <span v-else class="empty-field">未设置</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column
+            v-else
+            label="研究领域"
+            min-width="160"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">
+              <template v-if="row.role === 'reviewer'">
+                <span v-if="getExpertProfessionalField(row)">{{ getExpertProfessionalField(row) }}</span>
+                <span v-else class="empty-field">未设置</span>
+              </template>
+              <span v-else class="empty-field">—</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column
+            v-if="isExpertsPage"
+            label="个人简介"
+            min-width="180"
+            show-overflow-tooltip
+          >
+            <template #default="{ row }">
+              <span v-if="getExpertPersonalBio(row)">{{ getExpertPersonalBio(row) }}</span>
               <span v-else class="empty-field">未设置</span>
             </template>
           </el-table-column>
@@ -410,6 +463,17 @@
                   <el-tag :type="getRoleTagType(user.role)" size="small">
                     {{ getRoleText(user.role) }}
                   </el-tag>
+                  <template v-if="user.role === 'reviewer'">
+                    <el-tag
+                      v-for="t in user.expert_types || []"
+                      :key="t"
+                      size="small"
+                      :class="['expert-type-tag', t]"
+                    >
+                      {{ EXPERT_TYPE_LABELS[t] || t }}
+                    </el-tag>
+                    <span v-if="!user.expert_types?.length" class="empty-field">未设置类型</span>
+                  </template>
                 </div>
               </div>
               <el-dropdown @command="(command) => handleUserCommand(command, user)" trigger="click">
@@ -454,6 +518,18 @@
                 <el-icon><Medal /></el-icon>
                 <span class="info-label">职称：</span>
                 <span class="info-value">{{ user.title || '未设置' }}</span>
+              </div>
+
+              <div v-if="user.role === 'reviewer'" class="info-row">
+                <el-icon><Reading /></el-icon>
+                <span class="info-label">{{ isExpertsPage ? '专业领域' : '研究领域' }}：</span>
+                <span class="info-value">{{ getExpertProfessionalField(user) || '未设置' }}</span>
+              </div>
+
+              <div v-if="isExpertsPage && user.role === 'reviewer'" class="info-row">
+                <el-icon><Document /></el-icon>
+                <span class="info-label">个人简介：</span>
+                <span class="info-value">{{ getExpertPersonalBio(user) || '未设置' }}</span>
               </div>
 
               <div class="info-row">
@@ -598,7 +674,26 @@
               <el-input v-model="dialog.form.title" placeholder="请输入职称" />
             </el-form-item>
 
-            <el-form-item label="研究领域" prop="research_field">
+            <el-form-item
+              v-if="dialog.form.role === 'reviewer'"
+              label="专业领域"
+              prop="research_field"
+            >
+              <el-input
+                v-model="dialog.form.research_field"
+                type="textarea"
+                :rows="3"
+                placeholder="请输入专业领域"
+                show-word-limit
+                maxlength="500"
+              />
+            </el-form-item>
+
+            <el-form-item
+              v-else
+              label="研究领域"
+              prop="research_field"
+            >
               <el-input
                 v-model="dialog.form.research_field"
                 type="textarea"
@@ -622,7 +717,7 @@
               </el-checkbox-group>
             </el-form-item>
 
-            <el-form-item label="个人简介" prop="bio">
+            <el-form-item v-if="dialog.form.role === 'reviewer'" label="个人简介" prop="bio">
               <el-input
                 v-model="dialog.form.bio"
                 type="textarea"
@@ -911,6 +1006,7 @@ import { ElMessage, ElMessageBox, ElNotification, type FormInstance } from 'elem
 import { useClipboard } from '@vueuse/core'
 import request from '@/utils/request'
 import { adminExportExcel } from '@/utils/exportDownload'
+import { getExpertPersonalBio, getExpertProfessionalField } from '@/utils/expertiseText'
 import {
   Search,
   Plus,
@@ -925,6 +1021,8 @@ import {
   Medal,
   Timer,
   Calendar,
+  Reading,
+  Document,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -1443,9 +1541,9 @@ const editUser = (user: any) => {
     role: user.role,
     department: user.department || '',
     title: user.title || '',
-    research_field: user.research_field || '',
+    research_field: getExpertProfessionalField(user),
     phone: user.phone || '',
-    bio: user.bio || '',
+    bio: getExpertPersonalBio(user),
     status: user.status === 'pending' ? 'inactive' : user.status,
     expert_types: Array.isArray(user.expert_types) ? [...user.expert_types] : [],
     permissions: user.permissions || [],
@@ -1509,8 +1607,11 @@ const submitUserForm = async () => {
 
     const formData = { ...dialog.form }
     delete formData.confirmPassword
-    delete formData.bio
     delete formData.permissions
+    if (formData.role !== 'reviewer') {
+      delete formData.bio
+      delete formData.research_field
+    }
     if (formData.status === 'pending') formData.status = 'inactive'
     if (dialog.isEdit) {
       delete formData.username
@@ -2209,6 +2310,44 @@ watch(() => resetPasswordDialog.form.newPassword, checkPasswordStrength)
   font-style: italic;
 }
 
+.role-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.user-role {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.expert-type-tag.technical {
+  --el-tag-bg-color: #ecf5ff;
+  --el-tag-border-color: #b3d8ff;
+  --el-tag-text-color: #409eff;
+}
+
+.expert-type-tag.investment {
+  --el-tag-bg-color: #fdf6ec;
+  --el-tag-border-color: #f5dab1;
+  --el-tag-text-color: #e6a23c;
+}
+
+.expert-type-tag.industry {
+  --el-tag-bg-color: #f0f9eb;
+  --el-tag-border-color: #c2e7b0;
+  --el-tag-text-color: #67c23a;
+}
+
+.expert-type-tag.tech_service {
+  --el-tag-bg-color: #f4f4f5;
+  --el-tag-border-color: #d3d4d6;
+  --el-tag-text-color: #909399;
+}
+
 /* 卡片视图 */
 .card-view {
   background: white;
@@ -2293,10 +2432,6 @@ watch(() => resetPasswordDialog.form.newPassword, checkPasswordStrength)
   margin: 0 0 8px 0;
   color: #7f8c8d;
   font-size: 13px;
-}
-
-.user-role {
-  display: inline-block;
 }
 
 .card-menu {

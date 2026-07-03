@@ -82,10 +82,44 @@
         />
       </el-form-item>
 
-      <el-form-item label="研究领域" prop="research_field">
+      <el-form-item
+        v-if="formData.role === 'reviewer'"
+        label="专业领域"
+        prop="research_field"
+      >
+        <el-input
+          v-model="formData.research_field"
+          type="textarea"
+          :rows="3"
+          placeholder="请输入专业领域"
+          :disabled="dialogType === 'view'"
+        />
+      </el-form-item>
+
+      <el-form-item
+        v-else
+        label="研究领域"
+        prop="research_field"
+      >
         <el-input
           v-model="formData.research_field"
           placeholder="请输入研究领域"
+          :disabled="dialogType === 'view'"
+        />
+      </el-form-item>
+
+      <el-form-item
+        v-if="formData.role === 'reviewer'"
+        label="个人简介"
+        prop="bio"
+      >
+        <el-input
+          v-model="formData.bio"
+          type="textarea"
+          :rows="4"
+          placeholder="请输入个人简介"
+          maxlength="1000"
+          show-word-limit
           :disabled="dialogType === 'view'"
         />
       </el-form-item>
@@ -132,6 +166,7 @@ import { ref, reactive, computed, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import request from '@/utils/request'
+import { getExpertPersonalBio, getExpertProfessionalField } from '@/utils/expertiseText'
 
 const props = defineProps<{
   modelValue: boolean
@@ -173,6 +208,7 @@ const formData = reactive({
   department: '',
   title: '',
   research_field: '',
+  bio: '',
   phone: '',
   status: 'active',
 })
@@ -235,6 +271,7 @@ const resetForm = () => {
     department: '',
     title: '',
     research_field: '',
+    bio: '',
     phone: '',
     status: 'active',
   })
@@ -254,7 +291,12 @@ const loadUserData = async (userId: string) => {
     })
 
     if (response?.success) {
-      Object.assign(formData, response.data)
+      const data = response.data
+      Object.assign(formData, {
+        ...data,
+        research_field: getExpertProfessionalField(data),
+        bio: getExpertPersonalBio(data),
+      })
     } else {
       ElMessage.error(response?.error || '加载用户数据失败')
     }
@@ -305,6 +347,10 @@ const handleSubmit = async () => {
 
     // 移除确认密码字段
     delete submitData.confirmPassword
+    if (submitData.role !== 'reviewer') {
+      delete submitData.bio
+      delete submitData.research_field
+    }
 
     if (props.dialogType === 'create') {
       const response = await request({

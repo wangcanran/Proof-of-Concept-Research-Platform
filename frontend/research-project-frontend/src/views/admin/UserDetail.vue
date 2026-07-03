@@ -69,7 +69,15 @@
               <label>职称/职务</label>
               <div class="info-value">{{ userData?.title || '--' }}</div>
             </div>
-            <div class="info-item">
+            <div class="info-item" v-if="userData?.role === 'reviewer'">
+              <label>专业领域</label>
+              <div class="info-value">{{ expertProfessionalField || '--' }}</div>
+            </div>
+            <div class="info-item info-item-wide" v-if="userData?.role === 'reviewer'">
+              <label>个人简介</label>
+              <div class="info-value info-value-multiline">{{ expertPersonalBio || '--' }}</div>
+            </div>
+            <div class="info-item" v-else>
               <label>研究领域</label>
               <div class="info-value">{{ userData?.research_field || '--' }}</div>
             </div>
@@ -244,11 +252,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Edit, ArrowDown } from '@element-plus/icons-vue'
 import request from '@/utils/request'
+import { getExpertPersonalBio, getExpertProfessionalField } from '@/utils/expertiseText'
 import UserDialog from './components/UserDialog.vue'
 
 const route = useRoute()
@@ -267,6 +276,13 @@ const userLogs = ref<any[]>([])
 const activeTab = ref('basic')
 const logDateRange = ref<string[]>([])
 const editDialogVisible = ref(false)
+
+const expertProfessionalField = computed(() =>
+  userData.value ? getExpertProfessionalField(userData.value) : '',
+)
+const expertPersonalBio = computed(() =>
+  userData.value ? getExpertPersonalBio(userData.value) : '',
+)
 
 // 获取用户详情
 const fetchUserDetail = async () => {
@@ -770,6 +786,16 @@ onMounted(() => {
           color: #1a1a1a;
           font-weight: 500;
           word-break: break-all;
+        }
+
+        &.info-item-wide {
+          grid-column: 1 / -1;
+        }
+
+        .info-value-multiline {
+          white-space: pre-wrap;
+          line-height: 1.6;
+          font-weight: 400;
         }
       }
     }

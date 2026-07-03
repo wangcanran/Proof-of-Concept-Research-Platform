@@ -207,17 +207,40 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="role" label="角色" width="120">
+        <el-table-column prop="role" label="角色" width="200" min-width="160">
           <template #default="{ row }">
-            <el-tag :type="getRoleTagType(row.role)" size="small">
-              {{ getRoleText(row.role) }}
-            </el-tag>
+            <div class="role-cell">
+              <el-tag :type="getRoleTagType(row.role)" size="small">
+                {{ getRoleText(row.role) }}
+              </el-tag>
+              <template v-if="row.role === 'reviewer'">
+                <el-tag
+                  v-for="t in row.expert_types || []"
+                  :key="t"
+                  size="small"
+                  :class="['expert-type-tag', t]"
+                >
+                  {{ EXPERT_TYPE_LABELS[t] || t }}
+                </el-tag>
+                <span v-if="!row.expert_types?.length" class="empty-field">未设置类型</span>
+              </template>
+            </div>
           </template>
         </el-table-column>
 
         <el-table-column prop="department" label="部门" width="150" />
 
         <el-table-column prop="title" label="职称" width="150" />
+
+        <el-table-column label="研究领域" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            <template v-if="row.role === 'reviewer'">
+              <span v-if="getExpertProfessionalField(row)">{{ getExpertProfessionalField(row) }}</span>
+              <span v-else class="empty-field">未设置</span>
+            </template>
+            <span v-else class="empty-field">—</span>
+          </template>
+        </el-table-column>
 
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
@@ -311,9 +334,22 @@
             <div class="info-row">
               <el-icon><UserFilled /></el-icon>
               <span class="info-label">角色：</span>
-              <el-tag :type="getRoleTagType(user.role)" size="small">
-                {{ getRoleText(user.role) }}
-              </el-tag>
+              <span class="role-tags">
+                <el-tag :type="getRoleTagType(user.role)" size="small">
+                  {{ getRoleText(user.role) }}
+                </el-tag>
+                <template v-if="user.role === 'reviewer'">
+                  <el-tag
+                    v-for="t in user.expert_types || []"
+                    :key="t"
+                    size="small"
+                    :class="['expert-type-tag', t]"
+                  >
+                    {{ EXPERT_TYPE_LABELS[t] || t }}
+                  </el-tag>
+                  <span v-if="!user.expert_types?.length" class="empty-field">未设置类型</span>
+                </template>
+              </span>
             </div>
 
             <div class="info-row">
@@ -326,6 +362,12 @@
               <el-icon><Medal /></el-icon>
               <span class="info-label">职称：</span>
               <span class="info-value">{{ user.title || '未设置' }}</span>
+            </div>
+
+            <div v-if="user.role === 'reviewer'" class="info-row">
+              <el-icon><Reading /></el-icon>
+              <span class="info-label">研究领域：</span>
+              <span class="info-value">{{ getExpertProfessionalField(user) || '未设置' }}</span>
             </div>
 
             <div class="info-row">
@@ -434,7 +476,27 @@
           <el-input v-model="dialog.form.title" placeholder="请输入职称" />
         </el-form-item>
 
-        <el-form-item label="研究领域" prop="research_field">
+        <el-form-item v-if="dialog.form.role === 'reviewer'" label="专业领域" prop="research_field">
+          <el-input
+            v-model="dialog.form.research_field"
+            type="textarea"
+            :rows="2"
+            placeholder="请输入专业领域"
+          />
+        </el-form-item>
+
+        <el-form-item v-if="dialog.form.role === 'reviewer'" label="个人简介" prop="bio">
+          <el-input
+            v-model="dialog.form.bio"
+            type="textarea"
+            :rows="3"
+            placeholder="请输入个人简介"
+            maxlength="1000"
+            show-word-limit
+          />
+        </el-form-item>
+
+        <el-form-item v-else label="研究领域" prop="research_field">
           <el-input
             v-model="dialog.form.research_field"
             type="textarea"
@@ -616,6 +678,7 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElNotification, type FormInstance } from 'element-plus'
 import request from '@/utils/request'
+import { getExpertPersonalBio, getExpertProfessionalField } from '@/utils/expertiseText'
 import {
   Search,
   Plus,
@@ -635,6 +698,7 @@ import {
   OfficeBuilding,
   Medal,
   Timer,
+  Reading,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -713,6 +777,7 @@ const dialog = reactive({
     department: '',
     title: '',
     research_field: '',
+    bio: '',
     phone: '',
     status: 'active',
     expert_types: [] as string[],
@@ -984,7 +1049,8 @@ const editUser = (user: any) => {
     role: user.role,
     department: user.department || '',
     title: user.title || '',
-    research_field: user.research_field || '',
+    research_field: getExpertProfessionalField(user),
+    bio: getExpertPersonalBio(user),
     phone: user.phone || '',
     status: user.status === 'pending' ? 'inactive' : user.status,
     expert_types: Array.isArray(user.expert_types) ? [...user.expert_types] : [],
@@ -1012,6 +1078,7 @@ const openCreateDialog = () => {
     department: '',
     title: '',
     research_field: '',
+    bio: '',
     phone: '',
     status: 'active',
     expert_types: [],
@@ -1034,6 +1101,10 @@ const submitUserForm = async () => {
 
     const formData = { ...dialog.form }
     delete formData.confirmPassword
+    if (formData.role !== 'reviewer') {
+      delete formData.bio
+      delete formData.research_field
+    }
     if (formData.status === 'pending') formData.status = 'inactive'
     if (dialog.isEdit) {
       delete formData.username
@@ -1515,6 +1586,52 @@ onMounted(() => {
 
 .email-link:hover {
   text-decoration: underline;
+}
+
+.empty-field {
+  color: #bfbfbf;
+  font-style: italic;
+  font-size: 12px;
+}
+
+.role-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.role-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.expert-type-tag.technical {
+  --el-tag-bg-color: #ecf5ff;
+  --el-tag-border-color: #b3d8ff;
+  --el-tag-text-color: #409eff;
+}
+
+.expert-type-tag.investment {
+  --el-tag-bg-color: #fdf6ec;
+  --el-tag-border-color: #f5dab1;
+  --el-tag-text-color: #e6a23c;
+}
+
+.expert-type-tag.industry {
+  --el-tag-bg-color: #f0f9eb;
+  --el-tag-border-color: #c2e7b0;
+  --el-tag-text-color: #67c23a;
+}
+
+.expert-type-tag.tech_service {
+  --el-tag-bg-color: #f4f4f5;
+  --el-tag-border-color: #d3d4d6;
+  --el-tag-text-color: #909399;
 }
 
 /* 卡片视图 */
