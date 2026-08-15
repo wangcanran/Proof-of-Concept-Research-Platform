@@ -106,7 +106,7 @@ function formatDateTime(d?: string) {
 
 function getFileUrl(fileId: string) {
   const token = localStorage.getItem('token')
-  return `${API_BASE_URL}/api/incubation-achievements/files/${fileId}?token=${token}`
+  return `${API_BASE_URL}/incubation-achievements/files/${fileId}?token=${token}`
 }
 
 async function loadData() {

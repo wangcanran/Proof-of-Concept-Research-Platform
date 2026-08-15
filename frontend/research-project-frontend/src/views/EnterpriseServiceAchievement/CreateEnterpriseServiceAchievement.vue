@@ -126,7 +126,7 @@
                 </el-row>
                 <el-row :gutter="20">
                   <el-col :span="12">
-                    <el-form-item label="合同金额（元）" prop="contract_amount">
+                    <el-form-item label="合同金额（万元）" prop="contract_amount">
                       <el-input-number
                         v-model="formData.contract_amount"
                         :min="0"

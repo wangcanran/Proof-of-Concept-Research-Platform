@@ -59,6 +59,18 @@
               required
             />
           </el-form-item>
+
+          <el-form-item label="综合分数" prop="score">
+            <el-input-number
+              v-model="reviewForm.score"
+              :min="0"
+              :max="100"
+              :precision="1"
+              :step="1"
+              controls-position="right"
+              placeholder="请输入 0-100 分"
+            />
+          </el-form-item>
       
           <el-form-item label="评审结论" prop="recommendation" class="recommendation-form-item">
             <el-radio-group v-model="reviewForm.recommendation" class="recommendation-group">
@@ -115,21 +127,45 @@ const router = useRouter()
 const route = useRoute()
 const reviewFormRef = ref<FormInstance>()
 
+type ReviewItem = {
+  id: string | number
+  reviewer_name?: string
+  recommendation?: string
+  comments?: string
+  is_confidential?: boolean
+  review_date?: string
+  score?: number | string | null
+}
+
+type ProjectReviewData = {
+  id?: string | number
+  project_code?: string
+}
+
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (typeof error === 'object' && error && 'response' in error) {
+    const response = (error as { response?: { data?: { error?: string; message?: string } } }).response
+    return response?.data?.error || response?.data?.message || fallback
+  }
+  return error instanceof Error ? error.message : fallback
+}
+
 // 状态管理
 const loading = ref(false)
 const saving = ref(false)
 const submitting = ref(false)
-const projectData = ref<any>({})
-const otherReviews = ref<any[]>([])
-const existingReview = ref<any>(null)
+const projectData = ref<ProjectReviewData>({})
+const otherReviews = ref<ReviewItem[]>([])
+const existingReview = ref<{ status?: string; recommendation?: string; comments?: string; score?: number | null } | null>(null)
 
-// 评审表单（与 ExpertAssignment.comment JSON 一致，无打分字段）
+// 评审表单（与 ExpertAssignment.comment JSON 及 ExpertAssignment.score 一致）
 const reviewForm = ref({
   strengths: '',
   weaknesses: '',
   recommendation: '',
   comments: '',
   suggestions: '',
+  score: null as number | null,
 })
 
 /** 与 ExpertAssignment.status 一致：accepted / declined 表示本轮评审已提交 */
@@ -160,13 +196,14 @@ const assignmentStatusTag = (status: string) => {
 const rules = {
   comments: [{ required: true, message: '评审意见不能为空', trigger: 'blur' }],
   recommendation: [{ required: true, message: '请选择评审结论', trigger: 'change' }],
+  score: [{ required: true, message: '请填写综合分数', trigger: 'change' }],
 }
 
 // 方法
 const loadProjectData = async () => {
   loading.value = true
   try {
-    const projectId = route.query.projectId
+    const projectId = route.query.projectId || route.query.project_id
     if (!projectId) {
       ElMessage.error('项目ID不存在')
       router.back()
@@ -190,15 +227,16 @@ const loadProjectData = async () => {
           recommendation: er.recommendation || '',
           comments: er.comments || '',
           suggestions: '',
+          score: er.score != null ? Number(er.score) : null,
         }
       }
     } else {
-      ElMessage.error('加载项目数据失败')
+      ElMessage.error(response.error || response.message || '加载项目数据失败')
       router.back()
     }
   } catch (error) {
     console.error('加载项目数据失败:', error)
-    ElMessage.error('加载项目数据失败')
+    ElMessage.error(getErrorMessage(error, '加载项目数据失败'))
     router.back()
   } finally {
     loading.value = false
@@ -211,11 +249,12 @@ const saveDraft = async () => {
     await request.post('/api/reviewer/save-review-draft', {
       project_id: projectData.value.id,
       comments: reviewForm.value.comments,
+      score: reviewForm.value.score,
     })
     ElMessage.success('草稿保存成功')
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('保存草稿失败:', error)
-    ElMessage.error(error.response?.data?.error || '保存草稿失败')
+    ElMessage.error(getErrorMessage(error, '保存草稿失败'))
   } finally {
     saving.value = false
   }
@@ -242,14 +281,15 @@ const submitReview = async () => {
         project_id: projectData.value.id,
         recommendation: reviewForm.value.recommendation,
         comments: reviewForm.value.comments,
+        score: reviewForm.value.score,
       })
 
       ElMessage.success('评审提交成功')
       // 返回项目详情页
       router.push(`/reviewer/project-detail/${projectData.value.id}`)
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('提交评审失败:', error)
-      ElMessage.error(error.response?.data?.error || '提交评审失败')
+      ElMessage.error(getErrorMessage(error, '提交评审失败'))
     } finally {
       submitting.value = false
     }
@@ -274,7 +314,7 @@ const formatCurrency = (amount: number) => {
   return '¥' + num.toFixed(2)
 }
 
-const formatDate = (dateString: string) => {
+const formatDate = (dateString?: string) => {
   if (!dateString) return ''
   try {
     const date = new Date(dateString)
@@ -296,24 +336,24 @@ const formatDateTime = (dateString: string | null | undefined) => {
   return formatDate(dateString)
 }
 
-const getConclusionType = (conclusion: string) => {
+const getConclusionType = (conclusion?: string) => {
   const map: Record<string, string> = {
     approve: 'success',
     approve_with_revision: 'warning',
     reject: 'danger',
     resubmit: 'info',
   }
-  return map[conclusion] || 'info'
+  return map[conclusion || ''] || 'info'
 }
 
-const getConclusionText = (conclusion: string) => {
+const getConclusionText = (conclusion?: string) => {
   const map: Record<string, string> = {
     approve: '通过',
     approve_with_revision: '修改后通过',
     reject: '不通过',
     resubmit: '重新提交',
   }
-  return map[conclusion] || conclusion
+  return map[conclusion || ''] || conclusion || ''
 }
 
 // 生命周期

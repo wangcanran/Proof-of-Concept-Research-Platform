@@ -39,7 +39,7 @@
                 <span class="info-value">{{ achievement.contract_name || '-' }}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">合同金额（元）</span>
+                <span class="info-label">合同金额（万元）</span>
                 <span class="info-value">{{ formatAmount(achievement.contract_amount) }}</span>
               </div>
               <div class="info-row">

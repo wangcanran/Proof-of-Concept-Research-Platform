@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
-const formidable = require('formidable');
+const { formidable } = require('formidable');
 
 const TRANSFORM_METHOD_LABELS = {
   tech_license: '技术许可',
@@ -514,7 +514,7 @@ function createHandlers(deps) {
       try {
         const fileId = pathname.replace('/api/transformation-achievements/files/', '');
         const [files] = await pool.query(
-          `SELECT f.*, ta.project_id, ta.created_by FROM \`TransformationAchievementFile\` f
+          `SELECT f.*, ta.project_id, ta.created_by, ta.submission_type FROM \`TransformationAchievementFile\` f
            JOIN \`TransformationAchievement\` ta ON f.achievement_id = ta.id WHERE f.id = ?`,
           [fileId],
         );

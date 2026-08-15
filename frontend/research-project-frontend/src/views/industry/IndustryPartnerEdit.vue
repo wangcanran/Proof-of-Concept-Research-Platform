@@ -93,6 +93,14 @@ const form = ref({
   description: '',
 })
 
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (typeof error === 'object' && error && 'response' in error) {
+    const response = error as { response?: { data?: { error?: string; message?: string } } }
+    return response.response?.data?.error || response.response?.data?.message || fallback
+  }
+  return error instanceof Error ? error.message : fallback
+}
+
 async function loadDomains() {
   const res = (await getResearchDomains()) as { success?: boolean; data?: { id: string; name: string }[] }
   researchDomains.value = res.success ? (res.data || []) : []
@@ -149,7 +157,7 @@ async function handleSave() {
       ElMessage.error(res.error || '保存失败')
     }
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    ElMessage.error(getApiErrorMessage(e, '保存失败'))
   } finally {
     saving.value = false
   }

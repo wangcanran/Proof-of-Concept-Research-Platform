@@ -440,7 +440,7 @@ import {
   ArrowDown,
 } from '@element-plus/icons-vue'
 import { achievementAPI } from '@/api/achievements'
-import { getApiOrigin } from '@/utils/request'
+import { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 
 const route = useRoute()
 const router = useRouter()
@@ -470,7 +470,13 @@ interface AchievementDetail {
   updateTime: string
   approvalDate?: string
   rejectionReason?: string
-  attachment?: string
+  attachment?: string | {
+    id: string
+    name: string
+    url: string
+    size: number
+    uploadTime: string
+  }
   attachmentSize?: number
   proofAttachments?: Array<{
     id: string
@@ -580,6 +586,10 @@ const getFileName = (attachment: string | any): string => {
 
 const getFileUrl = (attachment: string | any): string => {
   if (!attachment) return ''
+
+  if (typeof attachment === 'object' && attachment.id) {
+    return `${getApiBaseUrl()}/achievements/files/${attachment.id}`
+  }
 
   let url = ''
   if (typeof attachment === 'string') {
@@ -835,14 +845,15 @@ const loadAchievementData = async () => {
       }
 
       if (data.files?.length) {
-        achievementData.value.proofAttachments = data.files.map((f) => ({
+        const mappedFiles = data.files.map((f) => ({
           id: f.id,
           name: f.file_name,
-          url: f.file_path,
+          url: `${getApiBaseUrl()}/achievements/files/${f.id}`,
           size: f.file_size,
           uploadTime: f.created_at || data.created_at || '',
         }))
-        achievementData.value.attachment = data.files[0].file_path
+        achievementData.value.proofAttachments = mappedFiles
+        achievementData.value.attachment = mappedFiles[0]
         achievementData.value.attachmentSize = data.files[0].file_size
       }
 

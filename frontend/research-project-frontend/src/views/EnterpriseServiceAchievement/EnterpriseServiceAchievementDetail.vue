@@ -98,7 +98,7 @@
               <div class="content-box">{{ achievement.contract_name || '-' }}</div>
             </div>
             <div class="section">
-              <h3 class="section-title">合同金额（元）</h3>
+              <h3 class="section-title">合同金额（万元）</h3>
               <div class="content-box">{{ formatAmount(achievement.contract_amount) }}</div>
             </div>
             <div class="section">

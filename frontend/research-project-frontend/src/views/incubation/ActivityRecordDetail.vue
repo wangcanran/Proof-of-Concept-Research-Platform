@@ -211,7 +211,7 @@ const formatDateTime = (dateString?: string) => {
 
 const getFileUrl = (fileId: string) => {
   const token = localStorage.getItem('token')
-  return `${API_BASE_URL}/api/incubation-achievements/files/${fileId}?token=${token}`
+  return `${API_BASE_URL}/incubation-achievements/files/${fileId}?token=${token}`
 }
 
 const loadRecord = async () => {

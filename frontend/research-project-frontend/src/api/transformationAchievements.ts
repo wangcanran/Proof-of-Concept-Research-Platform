@@ -34,7 +34,11 @@ export const transformationAchievementAPI = {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: fd,
     })
-    return res.json()
+    const data = await res.json()
+    if (!res.ok || data?.success === false) {
+      throw new Error(data?.error || '文件上传失败')
+    }
+    return data
   },
 }
 

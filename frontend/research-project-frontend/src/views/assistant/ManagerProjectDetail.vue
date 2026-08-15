@@ -358,6 +358,10 @@
       <div v-if="activeTab === 'reviews'" class="tab-panel">
         <div class="section">
           <h3>专家顾问意见</h3>
+          <div v-if="reviewFeedback.length > 0" class="review-summary">
+            <span>平均分：{{ reviewStats.avgScore.toFixed(1) }}</span>
+            <span>评审数：{{ reviewStats.total }}</span>
+          </div>
           <div v-if="reviewFeedback.length === 0" class="empty-state">
             <p>暂无评审意见</p>
             <p v-if="canAssignReviewers && !isFundsManagerMode" class="hint">您可以分配专家顾问来获取评审意见</p>
@@ -378,6 +382,10 @@
                   <div class="info-item">
                     <span class="info-label">专家顾问</span>
                     <span class="info-value name">{{ review.reviewer_name || '未知专家' }}</span>
+                  </div>
+                  <div class="info-item">
+                    <span class="info-label">综合分</span>
+                    <span class="info-value score">{{ review.score != null ? review.score : '未评分' }}</span>
                   </div>
                   <div class="info-item">
                     <span class="info-label">所属部门</span>
@@ -463,12 +471,23 @@ const isFundsManagerMode = computed(() =>
 // API配置
 const API_BASE_URL = getApiBaseUrl()
 
-const api = axios.create({
+type ApiResult<T = any> = {
+  success?: boolean
+  data?: T
+  error?: string
+}
+
+type ApiClient = {
+  get<T = any>(url: string, config?: any): Promise<ApiResult<T>>
+  post<T = any>(url: string, data?: any, config?: any): Promise<ApiResult<T>>
+}
+
+const axiosClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
 })
 
-api.interceptors.request.use((config) => {
+axiosClient.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
@@ -476,16 +495,22 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-api.interceptors.response.use(
+axiosClient.interceptors.response.use(
   (response) => response.data,
-  (error) => {
-    if (error.response?.status === 401) {
+  (error: unknown) => {
+    const status =
+      typeof error === 'object' && error && 'response' in error
+        ? (error as { response?: { status?: number } }).response?.status
+        : undefined
+    if (status === 401) {
       localStorage.clear()
       router.push('/login')
     }
     return Promise.reject(error)
   }
 )
+
+const api = axiosClient as unknown as ApiClient
 
 // 状态管理
 const loading = ref(false)
@@ -591,7 +616,9 @@ const reviewStats = computed(() => {
   const total = reviewFeedback.value.length
   if (total === 0) return { total: 0, avgScore: 0, approveCount: 0, revisionCount: 0, rejectCount: 0 }
   
-  const scores = reviewFeedback.value.filter((r: any) => r.score).map((r: any) => r.score)
+  const scores = reviewFeedback.value
+    .map((r: any) => Number(r.score))
+    .filter((score: number) => !Number.isNaN(score))
   const avgScore = scores.length > 0 ? scores.reduce((a: number, b: number) => a + b, 0) / scores.length : 0
   
   const approveCount = reviewFeedback.value.filter((r: any) => r.recommendation === 'approve').length
@@ -648,7 +675,10 @@ const loadReviewFeedback = async (projectId: string) => {
   try {
     const response = await api.get(`/assistant/projects/${projectId}/reviews`)
     if (response.success) {
-      reviewFeedback.value = response.data || []
+      reviewFeedback.value = (response.data || []).map((item: any) => ({
+        ...item,
+        score: item.score != null ? Number(item.score) : null,
+      }))
     }
   } catch (error) {
     console.error('加载评审意见失败:', error)
@@ -1627,6 +1657,14 @@ onMounted(async () => {
   gap: 20px;
 }
 
+.review-summary {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+  color: #666;
+  font-weight: 500;
+}
+
 .review-card {
   border: 1px solid #e8e8e8;
   border-radius: 12px;
@@ -1849,6 +1887,11 @@ onMounted(async () => {
 .info-value.field {
   color: #595959;
   line-height: 1.5;
+}
+
+.info-value.score {
+  color: #b31b1b;
+  font-weight: 700;
 }
 
 /* 评审意见区域 */

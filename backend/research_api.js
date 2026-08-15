@@ -8,6 +8,7 @@ const multer = require('multer');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const fs = require('fs');
+const JSZip = require('jszip');
 const {
   upsertExpertiseDescription,
   refreshExpertKeywordsFromProfile,
@@ -1358,6 +1359,510 @@ function sendExcelDownload(res, buffer, filename) {
     'Content-Length': Buffer.byteLength(buffer),
   });
   res.end(Buffer.from(buffer));
+}
+
+function sanitizeFilenamePart(value) {
+  return String(value == null ? '' : value)
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .slice(0, 80) || '项目';
+}
+
+function escapeXml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function normalizeParagraphText(value) {
+  return String(value == null ? '' : value)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+}
+
+function xmlRun(text, { bold = false, size = 22, color = '333333' } = {}) {
+  return `<w:r><w:rPr>${bold ? '<w:b/>' : ''}<w:color w:val="${color}"/><w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`;
+}
+
+function xmlParagraph(text = '', { bold = false, style = 'BodyText', size = 22, color = '333333', align = 'left' } = {}) {
+  const safeText = normalizeParagraphText(text);
+  const lines = safeText.length ? safeText.split('\n') : [''];
+  const runs = lines
+    .map((line, idx) => {
+      const parts = [];
+      if (line.length) {
+        parts.push(xmlRun(line, { bold, size, color }));
+      } else {
+        parts.push('<w:r><w:t xml:space="preserve"></w:t></w:r>');
+      }
+      if (idx < lines.length - 1) {
+        parts.push('<w:r><w:br/></w:r>');
+      }
+      return parts.join('');
+    })
+    .join('');
+  return `<w:p><w:pPr><w:pStyle w:val="${style}"/><w:jc w:val="${align}"/><w:spacing w:after="120" w:line="360" w:lineRule="auto"/></w:pPr>${runs}</w:p>`;
+}
+
+function xmlHeading(text, level = 1) {
+  const lvl = Math.max(1, Math.min(6, Number(level) || 1));
+  return `<w:p><w:pPr><w:pStyle w:val="Heading${lvl}"/></w:pPr>${xmlRun(text, { bold: true, size: lvl === 1 ? 36 : 28, color: lvl === 1 ? '7F1212' : 'B31B1B' })}</w:p>`;
+}
+
+function xmlMetaLine(label, value) {
+  return `<w:p><w:pPr><w:pStyle w:val="MetaText"/><w:spacing w:after="60"/></w:pPr>${xmlRun(`${label}：`, { bold: true, size: 20, color: '666666' })}${xmlRun(formatDocValue(value), { size: 20, color: '333333' })}</w:p>`;
+}
+
+function xmlTable(rows) {
+  const tableRows = rows.map((row, rowIdx) => {
+    const cells = row.map((cell) => {
+      const text = cell == null ? '' : String(cell);
+      const isHeader = rowIdx === 0;
+      return `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/><w:tcMar><w:top w:w="90" w:type="dxa"/><w:left w:w="120" w:type="dxa"/><w:bottom w:w="90" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tcMar>${isHeader ? '<w:shd w:fill="F8EAEA"/>' : ''}</w:tcPr><w:p><w:pPr><w:spacing w:after="40"/></w:pPr>${xmlRun(text, { bold: isHeader, size: 20, color: isHeader ? '7F1212' : '333333' })}</w:p></w:tc>`;
+    }).join('');
+    return `<w:tr>${cells}</w:tr>`;
+  }).join('');
+  return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="6" w:space="0" w:color="D9B2B2"/><w:left w:val="single" w:sz="6" w:space="0" w:color="D9B2B2"/><w:bottom w:val="single" w:sz="6" w:space="0" w:color="D9B2B2"/><w:right w:val="single" w:sz="6" w:space="0" w:color="D9B2B2"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="E8D0D0"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="E8D0D0"/></w:tblBorders><w:tblLook w:firstRow="1" w:firstColumn="1" w:noHBand="0" w:noVBand="0"/></w:tblPr>${tableRows}</w:tbl>`;
+}
+
+function formatDocValue(value) {
+  if (value == null || value === '') return '未填写';
+  if (Array.isArray(value)) {
+    if (!value.length) return '未填写';
+    return value.map(formatDocValue).join('；');
+  }
+  if (value instanceof Date) return value.toISOString().slice(0, 19).replace('T', ' ');
+  if (typeof value === 'object') {
+    if (value.name && typeof value.name === 'string') return value.name;
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function joinListValue(items, mapper = (v) => v) {
+  if (!Array.isArray(items) || !items.length) return '无';
+  return items.map(mapper).filter(Boolean).join('；') || '无';
+}
+
+function buildDocxParagraphs(lines) {
+  return lines.map((line) => xmlParagraph(line)).join('');
+}
+
+function getDocxImageExtension(attachment) {
+  const mime = String(attachment?.mime_type || '').toLowerCase();
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/jpeg' || mime === 'image/jpg') return 'jpeg';
+  if (mime === 'image/gif') return 'gif';
+  const ext = path.extname(String(attachment?.file_name || attachment?.file_path || '')).replace('.', '').toLowerCase();
+  if (['png', 'jpeg', 'jpg', 'gif'].includes(ext)) return ext === 'jpg' ? 'jpeg' : ext;
+  return '';
+}
+
+function getDocxEmbeddableImages(attachments = []) {
+  return attachments
+    .filter((attachment) => {
+      const mime = String(attachment?.mime_type || '').toLowerCase();
+      return attachment?.type === 'image' || mime.startsWith('image/');
+    })
+    .map((attachment) => {
+      const ext = getDocxImageExtension(attachment);
+      const diskPath = resolveProjectAttachmentDiskPath(attachment.file_path);
+      if (!ext || !diskPath || !fs.existsSync(diskPath)) return null;
+      return { attachment, ext, diskPath };
+    })
+    .filter(Boolean);
+}
+
+function xmlImageBlock(image, index) {
+  const relId = `rIdImage${index + 1}`;
+  const name = formatDocValue(image.attachment.file_name || `图片${index + 1}`);
+  const cx = 5486400;
+  const cy = 3429000;
+  return `
+    ${xmlParagraph(name, { bold: true, size: 20, color: '666666' })}
+    <w:p>
+      <w:pPr><w:jc w:val="center"/><w:spacing w:after="180"/></w:pPr>
+      <w:r>
+        <w:drawing>
+          <wp:inline distT="0" distB="0" distL="0" distR="0">
+            <wp:extent cx="${cx}" cy="${cy}"/>
+            <wp:effectExtent l="0" t="0" r="0" b="0"/>
+            <wp:docPr id="${index + 1}" name="${escapeXml(name)}"/>
+            <wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>
+            <a:graphic>
+              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                <pic:pic>
+                  <pic:nvPicPr><pic:cNvPr id="${index + 1}" name="${escapeXml(name)}"/><pic:cNvPicPr/></pic:nvPicPr>
+                  <pic:blipFill><a:blip r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
+                  <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
+                </pic:pic>
+              </a:graphicData>
+            </a:graphic>
+          </wp:inline>
+        </w:drawing>
+      </w:r>
+    </w:p>`;
+}
+
+async function buildProjectDocxBuffer(projectDoc) {
+  const zip = new JSZip();
+  const embeddedImages = getDocxEmbeddableImages(projectDoc.attachments);
+  zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
+  <Default Extension="jpg" ContentType="image/jpeg"/>
+  <Default Extension="jpeg" ContentType="image/jpeg"/>
+  <Default Extension="gif" ContentType="image/gif"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>`);
+  zip.folder('_rels').file('.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`);
+  zip.folder('word').folder('_rels').file('document.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  ${embeddedImages.map((image, index) => `<Relationship Id="rIdImage${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image${index + 1}.${image.ext}"/>`).join('\n  ')}
+</Relationships>`);
+  const mediaFolder = zip.folder('word').folder('media');
+  embeddedImages.forEach((image, index) => {
+    mediaFolder.file(`image${index + 1}.${image.ext}`, fs.readFileSync(image.diskPath));
+  });
+  zip.folder('word').file('styles.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault>
+      <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>
+    </w:rPrDefault>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
+    <w:name w:val="Normal"/>
+    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="BodyText">
+    <w:name w:val="Body Text"/>
+    <w:pPr><w:spacing w:after="120" w:line="360" w:lineRule="auto"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:color w:val="333333"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="MetaText">
+    <w:name w:val="Meta Text"/>
+    <w:pPr><w:spacing w:after="60"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:sz w:val="20"/><w:szCs w:val="20"/><w:color w:val="666666"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Heading1">
+    <w:name w:val="heading 1"/>
+    <w:qFormat/>
+    <w:pPr><w:spacing w:before="120" w:after="280"/><w:outlineLvl w:val="0"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:b/><w:color w:val="7F1212"/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Heading2">
+    <w:name w:val="heading 2"/>
+    <w:qFormat/>
+    <w:pPr><w:spacing w:before="300" w:after="160"/><w:outlineLvl w:val="1"/><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="4" w:color="B31B1B"/></w:pBdr></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:b/><w:color w:val="B31B1B"/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr>
+  </w:style>
+</w:styles>`);
+  zip.folder('word').file('document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+  <w:body>
+    ${xmlHeading(projectDoc.title || '项目导出', 1)}
+    ${xmlMetaLine('项目编号', projectDoc.project_code)}
+    ${xmlMetaLine('状态', projectDoc.status)}
+    ${xmlMetaLine('申请人', projectDoc.applicant_name)}
+    ${xmlMetaLine('项目经理', projectDoc.manager_name)}
+    ${xmlMetaLine('研究领域', projectDoc.research_domains)}
+    ${xmlMetaLine('关键词', projectDoc.keywords)}
+    ${xmlMetaLine('技术成熟度', projectDoc.tech_maturity)}
+    ${xmlMetaLine('提交日期', projectDoc.submit_date)}
+    ${xmlMetaLine('批准日期', projectDoc.approval_date)}
+    ${xmlMetaLine('开始日期', projectDoc.start_date)}
+    ${xmlMetaLine('结束日期', projectDoc.end_date)}
+
+    ${xmlHeading('项目摘要', 2)}
+    ${buildDocxParagraphs([projectDoc.abstract, projectDoc.implementation_plan, projectDoc.supplementary_info, projectDoc.remarks].filter(Boolean).map((t) => formatDocValue(t)))}
+
+    ${xmlHeading('项目详情', 2)}
+    ${xmlTable([
+      ['字段', '内容'],
+      ['项目名称', formatDocValue(projectDoc.title)],
+      ['领域补充说明', formatDocValue(projectDoc.project_domain_other_text)],
+      ['成果转化形式', formatDocValue(projectDoc.achievement_transform)],
+      ['成果转化说明', formatDocValue(projectDoc.achievement_transform_other_text)],
+      ['验证阶段要求', formatDocValue(projectDoc.poc_stage_requirement)],
+      ['阶段备注', formatDocValue(projectDoc.poc_multi_stage_note)],
+      ['申请人单位', formatDocValue(projectDoc.applicant_department)],
+      ['预算总额', formatDocValue(projectDoc.budget_total)],
+    ])}
+
+    ${xmlHeading('团队成员', 2)}
+    ${projectDoc.team_members?.length ? xmlTable([
+      ['姓名', '角色', '职务', '单位', '邮箱', '电话', '简介'],
+      ...projectDoc.team_members.map((m) => [
+        formatDocValue(m.name),
+        formatDocValue(m.role),
+        formatDocValue(m.title),
+        formatDocValue(m.organization),
+        formatDocValue(m.email),
+        formatDocValue(m.phone),
+        formatDocValue(m.member_introduction),
+      ]),
+    ]) : xmlParagraph('无')}
+
+    ${xmlHeading('预算明细', 2)}
+    ${projectDoc.budget_items?.length ? xmlTable([
+      ['类别', '条目', '说明', '金额'],
+      ...projectDoc.budget_items.map((b) => [
+        formatDocValue(b.category),
+        formatDocValue(b.item_name),
+        formatDocValue(b.description),
+        formatDocValue(b.amount),
+      ]),
+    ]) : xmlParagraph('无')}
+
+    ${xmlHeading('附件', 2)}
+    ${projectDoc.attachments?.length ? xmlTable([
+      ['名称', '类型', '大小', '说明', '时间'],
+      ...projectDoc.attachments.map((a) => [
+        formatDocValue(a.file_name),
+        formatDocValue(a.type || a.media_type),
+        formatDocValue(a.file_size),
+        formatDocValue(a.description),
+        formatDocValue(a.created_at),
+      ]),
+    ]) : xmlParagraph('无')}
+
+    ${xmlHeading('图片与视频', 2)}
+    ${embeddedImages.length ? embeddedImages.map((image, index) => xmlImageBlock(image, index)).join('') : xmlParagraph('无可嵌入图片')}
+
+    ${xmlHeading('科研成果', 2)}
+    ${projectDoc.research_achievements?.length ? xmlTable([
+      ['名称', '类型', '状态', '登记时间'],
+      ...projectDoc.research_achievements.map((a) => [
+        formatDocValue(a.title || a.name),
+        formatDocValue(a.type),
+        formatDocValue(a.status),
+        formatDocValue(a.created_at),
+      ]),
+    ]) : xmlParagraph('无')}
+
+    ${xmlHeading('孵化进展', 2)}
+    ${projectDoc.incubation_progress?.length ? xmlTable([
+      ['标题', '状态', '申请日期', '反馈日期'],
+      ...projectDoc.incubation_progress.map((p) => [
+        formatDocValue(p.title),
+        formatDocValue(p.status),
+        formatDocValue(p.application_date),
+        formatDocValue(p.feedback_date),
+      ]),
+    ]) : xmlParagraph('无')}
+
+    ${xmlHeading('经费申请', 2)}
+    ${projectDoc.funds_requests?.length ? xmlTable([
+      ['标题', '状态', '申请日期', '反馈金额'],
+      ...projectDoc.funds_requests.map((f) => [
+        formatDocValue(f.title || f.request_title),
+        formatDocValue(f.status),
+        formatDocValue(f.created_at),
+        formatDocValue(f.total_feedback_amount),
+      ]),
+    ]) : xmlParagraph('无')}
+
+    ${xmlHeading('评审意见', 2)}
+    ${xmlParagraph(`项目平均分：${formatDocValue(projectDoc.avg_review_score != null ? projectDoc.avg_review_score : '无')}`)}
+    ${projectDoc.reviews?.length ? xmlTable([
+      ['专家', '所属部门', '研究领域', '综合分', '评审意见'],
+      ...projectDoc.reviews.map((r) => [
+        formatDocValue(r.reviewer_name),
+        formatDocValue(r.reviewer_department),
+        formatDocValue(r.reviewer_research_field),
+        formatDocValue(r.score != null ? r.score : '无'),
+        formatDocValue(r.comment),
+      ]),
+    ]) : xmlParagraph('无')}
+
+    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>
+  </w:body>
+</w:document>`);
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
+async function sendProjectWordZipExport(res, filenamePrefix, items) {
+  if (!items.length) {
+    sendResponse(res, 400, { success: false, error: '没有可导出的项目' });
+    return;
+  }
+  const archive = new JSZip();
+  for (const item of items) {
+    const docxBuffer = await buildProjectDocxBuffer(item);
+    archive.file(`${sanitizeFilenamePart(item.project_code || item.title || item.id)}.docx`, docxBuffer);
+  }
+  const buffer = await archive.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  res.writeHead(200, {
+    'Content-Type': 'application/zip',
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`${filenamePrefix}_${new Date().toISOString().slice(0, 10)}.zip`)}`,
+    'Content-Length': Buffer.byteLength(buffer),
+  });
+  res.end(Buffer.from(buffer));
+}
+
+async function loadProjectWordExportDoc(poolConn, projectId) {
+  const [projects] = await poolConn.query(
+    `
+      SELECT
+        p.*,
+        u_app.name AS applicant_name,
+        u_app.department AS applicant_department,
+        u_mgr.name AS manager_name,
+        (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total
+      FROM \`Project\` p
+      LEFT JOIN \`User\` u_app ON p.applicant_id = u_app.id
+      LEFT JOIN \`User\` u_mgr ON p.manager_id = u_mgr.id
+      WHERE p.id = ?
+    `,
+    [projectId],
+  );
+  if (!projects.length) return null;
+  const project = projects[0];
+
+  const [researchDomains] = await poolConn.query(
+    `
+      SELECT rd.id, rd.name, rd.code
+      FROM \`ProjectResearchDomain\` prd
+      JOIN \`ResearchDomain\` rd ON prd.research_domain_id = rd.id
+      WHERE prd.project_id = ?
+      ORDER BY rd.name
+    `,
+    [projectId],
+  );
+  const [members] = await poolConn.query(
+    `
+      SELECT id, name, user_id, role, title, organization, email, phone, member_introduction, sort_order
+      FROM \`ProjectMember\`
+      WHERE project_id = ?
+      ORDER BY sort_order ASC, created_at ASC
+    `,
+    [projectId],
+  );
+  const [budgets] = await poolConn.query(
+    `
+      SELECT id, category, item_name, description, amount, sort_order
+      FROM \`ProjectBudget\`
+      WHERE project_id = ?
+      ORDER BY sort_order ASC, created_at ASC
+    `,
+    [projectId],
+  );
+  const [attachments] = await poolConn.query(
+    `
+      SELECT id, file_name, file_path, file_size, mime_type, type, description, created_at
+      FROM \`ProjectAttachment\`
+      WHERE project_id = ?
+      ORDER BY created_at DESC
+    `,
+    [projectId],
+  );
+  const [achievements] = await poolConn.query(
+    `
+      SELECT id, name AS title, name, type, status, created_at, updated_at
+      FROM \`ResearchAchievement\`
+      WHERE project_id = ?
+      ORDER BY created_at DESC
+    `,
+    [projectId],
+  );
+  const [incubationProgress] = await poolConn.query(
+    `
+      SELECT id, service_requirement AS title, status, application_date, feedback_date, created_at
+      FROM \`IncubationProgress\`
+      WHERE project_id = ?
+      ORDER BY created_at DESC
+    `,
+    [projectId],
+  );
+  const [fundsRequests] = await poolConn.query(
+    `
+      SELECT
+        fr.id,
+        fr.service_requirement AS title,
+        fr.status,
+        fr.created_at,
+        (SELECT COALESCE(SUM(fri.amount), 0) FROM \`FundsRequestItem\` fri WHERE fri.funds_request_id = fr.id) AS requested_amount,
+        (SELECT COALESCE(SUM(fri.feedback_amount), 0) FROM \`FundsRequestItem\` fri WHERE fri.funds_request_id = fr.id AND fri.feedback_amount IS NOT NULL) AS total_feedback_amount
+      FROM \`FundsRequest\` fr
+      WHERE fr.project_id = ?
+      ORDER BY fr.created_at DESC
+    `,
+    [projectId],
+  );
+  const [reviews] = await poolConn.query(
+    `
+      SELECT
+        ea.id,
+        ea.status,
+        ea.comment,
+        ea.score,
+        ea.assigned_at,
+        u.name AS reviewer_name,
+        u.department AS reviewer_department,
+        ep.expertise_description AS reviewer_research_field
+      FROM \`ExpertAssignment\` ea
+      LEFT JOIN \`User\` u ON ea.expert_id = u.id
+      LEFT JOIN \`ExpertProfile\` ep ON ep.id = ea.expert_id
+      WHERE ea.project_id = ?
+      ORDER BY ea.assigned_at DESC
+    `,
+    [projectId],
+  );
+  const reviewScores = reviews
+    .map((r) => Number(r.score))
+    .filter((v) => Number.isFinite(v));
+  const avgReviewScore = reviewScores.length
+    ? Number((reviewScores.reduce((a, b) => a + b, 0) / reviewScores.length).toFixed(1))
+    : null;
+
+  return {
+    id: project.id,
+    title: project.title,
+    project_code: project.project_code,
+    status: project.status,
+    applicant_name: project.applicant_name,
+    applicant_department: project.applicant_department,
+    manager_name: project.manager_name,
+    project_domain_other_text: project.project_domain_other_text,
+    tech_maturity: project.tech_maturity,
+    keywords: project.keywords,
+    abstract: project.abstract,
+    implementation_plan: project.implementation_plan,
+    supplementary_info: project.supplementary_info,
+    achievement_transform: project.achievement_transform,
+    achievement_transform_other_text: project.achievement_transform_other_text,
+    poc_stage_requirement: project.poc_stage_requirement,
+    poc_multi_stage_note: project.poc_multi_stage_note,
+    submit_date: project.submit_date,
+    approval_date: project.approval_date,
+    start_date: project.start_date,
+    end_date: project.end_date,
+    remarks: project.remarks,
+    created_at: project.created_at,
+    updated_at: project.updated_at,
+    budget_total: Number(project.budget_total || 0) || 0,
+    research_domains: joinListValue(researchDomains, (d) => d.name),
+    team_members: members,
+    budget_items: budgets,
+    attachments,
+    research_achievements: achievements,
+    incubation_progress: incubationProgress,
+    funds_requests: fundsRequests,
+    reviews,
+    review_scores: reviewScores,
+    avg_review_score: avgReviewScore,
+  };
 }
 
 /** 通用：按列定义生成 Excel 工作簿 buffer */
@@ -3357,7 +3862,11 @@ const server = http.createServer(async (req, res) => {
         });
       } catch (error) {
         console.error('创建产业资源库机构失败:', error);
-        sendResponse(res, 500, { success: false, error: '创建产业资源库机构失败' });
+        sendResponse(res, 500, {
+          success: false,
+          error: '创建产业资源库机构失败',
+          message: error?.message || undefined,
+        });
       }
       return;
     }
@@ -3443,7 +3952,11 @@ const server = http.createServer(async (req, res) => {
         });
       } catch (error) {
         console.error('更新产业资源库机构失败:', error);
-        sendResponse(res, 500, { success: false, error: '更新产业资源库机构失败' });
+        sendResponse(res, 500, {
+          success: false,
+          error: '更新产业资源库机构失败',
+          message: error?.message || undefined,
+        });
       }
       return;
     }
@@ -3475,7 +3988,11 @@ const server = http.createServer(async (req, res) => {
         sendResponse(res, 200, { success: true, message: '删除成功' });
       } catch (error) {
         console.error('删除产业资源库机构失败:', error);
-        sendResponse(res, 500, { success: false, error: '删除产业资源库机构失败' });
+        sendResponse(res, 500, {
+          success: false,
+          error: '删除产业资源库机构失败',
+          message: error?.message || undefined,
+        });
       }
       return;
     }
@@ -18042,6 +18559,7 @@ const server = http.createServer(async (req, res) => {
             u.name as reviewer_name,
             u.department as reviewer_department,
             u.title as reviewer_title,
+            ea.score,
             ea.comment,
             ea.status as review_status,
             ea.assigned_at as created_at
@@ -18080,6 +18598,7 @@ const server = http.createServer(async (req, res) => {
             reviewer_department: review.reviewer_department || '',
             reviewer_title: review.reviewer_title || '',
             reviewer_research_field: expertDomains[review.reviewer_id] || '',
+            score: review.score != null ? Number(review.score) : null,
             comments: review.comment || '',
             recommendation: review.review_status === 'accepted' ? 'approve' : 'reject',
             review_status: review.review_status,
@@ -21163,16 +21682,17 @@ const server = http.createServer(async (req, res) => {
         // 如果是专家顾问，只能看到自己的评审意见
         // 如果是申请人或管理员，可以看到所有评审意见
         let reviewsQuery = `
-      SELECT
-        ea.id,
-        ea.project_id,
-        ea.expert_id as reviewer_id,
-        u.name as reviewer_name,
-        u.department as reviewer_department,
-        u.title as reviewer_title,
-        ea.comment,
-        ea.status as review_status,
-        ea.assigned_at as created_at
+          SELECT 
+            ea.id,
+            ea.project_id,
+            ea.expert_id as reviewer_id,
+            u.name as reviewer_name,
+            u.department as reviewer_department,
+            u.title as reviewer_title,
+            ea.score,
+            ea.comment,
+            ea.status as review_status,
+            ea.assigned_at as created_at
       FROM \`ExpertAssignment\` ea
       LEFT JOIN \`User\` u ON ea.expert_id = u.id
       WHERE ea.project_id = ? AND ea.status IN ('accepted', 'declined')
@@ -21217,6 +21737,7 @@ const server = http.createServer(async (req, res) => {
             reviewer_department: review.reviewer_department || '',
             reviewer_title: review.reviewer_title || '',
             reviewer_research_field: expertDomains[review.reviewer_id] || '',
+            score: review.score != null ? Number(review.score) : null,
             comments: review.comment || '',
             recommendation: review.review_status === 'accepted' ? 'approve' : 'reject',
             review_status: review.review_status,
@@ -22034,6 +22555,104 @@ const server = http.createServer(async (req, res) => {
     // ==================== 获取项目附件列表API（已包含在项目详情中，但也可以单独提供） ====================
 
     // 获取项目附件列表
+    if (pathname === '/api/admin/projects' && req.method === 'GET') {
+      const admin = await assertAdminForExport(req, res);
+      if (!admin) return;
+      try {
+        const q = url.parse(req.url, true).query;
+        const keyword = String(q.keyword || '').trim();
+        const status = String(q.status || '').trim();
+        let sql = `
+          SELECT
+            p.id,
+            p.project_code,
+            p.title,
+            p.status,
+            p.created_at,
+            u_app.name AS applicant_name,
+            u_mgr.name AS manager_name,
+            (SELECT COALESCE(SUM(pb.amount), 0) FROM \`ProjectBudget\` pb WHERE pb.project_id = p.id) AS budget_total,
+            (SELECT COUNT(*) FROM \`ExpertAssignment\` ea WHERE ea.project_id = p.id) AS review_count,
+            (SELECT AVG(ea.score) FROM \`ExpertAssignment\` ea WHERE ea.project_id = p.id AND ea.score IS NOT NULL) AS avg_review_score
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u_app ON p.applicant_id = u_app.id
+          LEFT JOIN \`User\` u_mgr ON p.manager_id = u_mgr.id
+          WHERE 1=1
+        `;
+        const params = [];
+        if (keyword) {
+          const kw = `%${keyword}%`;
+          sql += ' AND (p.title LIKE ? OR p.project_code LIKE ? OR u_app.name LIKE ? OR u_mgr.name LIKE ? OR p.abstract LIKE ? OR p.keywords LIKE ?)';
+          params.push(kw, kw, kw, kw, kw, kw);
+        }
+        if (status && status !== 'all') {
+          sql += ' AND p.status = ?';
+          params.push(status);
+        }
+        sql += ' ORDER BY p.created_at DESC LIMIT 5000';
+        const [rows] = await pool.query(sql, params);
+        sendResponse(res, 200, {
+          success: true,
+          data: rows.map((row) => ({
+            ...row,
+            budget_total: Number(row.budget_total || 0),
+            review_count: Number(row.review_count || 0),
+            avg_review_score: row.avg_review_score == null ? null : Number(Number(row.avg_review_score).toFixed(1)),
+          })),
+        });
+      } catch (err) {
+        console.error('加载管理员项目列表失败:', err);
+        sendResponse(res, 500, { success: false, error: '加载项目列表失败', message: err.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/admin/projects/export-word' && req.method === 'GET') {
+      const admin = await assertAdminForExport(req, res);
+      if (!admin) return;
+      try {
+        const q = url.parse(req.url, true).query;
+        const keyword = String(q.keyword || '').trim();
+        const status = String(q.status || '').trim();
+        const ids = String(q.ids || '')
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean);
+        let sql = `
+          SELECT p.id
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u_app ON p.applicant_id = u_app.id
+          WHERE 1=1
+        `;
+        const params = [];
+        if (keyword) {
+          const kw = `%${keyword}%`;
+          sql += ' AND (p.title LIKE ? OR p.project_code LIKE ? OR u_app.name LIKE ? OR p.abstract LIKE ? OR p.keywords LIKE ?)';
+          params.push(kw, kw, kw, kw, kw);
+        }
+        if (status && status !== 'all') {
+          sql += ' AND p.status = ?';
+          params.push(status);
+        }
+        if (ids.length) {
+          sql += ` AND p.id IN (${ids.map(() => '?').join(',')})`;
+          params.push(...ids);
+        }
+        sql += ' ORDER BY p.created_at DESC';
+        const [rows] = await pool.query(sql, params);
+        const items = [];
+        for (const row of rows) {
+          const doc = await loadProjectWordExportDoc(pool, row.id);
+          if (doc) items.push(doc);
+        }
+        await sendProjectWordZipExport(res, '项目导出', items);
+      } catch (err) {
+        console.error('导出项目Word失败:', err);
+        sendResponse(res, 500, { success: false, error: '导出失败', message: err.message });
+      }
+      return;
+    }
+
     if (pathname.startsWith('/api/projects/') && pathname.endsWith('/attachments') && req.method === 'GET') {
       const token = req.headers.authorization;
       const user = await verifyToken(token);
@@ -22345,6 +22964,54 @@ const server = http.createServer(async (req, res) => {
           sendResponse(res, 500, { success: false, error: '保存文件记录失败: ' + dbError.message });
         }
       });
+      return;
+    }
+
+    // 下载/预览科研成果附件
+    if (pathname.match(/^\/api\/achievements\/files\/[\w-]+$/) && req.method === 'GET') {
+      const fileId = pathname.replace('/api/achievements/files/', '');
+      const token = req.headers.authorization || (query.token ? `Bearer ${query.token}` : '');
+      const user = await verifyToken(token);
+      if (!user) {
+        sendResponse(res, 401, { success: false, error: '认证失败' });
+        return;
+      }
+      try {
+        const [fileRows] = await pool.query(
+          `SELECT f.*, pa.created_by, pa.project_id, pa.status
+           FROM \`ResearchAchievementFile\` f
+           INNER JOIN \`ResearchAchievement\` pa ON pa.id = f.achievement_id
+           WHERE f.id = ?`,
+          [fileId],
+        );
+        if (!fileRows.length) {
+          sendResponse(res, 404, { success: false, error: '附件不存在' });
+          return;
+        }
+        const fileRow = fileRows[0];
+        const allowed = await userMayAccessResearchAchievement(pool, fileRow, user);
+        if (!allowed) {
+          sendResponse(res, 403, { success: false, error: '没有权限查看此附件' });
+          return;
+        }
+        const diskPath = resolveResearchAchievementFileDiskPath(fileRow.file_path);
+        if (!diskPath || !fs.existsSync(diskPath)) {
+          sendResponse(res, 404, { success: false, error: '附件文件不存在' });
+          return;
+        }
+
+        const fileName = fileRow.file_name || path.basename(diskPath);
+        res.writeHead(200, {
+          'Content-Type': fileRow.mime_type || 'application/octet-stream',
+          'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+          'Content-Length': fs.statSync(diskPath).size,
+          'Cache-Control': 'private, max-age=300',
+        });
+        fs.createReadStream(diskPath).pipe(res);
+      } catch (error) {
+        console.error('下载科研成果附件失败:', error);
+        sendResponse(res, 500, { success: false, error: '下载附件失败', message: error.message });
+      }
       return;
     }
 
@@ -29066,7 +29733,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const [assignmentRows] = await pool.query(`
-          SELECT id, status, comment, assigned_at, deadline
+          SELECT id, status, comment, score, assigned_at, deadline
           FROM \`ExpertAssignment\`
           WHERE project_id = ? AND expert_id = ?
           LIMIT 1
@@ -29087,6 +29754,42 @@ const server = http.createServer(async (req, res) => {
         const [budgetResult] = await pool.query(`
           SELECT * FROM \`ProjectBudget\` WHERE project_id = ? ORDER BY sort_order ASC
         `, [projectId]);
+        const [otherReviewRows] = await pool.query(`
+          SELECT
+            ea.id,
+            ea.expert_id as reviewer_id,
+            u.name as reviewer_name,
+            u.department as reviewer_department,
+            u.title as reviewer_title,
+            ea.score,
+            ea.comment,
+            ea.status as review_status,
+            ea.assigned_at as created_at
+          FROM \`ExpertAssignment\` ea
+          LEFT JOIN \`User\` u ON ea.expert_id = u.id
+          WHERE ea.project_id = ? AND ea.status IN ('accepted', 'declined')
+            AND ea.expert_id <> ?
+          ORDER BY ea.assigned_at DESC
+        `, [projectId, user.id]);
+        const otherReviewScores = otherReviewRows
+          .map((r) => Number(r.score))
+          .filter((v) => Number.isFinite(v));
+        const avgReviewScore = otherReviewScores.length
+          ? Number((otherReviewScores.reduce((a, b) => a + b, 0) / otherReviewScores.length).toFixed(1))
+          : (assignment.score != null ? Number(assignment.score) : null);
+        const otherReviews = otherReviewRows.map((review) => ({
+          id: review.id,
+          reviewer_id: review.reviewer_id,
+          reviewer_name: review.reviewer_name || '专家',
+          reviewer_department: review.reviewer_department || '',
+          reviewer_title: review.reviewer_title || '',
+          score: review.score != null ? Number(review.score) : null,
+          comments: review.comment || '',
+          review_status: review.review_status,
+          recommendation: review.review_status === 'accepted' ? 'approve' : 'reject',
+          review_date: review.created_at ? review.created_at.toISOString() : null,
+          is_confidential: false,
+        }));
 
         sendResponse(res, 200, {
           success: true,
@@ -29094,13 +29797,16 @@ const server = http.createServer(async (req, res) => {
             project: {
               ...projectResult[0],
               research_field: projectResult[0].research_field || '未指定',
-              submit_date: projectResult[0].submit_date ? projectResult[0].submit_date.toISOString().split('T')[0] : null
+              submit_date: projectResult[0].submit_date ? projectResult[0].submit_date.toISOString().split('T')[0] : null,
+              avg_review_score: avgReviewScore,
             },
             members: membersResult,
             budget: budgetResult,
+            otherReviews,
             existingReview: {
               id: assignment.id,
               status: assignment.status,
+              score: assignment.score != null ? Number(assignment.score) : null,
               assigned_at: assignment.assigned_at
                 ? assignment.assigned_at.toISOString()
                 : null,
@@ -29126,13 +29832,18 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         const body = await getBody(req);
-        const { project_id, recommendation, comments } = body;
+        const { project_id, recommendation, comments, score } = body;
         if (!project_id) {
           sendResponse(res, 400, { success: false, error: '项目ID不能为空' });
           return;
         }
         if (!comments || !comments.trim()) {
           sendResponse(res, 400, { success: false, error: '评审意见不能为空' });
+          return;
+        }
+        const numericScore = Number(score);
+        if (!Number.isFinite(numericScore) || numericScore < 0 || numericScore > 100) {
+          sendResponse(res, 400, { success: false, error: '请填写 0-100 分的综合分数' });
           return;
         }
         if (recommendation !== 'approve' && recommendation !== 'reject') {
@@ -29161,8 +29872,8 @@ const server = http.createServer(async (req, res) => {
         const nextStatus = recommendation === 'approve' ? 'accepted' : 'declined';
         const reviewId = assignmentRows[0].id;
         await pool.query(`
-          UPDATE \`ExpertAssignment\` SET status = ?, comment = ? WHERE id = ?
-        `, [nextStatus, comments.trim(), reviewId]);
+          UPDATE \`ExpertAssignment\` SET status = ?, comment = ?, score = ? WHERE id = ?
+        `, [nextStatus, comments.trim(), numericScore, reviewId]);
 
         await createNotification(
           projectResult[0].applicant_id,
@@ -29188,9 +29899,14 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         const body = await getBody(req);
-        const { project_id, comments } = body;
+        const { project_id, comments, score } = body;
         if (!project_id) {
           sendResponse(res, 400, { success: false, error: '项目ID不能为空' });
+          return;
+        }
+        const numericScore = score == null || score === '' ? null : Number(score);
+        if (numericScore != null && (!Number.isFinite(numericScore) || numericScore < 0 || numericScore > 100)) {
+          sendResponse(res, 400, { success: false, error: '请填写 0-100 分的综合分数' });
           return;
         }
         const [assignmentRows] = await pool.query(`
@@ -29207,8 +29923,8 @@ const server = http.createServer(async (req, res) => {
         // 草稿只保存评审意见，status保持reviewing
         const draftComment = comments || '';
         await pool.query(`
-          UPDATE \`ExpertAssignment\` SET status = 'reviewing', comment = ? WHERE id = ?
-        `, [draftComment, assignmentRows[0].id]);
+          UPDATE \`ExpertAssignment\` SET status = 'reviewing', comment = ?, score = ? WHERE id = ?
+        `, [draftComment, numericScore, assignmentRows[0].id]);
         sendResponse(res, 200, { success: true, message: '草稿保存成功' });
       } catch (error) {
         console.error('保存评审草稿失败:', error);

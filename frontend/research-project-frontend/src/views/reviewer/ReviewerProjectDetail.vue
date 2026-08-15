@@ -309,6 +309,10 @@
       <div v-if="activeTab === 'reviews'" class="tab-panel">
         <div class="section">
           <h3>专家顾问意见</h3>
+          <div v-if="reviewFeedback.length > 0" class="review-summary">
+            <span>平均分：{{ project?.avg_review_score != null ? Number(project.avg_review_score).toFixed(1) : '暂无' }}</span>
+            <span>评审数：{{ reviewFeedback.length }}</span>
+          </div>
           <div v-if="reviewFeedback.length === 0" class="empty-state">
             <p>暂无评审意见</p>
             <p class="hint" v-if="project && ['submitted', 'under_review'].includes(project.status)">
@@ -331,6 +335,10 @@
                   <div class="info-item">
                     <span class="info-label">专家顾问</span>
                     <span class="info-value name">{{ review.reviewer_name || '未知专家' }}</span>
+                  </div>
+                  <div class="info-item">
+                    <span class="info-label">综合分</span>
+                    <span class="info-value score">{{ review.score != null ? review.score : '未评分' }}</span>
                   </div>
                   <div class="info-item">
                     <span class="info-label">所属部门</span>
@@ -416,7 +424,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
-import request, { getApiOrigin } from '@/utils/request'
+import request, { getApiBaseUrl, getApiOrigin } from '@/utils/request'
 import ShowcaseMediaPreviewDialog from '@/components/ShowcaseMediaPreviewDialog.vue'
 import {
   getShowcaseMediaSrc,
@@ -816,6 +824,7 @@ const loadReviewFeedback = async (projectId: string) => {
         review_status: r.review_status || r.status,
         comments: r.comments || r.comment,
         reviewer_name: r.reviewer_name || '专家',
+        score: r.score != null ? Number(r.score) : null,
       }))
     }
   } catch (error) {
@@ -1553,6 +1562,14 @@ onMounted(() => {
 }
 
 /* 现代评审卡片样式 */
+.review-summary {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+  color: #666;
+  font-weight: 500;
+}
+
 .review-card-modern {
   background: white;
   border-radius: 12px;
@@ -1653,6 +1670,11 @@ onMounted(() => {
 .info-value.field {
   color: #595959;
   line-height: 1.5;
+}
+
+.info-value.score {
+  color: #b31b1b;
+  font-weight: 700;
 }
 
 /* 评审意见区域 */

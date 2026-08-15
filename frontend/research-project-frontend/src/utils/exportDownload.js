@@ -1,5 +1,5 @@
-/** 下载后端返回的 Excel blob */
-export async function downloadExcelBlob(blob, fallbackFilename) {
+/** Download a blob returned by the backend. */
+export async function downloadBlob(blob, fallbackFilename) {
   if (!blob || (blob.size !== undefined && blob.size === 0)) {
     throw new Error('导出文件为空')
   }
@@ -23,12 +23,45 @@ export async function downloadExcelBlob(blob, fallbackFilename) {
   window.URL.revokeObjectURL(url)
 }
 
-/** 管理员列表导出：GET blob 并触发下载 */
+export async function downloadExcelBlob(blob, fallbackFilename) {
+  await downloadBlob(blob, fallbackFilename)
+}
+
+export async function downloadWordZipBlob(blob, fallbackFilename) {
+  await downloadBlob(blob, fallbackFilename)
+}
+
 export async function adminExportExcel(request, apiPath, params, fallbackFilename) {
-  const blob = await request.get(apiPath, {
-    params,
-    responseType: 'blob',
-    timeout: 120000,
-  })
+  const blob = await requestDownloadBlob(request, apiPath, params)
   await downloadExcelBlob(blob, fallbackFilename)
+}
+
+export async function adminExportWordZip(request, apiPath, params, fallbackFilename) {
+  const blob = await requestDownloadBlob(request, apiPath, params)
+  await downloadWordZipBlob(blob, fallbackFilename)
+}
+
+async function requestDownloadBlob(request, apiPath, params) {
+  try {
+    return await request.get(apiPath, {
+      params,
+      responseType: 'blob',
+      timeout: 120000,
+    })
+  } catch (error) {
+    const data = error?.response?.data
+    if (data instanceof Blob) {
+      const text = await data.text()
+      try {
+        const json = JSON.parse(text)
+        throw new Error(json.message || json.error || '导出失败')
+      } catch (parseError) {
+        if (parseError instanceof SyntaxError) {
+          throw new Error(text || error?.message || '导出失败')
+        }
+        throw parseError
+      }
+    }
+    throw error
+  }
 }
