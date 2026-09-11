@@ -1408,13 +1408,49 @@ function xmlParagraph(text = '', { bold = false, style = 'BodyText', size = 22, 
   return `<w:p><w:pPr><w:pStyle w:val="${style}"/><w:jc w:val="${align}"/><w:spacing w:after="120" w:line="360" w:lineRule="auto"/></w:pPr>${runs}</w:p>`;
 }
 
+function xmlCoverTitle(text) {
+  const safeText = normalizeParagraphText(text);
+  return [
+    `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="260" w:after="120"/></w:pPr>${xmlRun(safeText, { bold: true, size: 42, color: '000000' })}</w:p>`,
+    `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="240"/></w:pPr>${xmlRun('项目导出报告', { size: 20, color: '888888' })}</w:p>`,
+  ].join('');
+}
+
 function xmlHeading(text, level = 1) {
   const lvl = Math.max(1, Math.min(6, Number(level) || 1));
-  return `<w:p><w:pPr><w:pStyle w:val="Heading${lvl}"/></w:pPr>${xmlRun(text, { bold: true, size: lvl === 1 ? 36 : 28, color: lvl === 1 ? '7F1212' : 'B31B1B' })}</w:p>`;
+  return `<w:p><w:pPr><w:pStyle w:val="Heading${lvl}"/></w:pPr>${xmlRun(text, { bold: true, size: lvl === 1 ? 36 : 28, color: '000000' })}</w:p>`;
+}
+
+const DOCX_CHINESE_SECTION_NUMBERS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+
+function xmlMainHeading(number, text) {
+  const prefix = DOCX_CHINESE_SECTION_NUMBERS[number - 1] || String(number);
+  return `<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:spacing w:before="360" w:after="160"/></w:pPr>${xmlRun(`${prefix}、${formatDocValue(text)}`, { bold: true, size: 32, color: '000000' })}</w:p>`;
+}
+
+function xmlSubHeading(number, text) {
+  return `<w:p><w:pPr><w:pStyle w:val="Heading2"/><w:spacing w:before="220" w:after="100"/></w:pPr>${xmlRun(`${number}. ${formatDocValue(text)}`, { bold: true, size: 24, color: '000000' })}</w:p>`;
 }
 
 function xmlMetaLine(label, value) {
   return `<w:p><w:pPr><w:pStyle w:val="MetaText"/><w:spacing w:after="60"/></w:pPr>${xmlRun(`${label}：`, { bold: true, size: 20, color: '666666' })}${xmlRun(formatDocValue(value), { size: 20, color: '333333' })}</w:p>`;
+}
+
+function xmlSectionBreak() {
+  return '<w:p><w:pPr><w:spacing w:before="80" w:after="180"/><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="D8E8F7"/></w:pBdr></w:pPr></w:p>';
+}
+
+function xmlTableSpacer() {
+  return '<w:p><w:pPr><w:spacing w:after="180"/></w:pPr></w:p>';
+}
+
+function xmlBodyBlock(lines) {
+  const normalized = (lines || [])
+    .map((line) => formatDocValue(line))
+    .map((line) => String(line).trim())
+    .filter(Boolean);
+  if (!normalized.length) return xmlParagraph('无', { color: '888888' });
+  return normalized.map((line) => xmlParagraph(line, { style: 'BodyText', size: 21, color: '333333' })).join('') + xmlSectionBreak();
 }
 
 function xmlTable(rows) {
@@ -1422,11 +1458,34 @@ function xmlTable(rows) {
     const cells = row.map((cell) => {
       const text = cell == null ? '' : String(cell);
       const isHeader = rowIdx === 0;
-      return `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/><w:tcMar><w:top w:w="90" w:type="dxa"/><w:left w:w="120" w:type="dxa"/><w:bottom w:w="90" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tcMar>${isHeader ? '<w:shd w:fill="F8EAEA"/>' : ''}</w:tcPr><w:p><w:pPr><w:spacing w:after="40"/></w:pPr>${xmlRun(text, { bold: isHeader, size: 20, color: isHeader ? '7F1212' : '333333' })}</w:p></w:tc>`;
+      return `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:left w:w="150" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:right w:w="150" w:type="dxa"/></w:tcMar>${isHeader ? '<w:shd w:fill="EAF4FF"/>' : ''}</w:tcPr><w:p><w:pPr><w:spacing w:after="40"/></w:pPr>${xmlRun(text, { bold: isHeader, size: 20, color: isHeader ? '000000' : '333333' })}</w:p></w:tc>`;
     }).join('');
     return `<w:tr>${cells}</w:tr>`;
   }).join('');
-  return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="6" w:space="0" w:color="D9B2B2"/><w:left w:val="single" w:sz="6" w:space="0" w:color="D9B2B2"/><w:bottom w:val="single" w:sz="6" w:space="0" w:color="D9B2B2"/><w:right w:val="single" w:sz="6" w:space="0" w:color="D9B2B2"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="E8D0D0"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="E8D0D0"/></w:tblBorders><w:tblLook w:firstRow="1" w:firstColumn="1" w:noHBand="0" w:noVBand="0"/></w:tblPr>${tableRows}</w:tbl>`;
+  return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="6" w:space="0" w:color="B9D7F0"/><w:left w:val="single" w:sz="6" w:space="0" w:color="B9D7F0"/><w:bottom w:val="single" w:sz="6" w:space="0" w:color="B9D7F0"/><w:right w:val="single" w:sz="6" w:space="0" w:color="B9D7F0"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="D8E8F7"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="D8E8F7"/></w:tblBorders><w:tblLook w:firstRow="1" w:firstColumn="1" w:noHBand="0" w:noVBand="0"/></w:tblPr>${tableRows}</w:tbl>${xmlTableSpacer()}`;
+}
+
+function getImageDimensions(buffer, ext) {
+  try {
+    if (ext === 'png' && buffer.length >= 24 && buffer.toString('ascii', 1, 4) === 'PNG') {
+      return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+    }
+    if ((ext === 'jpeg' || ext === 'jpg') && buffer.length > 4) {
+      let offset = 2;
+      while (offset < buffer.length) {
+        if (buffer[offset] !== 0xff) break;
+        const marker = buffer[offset + 1];
+        const length = buffer.readUInt16BE(offset + 2);
+        if (marker >= 0xc0 && marker <= 0xc3) {
+          return { height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
+        }
+        offset += 2 + length;
+      }
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
 }
 
 function formatDocValue(value) {
@@ -1480,8 +1539,17 @@ function getDocxEmbeddableImages(attachments = []) {
 function xmlImageBlock(image, index) {
   const relId = `rIdImage${index + 1}`;
   const name = formatDocValue(image.attachment.file_name || `图片${index + 1}`);
-  const cx = 5486400;
-  const cy = 3429000;
+  const maxCx = 6400800;
+  const maxCy = 6858000;
+  const fallbackRatio = 16 / 9;
+  const dims = image.dimensions || null;
+  const ratio = dims?.width && dims?.height ? dims.width / dims.height : fallbackRatio;
+  let cx = maxCx;
+  let cy = Math.round(maxCx / Math.max(ratio, 0.2));
+  if (cy > maxCy) {
+    cy = maxCy;
+    cx = Math.round(maxCy * ratio);
+  }
   return `
     ${xmlParagraph(name, { bold: true, size: 20, color: '666666' })}
     <w:p>
@@ -1532,23 +1600,25 @@ async function buildProjectDocxBuffer(projectDoc) {
 </Relationships>`);
   const mediaFolder = zip.folder('word').folder('media');
   embeddedImages.forEach((image, index) => {
-    mediaFolder.file(`image${index + 1}.${image.ext}`, fs.readFileSync(image.diskPath));
+    const buffer = fs.readFileSync(image.diskPath);
+    image.dimensions = getImageDimensions(buffer, image.ext);
+    mediaFolder.file(`image${index + 1}.${image.ext}`, buffer);
   });
   zip.folder('word').file('styles.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:docDefaults>
     <w:rPrDefault>
-      <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>
+      <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:sz w:val="21"/><w:szCs w:val="21"/></w:rPr>
     </w:rPrDefault>
   </w:docDefaults>
   <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
     <w:name w:val="Normal"/>
-    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>
+    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:sz w:val="21"/><w:szCs w:val="21"/></w:rPr>
   </w:style>
   <w:style w:type="paragraph" w:styleId="BodyText">
     <w:name w:val="Body Text"/>
     <w:pPr><w:spacing w:after="120" w:line="360" w:lineRule="auto"/></w:pPr>
-    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:color w:val="333333"/></w:rPr>
+    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:sz w:val="21"/><w:szCs w:val="21"/><w:color w:val="333333"/></w:rPr>
   </w:style>
   <w:style w:type="paragraph" w:styleId="MetaText">
     <w:name w:val="Meta Text"/>
@@ -1558,49 +1628,55 @@ async function buildProjectDocxBuffer(projectDoc) {
   <w:style w:type="paragraph" w:styleId="Heading1">
     <w:name w:val="heading 1"/>
     <w:qFormat/>
-    <w:pPr><w:spacing w:before="120" w:after="280"/><w:outlineLvl w:val="0"/></w:pPr>
-    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:b/><w:color w:val="7F1212"/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr>
+    <w:pPr><w:spacing w:before="180" w:after="120"/><w:outlineLvl w:val="0"/><w:pBdr><w:bottom w:val="single" w:sz="8" w:space="2" w:color="999999"/></w:pBdr></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:b/><w:color w:val="000000"/><w:sz w:val="38"/><w:szCs w:val="38"/></w:rPr>
   </w:style>
   <w:style w:type="paragraph" w:styleId="Heading2">
     <w:name w:val="heading 2"/>
     <w:qFormat/>
-    <w:pPr><w:spacing w:before="300" w:after="160"/><w:outlineLvl w:val="1"/><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="4" w:color="B31B1B"/></w:pBdr></w:pPr>
-    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:b/><w:color w:val="B31B1B"/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr>
+    <w:pPr><w:spacing w:before="180" w:after="90"/><w:outlineLvl w:val="1"/><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="3" w:color="CCCCCC"/></w:pBdr></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei" w:eastAsia="Microsoft YaHei"/><w:b/><w:color w:val="000000"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>
   </w:style>
 </w:styles>`);
   zip.folder('word').file('document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
   <w:body>
-    ${xmlHeading(projectDoc.title || '项目导出', 1)}
-    ${xmlMetaLine('项目编号', projectDoc.project_code)}
-    ${xmlMetaLine('状态', projectDoc.status)}
-    ${xmlMetaLine('申请人', projectDoc.applicant_name)}
-    ${xmlMetaLine('项目经理', projectDoc.manager_name)}
-    ${xmlMetaLine('研究领域', projectDoc.research_domains)}
-    ${xmlMetaLine('关键词', projectDoc.keywords)}
-    ${xmlMetaLine('技术成熟度', projectDoc.tech_maturity)}
-    ${xmlMetaLine('提交日期', projectDoc.submit_date)}
-    ${xmlMetaLine('批准日期', projectDoc.approval_date)}
-    ${xmlMetaLine('开始日期', projectDoc.start_date)}
-    ${xmlMetaLine('结束日期', projectDoc.end_date)}
+    ${xmlCoverTitle(projectDoc.title || '项目导出')}
 
-    ${xmlHeading('项目摘要', 2)}
-    ${buildDocxParagraphs([projectDoc.abstract, projectDoc.implementation_plan, projectDoc.supplementary_info, projectDoc.remarks].filter(Boolean).map((t) => formatDocValue(t)))}
-
-    ${xmlHeading('项目详情', 2)}
+    ${xmlMainHeading(1, '基本信息')}
+    ${xmlSubHeading(1, '项目概览')}
+    ${xmlTable([
+      ['字段', '内容', '字段', '内容'],
+      ['项目编号', formatDocValue(projectDoc.project_code), '状态', formatDocValue(projectDoc.status)],
+      ['申请人', formatDocValue(projectDoc.applicant_name), '项目经理', formatDocValue(projectDoc.manager_name)],
+      ['提交日期', formatDocValue(projectDoc.submit_date), '批准日期', formatDocValue(projectDoc.approval_date)],
+      ['开始日期', formatDocValue(projectDoc.start_date), '结束日期', formatDocValue(projectDoc.end_date)],
+    ])}
+    ${xmlSubHeading(2, '研究领域与关键词')}
     ${xmlTable([
       ['字段', '内容'],
-      ['项目名称', formatDocValue(projectDoc.title)],
+      ['研究领域', formatDocValue(projectDoc.research_domains)],
       ['领域补充说明', formatDocValue(projectDoc.project_domain_other_text)],
-      ['成果转化形式', formatDocValue(projectDoc.achievement_transform)],
-      ['成果转化说明', formatDocValue(projectDoc.achievement_transform_other_text)],
-      ['验证阶段要求', formatDocValue(projectDoc.poc_stage_requirement)],
-      ['阶段备注', formatDocValue(projectDoc.poc_multi_stage_note)],
-      ['申请人单位', formatDocValue(projectDoc.applicant_department)],
-      ['预算总额', formatDocValue(projectDoc.budget_total)],
+      ['关键词', formatDocValue(projectDoc.keywords)],
+      ['技术成熟度', formatDocValue(projectDoc.tech_maturity)],
     ])}
 
-    ${xmlHeading('团队成员', 2)}
+    ${xmlMainHeading(2, '项目详情')}
+    ${xmlSubHeading(1, '项目摘要')}
+    ${xmlBodyBlock([projectDoc.abstract])}
+    ${xmlSubHeading(2, '成果简介')}
+    ${xmlBodyBlock([projectDoc.detailed_introduction_part1])}
+    ${xmlSubHeading(3, '知识产权情况')}
+    ${xmlBodyBlock([projectDoc.detailed_introduction_part2])}
+    ${xmlSubHeading(4, '已有应用/试点情况')}
+    ${xmlBodyBlock([projectDoc.detailed_introduction_part3])}
+    ${xmlSubHeading(5, '实施计划')}
+    ${xmlBodyBlock([projectDoc.implementation_plan])}
+    ${xmlSubHeading(6, '其他补充说明')}
+    ${xmlBodyBlock([projectDoc.supplementary_info, projectDoc.remarks])}
+
+    ${xmlMainHeading(3, '研究团队')}
+    ${xmlSubHeading(1, '团队成员')}
     ${projectDoc.team_members?.length ? xmlTable([
       ['姓名', '角色', '职务', '单位', '邮箱', '电话', '简介'],
       ...projectDoc.team_members.map((m) => [
@@ -1612,9 +1688,8 @@ async function buildProjectDocxBuffer(projectDoc) {
         formatDocValue(m.phone),
         formatDocValue(m.member_introduction),
       ]),
-    ]) : xmlParagraph('无')}
-
-    ${xmlHeading('预算明细', 2)}
+    ]) : xmlParagraph('无', { color: '888888' })}
+    ${xmlSubHeading(2, '预算明细')}
     ${projectDoc.budget_items?.length ? xmlTable([
       ['类别', '条目', '说明', '金额'],
       ...projectDoc.budget_items.map((b) => [
@@ -1623,9 +1698,42 @@ async function buildProjectDocxBuffer(projectDoc) {
         formatDocValue(b.description),
         formatDocValue(b.amount),
       ]),
-    ]) : xmlParagraph('无')}
+    ]) : xmlParagraph('无', { color: '888888' })}
 
-    ${xmlHeading('附件', 2)}
+    ${xmlMainHeading(4, '项目进展')}
+    ${xmlSubHeading(1, '科研成果')}
+    ${projectDoc.research_achievements?.length ? xmlTable([
+      ['名称', '类型', '状态', '登记时间'],
+      ...projectDoc.research_achievements.map((a) => [
+        formatDocValue(a.title || a.name),
+        formatDocValue(a.type),
+        formatDocValue(a.status),
+        formatDocValue(a.created_at),
+      ]),
+    ]) : xmlParagraph('无', { color: '888888' })}
+    ${xmlSubHeading(2, '孵化进展')}
+    ${projectDoc.incubation_progress?.length ? xmlTable([
+      ['标题', '状态', '申请日期', '反馈日期'],
+      ...projectDoc.incubation_progress.map((p) => [
+        formatDocValue(p.title),
+        formatDocValue(p.status),
+        formatDocValue(p.application_date),
+        formatDocValue(p.feedback_date),
+      ]),
+    ]) : xmlParagraph('无', { color: '888888' })}
+    ${xmlSubHeading(3, '经费申请')}
+    ${projectDoc.funds_requests?.length ? xmlTable([
+      ['标题', '状态', '申请日期', '反馈金额'],
+      ...projectDoc.funds_requests.map((f) => [
+        formatDocValue(f.title || f.request_title),
+        formatDocValue(f.status),
+        formatDocValue(f.created_at),
+        formatDocValue(f.total_feedback_amount),
+      ]),
+    ]) : xmlParagraph('无', { color: '888888' })}
+
+    ${xmlMainHeading(5, '附件材料')}
+    ${xmlSubHeading(1, '附件列表')}
     ${projectDoc.attachments?.length ? xmlTable([
       ['名称', '类型', '大小', '说明', '时间'],
       ...projectDoc.attachments.map((a) => [
@@ -1635,46 +1743,14 @@ async function buildProjectDocxBuffer(projectDoc) {
         formatDocValue(a.description),
         formatDocValue(a.created_at),
       ]),
-    ]) : xmlParagraph('无')}
+    ]) : xmlParagraph('无', { color: '888888' })}
+    ${xmlSubHeading(2, '图片与视频')}
+    ${embeddedImages.length ? embeddedImages.map((image, index) => xmlImageBlock(image, index)).join('') : xmlParagraph('无可嵌入图片', { color: '888888' })}
 
-    ${xmlHeading('图片与视频', 2)}
-    ${embeddedImages.length ? embeddedImages.map((image, index) => xmlImageBlock(image, index)).join('') : xmlParagraph('无可嵌入图片')}
-
-    ${xmlHeading('科研成果', 2)}
-    ${projectDoc.research_achievements?.length ? xmlTable([
-      ['名称', '类型', '状态', '登记时间'],
-      ...projectDoc.research_achievements.map((a) => [
-        formatDocValue(a.title || a.name),
-        formatDocValue(a.type),
-        formatDocValue(a.status),
-        formatDocValue(a.created_at),
-      ]),
-    ]) : xmlParagraph('无')}
-
-    ${xmlHeading('孵化进展', 2)}
-    ${projectDoc.incubation_progress?.length ? xmlTable([
-      ['标题', '状态', '申请日期', '反馈日期'],
-      ...projectDoc.incubation_progress.map((p) => [
-        formatDocValue(p.title),
-        formatDocValue(p.status),
-        formatDocValue(p.application_date),
-        formatDocValue(p.feedback_date),
-      ]),
-    ]) : xmlParagraph('无')}
-
-    ${xmlHeading('经费申请', 2)}
-    ${projectDoc.funds_requests?.length ? xmlTable([
-      ['标题', '状态', '申请日期', '反馈金额'],
-      ...projectDoc.funds_requests.map((f) => [
-        formatDocValue(f.title || f.request_title),
-        formatDocValue(f.status),
-        formatDocValue(f.created_at),
-        formatDocValue(f.total_feedback_amount),
-      ]),
-    ]) : xmlParagraph('无')}
-
-    ${xmlHeading('评审意见', 2)}
-    ${xmlParagraph(`项目平均分：${formatDocValue(projectDoc.avg_review_score != null ? projectDoc.avg_review_score : '无')}`)}
+    ${xmlMainHeading(6, '评审意见')}
+    ${xmlSubHeading(1, '评审汇总')}
+    ${xmlParagraph(`项目平均分：${formatDocValue(projectDoc.avg_review_score != null ? projectDoc.avg_review_score : '无')}`, { bold: true, size: 22, color: '000000' })}
+    ${xmlSubHeading(2, '专家评审明细')}
     ${projectDoc.reviews?.length ? xmlTable([
       ['专家', '所属部门', '研究领域', '综合分', '评审意见'],
       ...projectDoc.reviews.map((r) => [
@@ -1684,7 +1760,7 @@ async function buildProjectDocxBuffer(projectDoc) {
         formatDocValue(r.score != null ? r.score : '无'),
         formatDocValue(r.comment),
       ]),
-    ]) : xmlParagraph('无')}
+    ]) : xmlParagraph('无', { color: '888888' })}
 
     <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>
   </w:body>
@@ -1838,6 +1914,9 @@ async function loadProjectWordExportDoc(poolConn, projectId) {
     tech_maturity: project.tech_maturity,
     keywords: project.keywords,
     abstract: project.abstract,
+    detailed_introduction_part1: project.detailed_introduction_part1,
+    detailed_introduction_part2: project.detailed_introduction_part2,
+    detailed_introduction_part3: project.detailed_introduction_part3,
     implementation_plan: project.implementation_plan,
     supplementary_info: project.supplementary_info,
     achievement_transform: project.achievement_transform,
@@ -22648,6 +22727,72 @@ const server = http.createServer(async (req, res) => {
         await sendProjectWordZipExport(res, '项目导出', items);
       } catch (err) {
         console.error('导出项目Word失败:', err);
+        sendResponse(res, 500, { success: false, error: '导出失败', message: err.message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/admin/projects/export-excel' && req.method === 'GET') {
+      const admin = await assertAdminForExport(req, res);
+      if (!admin) return;
+      try {
+        const q = url.parse(req.url, true).query;
+        const keyword = String(q.keyword || '').trim();
+        const status = String(q.status || '').trim();
+        const ids = String(q.ids || '')
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean);
+        let sql = `
+          SELECT
+            p.id,
+            p.title AS project_title,
+            p.project_code,
+            ea.status AS review_status,
+            ea.comment AS review_comment,
+            ea.score AS review_score,
+            u.name AS reviewer_name
+          FROM \`Project\` p
+          LEFT JOIN \`User\` u_app ON p.applicant_id = u_app.id
+          LEFT JOIN \`User\` u_mgr ON p.manager_id = u_mgr.id
+          LEFT JOIN \`ExpertAssignment\` ea ON ea.project_id = p.id
+          LEFT JOIN \`User\` u ON ea.expert_id = u.id
+          WHERE 1=1
+        `;
+        const params = [];
+        if (keyword) {
+          const kw = `%${keyword}%`;
+          sql += ' AND (p.title LIKE ? OR p.project_code LIKE ? OR u_app.name LIKE ? OR u_mgr.name LIKE ? OR p.abstract LIKE ? OR p.keywords LIKE ?)';
+          params.push(kw, kw, kw, kw, kw, kw);
+        }
+        if (status && status !== 'all') {
+          sql += ' AND p.status = ?';
+          params.push(status);
+        }
+        if (ids.length) {
+          sql += ` AND p.id IN (${ids.map(() => '?').join(',')})`;
+          params.push(...ids);
+        }
+        sql += ' ORDER BY p.created_at DESC, ea.assigned_at DESC';
+        const [rows] = await pool.query(sql, params);
+        const data = rows.map((row) => ({
+          project_title: row.project_title || '未命名项目',
+          project_code: row.project_code || '',
+          reviewer_name: row.reviewer_name || '未分配',
+          review_comment: row.review_comment || '',
+          review_score: row.review_score == null ? '' : Number(row.review_score),
+          review_status: row.review_status || '',
+        }));
+        await sendAdminExcelExport(res, '项目评审', '项目评审导出', [
+          { key: 'project_title', label: '项目名称' },
+          { key: 'project_code', label: '项目编号' },
+          { key: 'reviewer_name', label: '专家姓名' },
+          { key: 'review_comment', label: '专家评审意见' },
+          { key: 'review_score', label: '专家评分' },
+          { key: 'review_status', label: '评审状态' },
+        ], data);
+      } catch (err) {
+        console.error('导出项目Excel失败:', err);
         sendResponse(res, 500, { success: false, error: '导出失败', message: err.message });
       }
       return;

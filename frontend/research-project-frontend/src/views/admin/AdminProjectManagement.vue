@@ -8,6 +8,14 @@
       <div class="head-actions">
         <el-button :icon="Refresh" :loading="loading" @click="loadProjects">刷新</el-button>
         <el-button
+          :icon="Download"
+          :loading="exportingExcel"
+          :disabled="selectedIds.length === 0"
+          @click="handleExportExcel"
+        >
+          导出 Excel
+        </el-button>
+        <el-button
           color="#b31b1b"
           :dark="true"
           :icon="Download"
@@ -114,7 +122,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, Download, Refresh, Search } from '@element-plus/icons-vue'
 import request from '@/utils/request'
-import { adminExportWordZip } from '@/utils/exportDownload'
+import { adminExportExcel, adminExportWordZip } from '@/utils/exportDownload'
 
 type ProjectRow = {
   id: string
@@ -141,6 +149,7 @@ const keyword = ref('')
 const status = ref('all')
 const projects = ref<ProjectRow[]>([])
 const selectedIds = ref<string[]>([])
+const exportingExcel = ref(false)
 
 const statusOptions = [
   { value: 'draft', label: '草稿' },
@@ -224,6 +233,27 @@ async function handleExportWord() {
     ElMessage.error(e?.message || '导出失败')
   } finally {
     exporting.value = false
+  }
+}
+
+async function handleExportExcel() {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先勾选要导出的项目')
+    return
+  }
+  exportingExcel.value = true
+  try {
+    await adminExportExcel(
+      request,
+      '/api/admin/projects/export-excel',
+      { ids: selectedIds.value.join(',') },
+      `项目评审导出_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    )
+    ElMessage.success('Excel 导出完成')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '导出失败')
+  } finally {
+    exportingExcel.value = false
   }
 }
 
