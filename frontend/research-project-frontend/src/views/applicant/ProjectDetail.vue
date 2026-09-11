@@ -265,6 +265,10 @@
       <div v-if="activeTab === 'reviews'" class="tab-panel">
         <div class="section">
           <h3>专家顾问意见</h3>
+          <div v-if="reviewFeedback.length > 0" class="review-summary">
+            <span>项目平均分：{{ reviewStats.avgScore.toFixed(1) }}</span>
+            <span>评审数：{{ reviewStats.total }}</span>
+          </div>
           <div v-if="reviewFeedback.length === 0" class="empty-state">
             <p>暂无评审意见</p>
             <p class="hint" v-if="project && ['submitted', 'under_review'].includes(project.status)">
@@ -287,6 +291,10 @@
                   <div class="info-item">
                     <span class="info-label">专家顾问</span>
                     <span class="info-value name">{{ review.reviewer_name || '未知专家' }}</span>
+                  </div>
+                  <div class="info-item">
+                    <span class="info-label">综合分</span>
+                    <span class="info-value score">{{ review.score != null ? review.score : '未评分' }}</span>
                   </div>
                   <div class="info-item">
                     <span class="info-label">所属部门</span>
@@ -666,6 +674,18 @@ const teamMembers = ref<TeamMember[]>([])
 const budgetItems = ref<BudgetItem[]>([])
 const attachments = ref<Attachment[]>([])
 const reviewFeedback = ref<any[]>([])
+
+const reviewStats = computed(() => {
+  const scores = reviewFeedback.value
+    .map((review: any) => Number(review.score))
+    .filter((score: number) => Number.isFinite(score))
+  return {
+    total: reviewFeedback.value.length,
+    avgScore: scores.length
+      ? scores.reduce((sum: number, score: number) => sum + score, 0) / scores.length
+      : 0,
+  }
+})
 
 // UI状态
 const activeTab = ref('basicInfo')
