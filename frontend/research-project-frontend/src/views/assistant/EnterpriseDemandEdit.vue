@@ -39,24 +39,12 @@
           <el-row :gutter="16">
             <el-col :span="12">
               <el-form-item label="需求来源" required>
-                <el-select
-                  v-model="form.source_partner_id"
-                  filterable
-                  remote
-                  reserve-keyword
-                  placeholder="从产业资源库选择机构"
-                  :remote-method="searchPartners"
-                  :loading="partnerLoading"
-                  style="width: 100%"
-                  @change="onPartnerChange"
-                >
-                  <el-option
-                    v-for="p in partnerOptions"
-                    :key="p.id"
-                    :label="p.name"
-                    :value="p.id"
-                  />
-                </el-select>
+                <el-input
+                  v-model="form.enterprise_name"
+                  placeholder="请输入需求来源"
+                  maxlength="200"
+                  @input="clearSourcePartnerLink"
+                />
               </el-form-item>
             </el-col>
             <el-col :span="12">
@@ -109,7 +97,6 @@ import { Boot } from '@wangeditor/editor'
 import '@wangeditor/editor/dist/css/style.css'
 import request from '@/utils/request'
 import { getApiOrigin } from '@/utils/request'
-import { industryPartnerAPI } from '@/api/industryPartners'
 
 const route = useRoute()
 const router = useRouter()
@@ -126,32 +113,8 @@ const form = ref({
   deadline: '' as string | null,
 })
 
-const partnerLoading = ref(false)
-const partnerOptions = ref<{ id: string; name: string }[]>([])
-
-async function searchPartners(keyword: string) {
-  partnerLoading.value = true
-  try {
-    const res = await industryPartnerAPI.list({
-      keyword: keyword || undefined,
-      page: 1,
-      pageSize: 50,
-      lite: true,
-    })
-    if (res.success && res.data) {
-      partnerOptions.value = (res.data.list || []).map((p: { id: string; name: string }) => ({
-        id: p.id,
-        name: p.name,
-      }))
-    }
-  } finally {
-    partnerLoading.value = false
-  }
-}
-
-function onPartnerChange(partnerId: string) {
-  const found = partnerOptions.value.find((p) => p.id === partnerId)
-  if (found) form.value.enterprise_name = found.name
+function clearSourcePartnerLink() {
+  form.value.source_partner_id = ''
 }
 
 const editorRef = shallowRef<IDomEditor>()
@@ -334,9 +297,6 @@ async function loadDemand() {
         source_url: d.source_url || '',
         deadline: d.deadline || null,
       }
-      if (d.source_partner_id && d.source_partner_name) {
-        partnerOptions.value = [{ id: d.source_partner_id, name: d.source_partner_name }]
-      }
     }
   } catch {
     ElMessage.error('加载失败')
@@ -370,8 +330,8 @@ async function handleSave(action: string) {
     ElMessage.warning('请输入正文')
     return
   }
-  if (!form.value.source_partner_id) {
-    ElMessage.warning('请选择需求来源机构')
+  if (!form.value.enterprise_name.trim()) {
+    ElMessage.warning('请输入需求来源')
     return
   }
 
@@ -420,7 +380,6 @@ function goBack() {
 }
 
 onMounted(() => {
-  searchPartners('')
   if (isEdit.value) loadDemand()
 })
 

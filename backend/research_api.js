@@ -4705,8 +4705,8 @@ const server = http.createServer(async (req, res) => {
           sendResponse(res, 400, { success: false, error: '标题和内容不能为空' });
           return;
         }
-        if (!body.source_partner_id) {
-          sendResponse(res, 400, { success: false, error: '请选择需求来源机构' });
+        if (!body.source_partner_id && !String(body.enterprise_name || '').trim()) {
+          sendResponse(res, 400, { success: false, error: '请输入需求来源' });
           return;
         }
         const finalStatus = ['draft', 'published', 'closed', 'offline'].includes(demandStatus)
